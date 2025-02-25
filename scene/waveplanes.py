@@ -46,7 +46,7 @@ def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners:
         grid,  # [B, feature_dim, reso, ...]
         coords,  # [B, 1, ..., n, grid_dim]
         align_corners=align_corners,
-        mode='nearest', padding_mode='border')
+        mode='bilinear', padding_mode='border')
     interp = interp.view(B, feature_dim, n).transpose(-1, -2)  # [B, n, feature_dim]
     interp = interp.squeeze()  # [B?, n, feature_dim?]
     return interp
@@ -80,13 +80,13 @@ def init_grid_param(
 def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, LR_flag, res):
     """Generate features for each point
     """
-    if ro_grid is not None:
-        rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
-        pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
+    # Lets comment this out as it shouldnt be used in the benchmark tests
+    # if ro_grid is not None:
+    #     rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
+    #     pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
 
     # time m feature
     interp_1 = 1.
-    interp_4 = 1.
     
     # q,r are the coordinate combinations needed to retrieve pts
     q, r = 0, 1
@@ -94,27 +94,15 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, LR_flag,
 
         coeff = kplanes[i]
 
-        # if LR_flag:
-        #     feature = coeff.LR(pts[..., (q, r)], idwt)
-        # else:
-        #     feature = coeff(pts[..., (q, r)], idwt)
-
         # Get next space-time features
         if r == 3 and LR_flag==False:
             # Normalize time points between -1 and 1 - need to check if time planes learn anything tbh 
             pts[:,-1] = (pts[:, -1]*2.)-1.
-            
             interp_1 = interp_1 * coeff(pts[..., (q, r)], idwt) 
-            
-            grid_shift = torch.zeros_like(pts[..., (q, r)])
-            # Grid position will be current poistion + 1/resolution
-            grid_shift[:, -1] = grid_shift[:, -1] + (1./ res)
-            interp_4 = interp_4 * coeff(pts[..., (q, r)]+grid_shift, idwt)
-        
+                    
         else:
             feature = coeff(pts[..., (q, r)], idwt)
-            
-            interp_4 = interp_4 * feature
+    
             interp_1 = interp_1 * feature
 
         
@@ -123,7 +111,7 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, LR_flag,
             q += 1
             r = q + 1
 
-    return interp_1, interp_4
+    return interp_1
 
 # Define the grid
 class GridSet(nn.Module):
@@ -494,14 +482,14 @@ class HexPlaneField(nn.Module):
 
         pts = pts.reshape(-1, pts.shape[-1])
 
-        features, features4 = interpolate_features_MUL(
+        features = interpolate_features_MUL(
             pts, self.grids, self.idwt, self.reorient_grid, LR_flag, self.grid_config[0]['resolution'][3]
         )
 
         if len(features) < 1:
             features = torch.zeros((0, 1)).to(features.device)
 
-        return features, features4
+        return features
 
     def forward(self,
                 pts: torch.Tensor,
