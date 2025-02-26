@@ -3,7 +3,7 @@ import json
 import matplotlib.pyplot as plt
 
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
-folder = 'cut_roasted_beef/'
+folder = 'flame_steak/'
 
 focal_word = ''
 non_words = []

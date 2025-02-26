@@ -95,15 +95,15 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, LR_flag,
         coeff = kplanes[i]
 
         # Get next space-time features
-        if r == 3 and LR_flag==False:
-            # Normalize time points between -1 and 1 - need to check if time planes learn anything tbh 
-            pts[:,-1] = (pts[:, -1]*2.)-1.
-            interp_1 = interp_1 * coeff(pts[..., (q, r)], idwt) 
+        # if r == 3 and LR_flag==False:
+        #     # Normalize time points between -1 and 1 - need to check if time planes learn anything tbh 
+        #     pts[:,-1] = (pts[:, -1]*2.)-1.
+        #     interp_1 = interp_1 * coeff(pts[..., (q, r)], idwt) 
                     
-        else:
-            feature = coeff(pts[..., (q, r)], idwt)
-    
-            interp_1 = interp_1 * feature
+        # else:
+        feature = coeff(pts[..., (q, r)], idwt)
+
+        interp_1 = interp_1 * feature
 
         
         r += 1

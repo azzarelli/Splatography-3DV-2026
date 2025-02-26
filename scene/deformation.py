@@ -73,13 +73,18 @@ class Deformation(nn.Module):
             
 
         self.feature_out = nn.Sequential(*self.feature_out)
-        
-        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 4))
 
-        self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
-        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 16*3))
+        main_wid = int(self.W/2.)
+        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 3))
+        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 3))
+        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 4))
+
+        # self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
+        self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 1))
+        self.opacity_w = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 1))
+        # self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 1))
+
+        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 16*3))
 
     def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb):
 
@@ -113,6 +118,9 @@ class Deformation(nn.Module):
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, opacity_emb, shs_emb, time_feature, time_emb,):
         
         hidden = self.query_time(rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb)
+        hidden_opacity = hidden[..., 64:]
+        hidden = hidden[..., :64]
+
         if self.args.static_mlp:
             mask = self.static_mlp(hidden)
         elif self.args.empty_voxel:
@@ -121,7 +129,7 @@ class Deformation(nn.Module):
             mask = torch.ones_like(opacity_emb[:,0]).unsqueeze(-1)
         
         
-        
+        # Change in position
         if self.args.no_dx:
             pts = rays_pts_emb[:,:3]
         else:
@@ -129,14 +137,15 @@ class Deformation(nn.Module):
             dx_start = self.pos_deform(hidden)
             pts = rays_pts_emb[:,:3]*mask + dx_start
 
-
+        # Change in scale
         if self.args.no_ds :
             
             scales = scales_emb[:,:3]
         else:
             ds = self.scales_deform(hidden)
             scales = scales_emb[:,:3]*mask + ds
-            
+
+        # Change in rotation
         if self.args.no_dr :
             rotations = rotations_emb[:,:4]
         else:
@@ -147,13 +156,27 @@ class Deformation(nn.Module):
             else:
                 rotations = rotations_emb[:,:4] + dr
 
+        # Change in opacity
         if self.args.no_do :
             opacity = opacity_emb[:,:1] 
         else:
-            do = self.opacity_deform(hidden) 
-          
-            opacity = opacity_emb[:,:1]*mask + do
+            
+            # Lets start with the simple part - 
+            # Lets decode the main feature into width and height features, seperately
+            w = self.opacity_w(hidden_opacity)
+            h = (torch.cos(self.opacity_h(hidden_opacity))+1.)/2. # between 0 and 1
+            # mu = (torch.cos(self.opacity_mu(hidden_opacity))+1.)/2. # between 0 and 1
+            mu = (torch.cos(opacity_emb[:,:1]*mask)+1.)/2. # between 0 and 1
+
+            # Now for the temporal opacity function
+            #  y = h exp(-(w^2)|x-u|^2)
+            opacity = h * torch.exp(-(w**2)*(torch.abs(time_emb- mu)**2))
+
+            # Old code
+            # do = self.opacity_deform(hidden) 
+            # opacity = opacity_emb[:,:1]*mask + do
         
+        # Change in color        
         if self.args.no_dshs:
             shs = shs_emb
         else:
