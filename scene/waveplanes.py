@@ -77,41 +77,36 @@ def init_grid_param(
     return grid_coefs
 
 
-def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, LR_flag, res):
+def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
     """Generate features for each point
     """
-    # Lets comment this out as it shouldnt be used in the benchmark tests
-    # if ro_grid is not None:
-    #     rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
-    #     pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
+    if ro_grid is not None:
+        rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
+        pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
 
     # time m feature
     interp_1 = 1.
+    sp_interp = 1.
     
     # q,r are the coordinate combinations needed to retrieve pts
     q, r = 0, 1
     for i in range(6):
-
+            
+        
         coeff = kplanes[i]
 
-        # Get next space-time features
-        # if r == 3 and LR_flag==False:
-        #     # Normalize time points between -1 and 1 - need to check if time planes learn anything tbh 
-        #     pts[:,-1] = (pts[:, -1]*2.)-1.
-        #     interp_1 = interp_1 * coeff(pts[..., (q, r)], idwt) 
-                    
-        # else:
         feature = coeff(pts[..., (q, r)], idwt)
 
         interp_1 = interp_1 * feature
-
+        if r != 3:
+            sp_interp = sp_interp * feature
         
         r += 1
         if r == 4:
             q += 1
             r = q + 1
 
-    return interp_1
+    return interp_1, sp_interp
 
 # Define the grid
 class GridSet(nn.Module):
@@ -347,15 +342,17 @@ class HexPlaneField(nn.Module):
             bounds,
             planeconfig,
             multires,
-            use_rotation=False
+            use_rotation=False,
+            is_opacity_grid=False,
     ):
         super().__init__()
         aabb = torch.tensor([[bounds, bounds, bounds],
                              [-bounds, -bounds, -bounds]])
         self.aabb = nn.Parameter(aabb, requires_grad=False)
-        self.grid_config = [planeconfig]
         self.multiscale_res_multipliers = multires
         self.concat_features = True
+        self.is_opacity_grid = is_opacity_grid
+        self.grid_config = [planeconfig]
 
         # 1. Init planes
         self.grids = nn.ModuleList()
@@ -364,18 +361,19 @@ class HexPlaneField(nn.Module):
 
         self.cacheplanes = True
         self.is_waveplanes = True
-
+        
         res_multiplier = 3
         j, k = 0, 1
         for i in range(6):
-            if k == 3:
+            # We only need a grid for the space-time features
+            if k == 3: 
                 what = 'spacetime'
                 res = [self.grid_config[0]['resolution'][j] * res_multiplier, self.grid_config[0]['resolution'][k]]
             else:
                 what = 'space'
                 res = [self.grid_config[0]['resolution'][j] * res_multiplier,
                        self.grid_config[0]['resolution'][k] * res_multiplier]
-
+            
             gridset = GridSet(
                 what=what,
                 resolution=res,
@@ -396,7 +394,7 @@ class HexPlaneField(nn.Module):
             if k == 4:
                 j += 1
                 k = j + 1
-
+                
         self.feat_dim = self.grid_config[0]["output_coordinate_dim"]
 
         init_plane = torch.empty([3, 3]).cuda()
@@ -478,18 +476,14 @@ class HexPlaneField(nn.Module):
         """Computes and returns the densities."""
         # breakpoint()
         pts = normalize_aabb(pts, self.aabb)
-        pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
+        if timestamps is not None:
+            pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
 
         pts = pts.reshape(-1, pts.shape[-1])
 
-        features = interpolate_features_MUL(
-            pts, self.grids, self.idwt, self.reorient_grid, LR_flag, self.grid_config[0]['resolution'][3]
+        return interpolate_features_MUL(
+            pts, self.grids, self.idwt, self.reorient_grid, self.is_opacity_grid
         )
-
-        if len(features) < 1:
-            features = torch.zeros((0, 1)).to(features.device)
-
-        return features
 
     def forward(self,
                 pts: torch.Tensor,

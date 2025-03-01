@@ -15,6 +15,8 @@ from scene.hexplane import HexPlaneField
 from scene.waveplanes import HexPlaneField as WavePlaneField
 
 from scene.grid import DenseGrid
+
+import time
 # from scene.grid import HashHexPlane
 class Deformation(nn.Module):
     def __init__(self, D=8, W=256, input_ch=27, input_ch_time=9, grid_pe=0, skips=[], args=None):
@@ -24,12 +26,13 @@ class Deformation(nn.Module):
         self.input_ch = input_ch
         self.input_ch_time = input_ch_time
         self.skips = skips
-        self.grid_pe = grid_pe
         self.no_grid = args.no_grid
 
+        self.opacity_grid = False
         if args.use_waveplanes:
             print("[Using WavePlanes]")
             self.grid = WavePlaneField(args.bounds, args.kplanes_config, args.multires, use_rotation=args.plane_rotation_correction)
+            # self.opacity_grid = WavePlaneField(args.bounds, args.kplanes_config['opacity_config'], args.multires, use_rotation=args.plane_rotation_correction, is_opacity_grid=True)
         else:
             self.grid = HexPlaneField(args.bounds, args.kplanes_config, args.multires)
 
@@ -51,57 +54,47 @@ class Deformation(nn.Module):
         self.grid.set_aabb(xyz_max, xyz_min)
         if self.args.empty_voxel:
             self.empty_voxel.set_aabb(xyz_max, xyz_min)
+    
     def create_net(self):
-        mlp_out_dim = 0
-        if self.grid_pe !=0:
-            
-            grid_out_dim = self.grid.feat_dim+(self.grid.feat_dim)*2
-        else:
-            grid_out_dim = self.grid.feat_dim
-            
+        # Prep features for decoding
+        net_size = self.W
+        self.feature_out = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
 
-        if self.no_grid:
-            self.feature_out = [nn.Linear(4,self.W)]
+        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
+        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
 
-        else:
-            self.feature_out = [nn.Linear(mlp_out_dim + grid_out_dim ,self.W)]
-            
+        # Same for opacity grid
+        self.opacity_featu_out = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
+      
+        # self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
+        self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
+        self.opacity_w = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
+        self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
+
+
+    def query_time(self, rays_pts_emb, time_emb,opacity_emb):
         
-        for i in range(self.D-1):
-            self.feature_out.append(nn.ReLU())
-            self.feature_out.append(nn.Linear(self.W,self.W))
-            
-
-        self.feature_out = nn.Sequential(*self.feature_out)
-
-        main_wid = int(self.W/2.)
-        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 4))
-
-        # self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
-        self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 1))
-        self.opacity_w = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 1))
-        # self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 1))
-
-        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(main_wid,self.W),nn.ReLU(),nn.Linear(self.W, 16*3))
-
-    def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb):
-
-        if self.no_grid:
-            hidden = torch.cat([rays_pts_emb[:,:3],time_emb[:,:1]],-1)
-            hidden = self.feature_out(hidden)   
-
-            return hidden
-
-        else:
-            hidden1 = self.grid(rays_pts_emb[:,:3], time_emb[:,:1])
-            # breakpoint()
-            if self.grid_pe > 1:
-                hidden1 = poc_fre(hidden1,self.grid_pe)
-
-            # Project the local position back to world space
-            return self.feature_out(hidden1)
+        st, sp = self.grid(rays_pts_emb[:,:3], time_emb[:,:1])
+        # Querying the feature grids
+        st_features = self.feature_out(
+            st
+        )
+        
+        sp_features = self.opacity_featu_out(
+            sp
+        )
+        
+        return st_features, sp_features
+        # # Opacity comes from the index feature/point opacity_emb[:,:1]*mask 
+        # opacity_features = self.opacity_featu_out(
+        #     self.opacity_grid(rays_pts_emb[:,:3], opacity_emb)
+        # )
+                
+        return features # opacity_features
+    
+    
     @property
     def get_empty_ratio(self):
         return self.ratio
@@ -109,33 +102,25 @@ class Deformation(nn.Module):
         if time_emb is None:
             return self.forward_static(rays_pts_emb[:,:3])
         else:
+
             return self.forward_dynamic(rays_pts_emb, scales_emb, rotations_emb, opacity, shs_emb, time_feature, time_emb)
 
     def forward_static(self, rays_pts_emb):
         grid_feature = self.grid(rays_pts_emb[:,:3])
         dx = self.static_mlp(grid_feature)
         return rays_pts_emb[:, :3] + dx
+    
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, opacity_emb, shs_emb, time_feature, time_emb,):
         
-        hidden = self.query_time(rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb)
-        hidden_opacity = hidden[..., 64:]
-        hidden = hidden[..., :64]
+        hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, opacity_emb)
 
-        if self.args.static_mlp:
-            mask = self.static_mlp(hidden)
-        elif self.args.empty_voxel:
-            mask = self.empty_voxel(rays_pts_emb[:,:3])
-        else:
-            mask = torch.ones_like(opacity_emb[:,0]).unsqueeze(-1)
-        
-        
         # Change in position
         if self.args.no_dx:
             pts = rays_pts_emb[:,:3]
         else:
 
             dx_start = self.pos_deform(hidden)
-            pts = rays_pts_emb[:,:3]*mask + dx_start
+            pts = rays_pts_emb[:,:3] + dx_start
 
         # Change in scale
         if self.args.no_ds :
@@ -143,7 +128,7 @@ class Deformation(nn.Module):
             scales = scales_emb[:,:3]
         else:
             ds = self.scales_deform(hidden)
-            scales = scales_emb[:,:3]*mask + ds
+            scales = scales_emb[:,:3] + ds
 
         # Change in rotation
         if self.args.no_dr :
@@ -155,26 +140,23 @@ class Deformation(nn.Module):
                 rotations = batch_quaternion_multiply(rotations_emb, dr)
             else:
                 rotations = rotations_emb[:,:4] + dr
-
+        
         # Change in opacity
         if self.args.no_do :
             opacity = opacity_emb[:,:1] 
         else:
-            
+
             # Lets start with the simple part - 
             # Lets decode the main feature into width and height features, seperately
-            w = self.opacity_w(hidden_opacity)
-            h = (torch.cos(self.opacity_h(hidden_opacity))+1.)/2. # between 0 and 1
+            w = self.opacity_w(hidden_opac)
+            h = (torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
             # mu = (torch.cos(self.opacity_mu(hidden_opacity))+1.)/2. # between 0 and 1
-            mu = (torch.cos(opacity_emb[:,:1]*mask)+1.)/2. # between 0 and 1
+            mu = (torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1
 
             # Now for the temporal opacity function
             #  y = h exp(-(w^2)|x-u|^2)
             opacity = h * torch.exp(-(w**2)*(torch.abs(time_emb- mu)**2))
 
-            # Old code
-            # do = self.opacity_deform(hidden) 
-            # opacity = opacity_emb[:,:1]*mask + do
         
         # Change in color        
         if self.args.no_dshs:
@@ -184,11 +166,10 @@ class Deformation(nn.Module):
 
             shs = torch.zeros_like(shs_emb)
             # breakpoint()
-            shs = shs_emb*mask.unsqueeze(-1) + dshs
+            shs = shs_emb + dshs
 
-        ## This ensures opacity is forces to be one
-        opacity = torch.ones_like(opacity).cuda()
         return pts, scales, rotations, opacity, shs
+    
     def get_mlp_parameters(self):
         parameter_list = []
         for name, param in self.named_parameters():

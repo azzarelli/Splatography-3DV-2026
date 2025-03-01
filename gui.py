@@ -409,7 +409,7 @@ class GUI:
                  debug_from,
                  expname
                  ):
-        self.gui = True
+        self.gui = False
 
         self.dataset = dataset
         self.hyperparams = hyperparams
@@ -736,7 +736,8 @@ class GUI:
 
 
                 if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                    self.test_step()
+                    if self.stage == 'fine':
+                        self.test_step()
 
                 if self.iteration > self.final_iter and self.stage == 'fine':
                     self.stage = 'done'
@@ -747,6 +748,8 @@ class GUI:
                     dpg.render_dearpygui_frame()
         else:
             while self.stage != 'done':
+                if self.iteration % 100 == 0:
+                    print(f'[{self.stage}] {self.iteration}')
                 if self.iteration > self.final_iter and self.stage == 'coarse':
                     self.stage = 'fine'
                     self.init_taining()
@@ -757,7 +760,8 @@ class GUI:
 
 
                 if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                    self.test_step()
+                    if self.stage == 'fine':
+                        self.test_step()
 
                 if self.iteration > self.final_iter and self.stage == 'fine':
                     self.stage = 'done'
@@ -1258,8 +1262,8 @@ if __name__ == "__main__":
     gui = GUI(args=args, hyperparams=hp.extract(args), dataset=lp.extract(args), opt=op.extract(args), pipe=pp.extract(args),testing_iterations=args.test_iterations, saving_iterations=args.save_iterations,
             ckpt_it=args.checkpoint_iterations, ckpt_start=args.start_checkpoint, debug_from=args.debug_from, expname=args.expname)
 
+    
     gui.render()
-
     # training( args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.expname)
 
     # All done

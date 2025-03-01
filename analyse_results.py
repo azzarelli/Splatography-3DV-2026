@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = ''
+focal_word = 'Shared'
 non_words = []
 
 root =  os.path.join(root, folder)
@@ -49,8 +49,7 @@ for run in runs:
     y_psnr.append([x[1] for x in paired_list])
     y_ssim.append([x[2] for x in paired_list])
     
-    print(([x[1] for x in paired_list]))
-    print(([x[2] for x in paired_list]))
+
 
 
 
@@ -62,6 +61,8 @@ for result, name in zip(y_psnr, names):
         if n in name:
             check += 1
     if (focal_word in name or 'bench' in name) and check == 0:
+        print(name)
+        print(result)
         if 'bench' in name:
             axes[0].plot(result, label=f"{name}", color='black')  
         else: axes[0].plot(result, label=f"{name}")  # Add a label for each set

@@ -2,8 +2,14 @@ ModelHiddenParams = dict(
     kplanes_config = {
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
-     'output_coordinate_dim': 32,
-     'resolution': [264, 264, 264, 150]
+     'output_coordinate_dim': 16,
+     'resolution': [264, 264, 264, 150],
+     'opacity_config':{
+            'grid_dimensions': 2,
+            'input_coordinate_dim': 4,
+            'output_coordinate_dim': 16,
+            'resolution': [128, 128, 128, 10],
+        }
     },
     multires = [1,2],
     defor_depth = 0,
@@ -21,13 +27,13 @@ ModelHiddenParams = dict(
     # Use Waveplanes instead of Hexplanes
     use_waveplanes=True,
     # Learn optimal plane rotation
-    plane_rotation_correction=True
+    plane_rotation_correction=False
 )
 OptimizationParams = dict(
     dataloader=True,
-    iterations = 20000,
+    iterations = 16000,
     batch_size=4, # Was 4
-    coarse_iterations = 3000,
+    coarse_iterations = 1,
     densify_until_iter = 10_000,
     opacity_reset_interval = 60000,
     opacity_threshold_coarse = 0.005,
