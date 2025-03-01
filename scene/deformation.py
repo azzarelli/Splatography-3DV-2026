@@ -151,7 +151,7 @@ class Deformation(nn.Module):
             w = self.opacity_w(hidden_opac)
             h = (torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
             # mu = (torch.cos(self.opacity_mu(hidden_opacity))+1.)/2. # between 0 and 1
-            mu = (torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1
+            mu = opacity_emb #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1
 
             # Now for the temporal opacity function
             #  y = h exp(-(w^2)|x-u|^2)
