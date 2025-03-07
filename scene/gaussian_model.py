@@ -534,37 +534,82 @@ class GaussianModel:
                     if weight.grad.mean() != 0:
                         print(name," :",weight.grad.mean(), weight.grad.min(), weight.grad.max())
         print("-"*50)
-    def _plane_regulation(self):
-        gridsets = [self._deformation.deformation_net.grid]
+    # def _plane_regulation(self):
+    #     gridsets = [self._deformation.deformation_net.grid]
         
-        total = 0.
-        for gridset in gridsets:
-            # model.grids is 6 x [1, rank * F_dim, reso, reso]
-            for grids in gridset.grids_():
-                time_grids =  [0,1,3]
-                for grid_id in time_grids:
-                    total += compute_plane_smoothness(grids[grid_id])
+    #     total = 0.
+    #     for gridset in gridsets:
+    #         # model.grids is 6 x [1, rank * F_dim, reso, reso]
+    #         for grids in gridset.grids_():
+    #             time_grids =  [0,1,3]
+    #             for grid_id in time_grids:
+    #                 total += compute_plane_smoothness(grids[grid_id])
+    #     return total
+
+    # def _time_regulation(self):
+    #     gridsets = [self._deformation.deformation_net.grid]
+        
+    #     total = 0.
+    #     for gridset in gridsets:
+    #         for grids in gridset.grids_():
+    #             spatiotemporal_grids =[2, 4, 5]
+    #             for grid_id in spatiotemporal_grids:
+    #                 total += compute_plane_smoothness(grids[grid_id])
+    #     return total
+    # def _l1_regulation(self):
+    #     gridsets = [self._deformation.deformation_net.grid]
+        
+    #     total = 0.
+    #     for gridset in gridsets:
+    #         for grids in gridset.grids_():
+    #             spatiotemporal_grids = [2, 4, 5]
+    #             for grid_id in spatiotemporal_grids:
+    #                 total += torch.abs(1 - grids[grid_id]).mean()
+    #     return total
+    
+    def _plane_regulation(self):
+        if self._deformation.deformation_net.grid.is_waveplanes:
+            multi_res_grids = self._deformation.deformation_net.grid.grids_()
+        else:
+            multi_res_grids = self._deformation.deformation_net.grid.grids
+        total = 0
+        # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        for grids in multi_res_grids:
+            time_grids =  [0,1,3]
+            for grid_id in time_grids:
+                total += compute_plane_smoothness(grids[grid_id])
         return total
 
     def _time_regulation(self):
-        gridsets = [self._deformation.deformation_net.grid]
-        
-        total = 0.
-        for gridset in gridsets:
-            for grids in gridset.grids_():
-                spatiotemporal_grids =[2, 4, 5]
-                for grid_id in spatiotemporal_grids:
-                    total += compute_plane_smoothness(grids[grid_id])
+        if self._deformation.deformation_net.grid.is_waveplanes:
+            multi_res_grids = self._deformation.deformation_net.grid.grids_()
+        else:
+            multi_res_grids = self._deformation.deformation_net.grid.grids
+        total = 0
+        # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        for grids in multi_res_grids:
+            time_grids =[2, 4, 5]
+            for grid_id in time_grids:
+                total += compute_plane_smoothness(grids[grid_id])
         return total
     def _l1_regulation(self):
-        gridsets = [self._deformation.deformation_net.grid]
-        
-        total = 0.
-        for gridset in gridsets:
-            for grids in gridset.grids_():
-                spatiotemporal_grids = [2, 4, 5]
-                for grid_id in spatiotemporal_grids:
-                    total += torch.abs(1 - grids[grid_id]).mean()
+        if self._deformation.deformation_net.grid.is_waveplanes:
+            multi_res_grids = self._deformation.deformation_net.grid.grids_()
+        else:
+            multi_res_grids = self._deformation.deformation_net.grid.grids
+
+        total = 0.0
+        for grids in multi_res_grids:
+            spatiotemporal_grids = [2, 4, 5]
+            for grid_id in spatiotemporal_grids:
+                total += torch.abs(1 - grids[grid_id]).mean()
         return total
-    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight):
-        return plane_tv_weight * self._plane_regulation() + time_smoothness_weight * self._time_regulation() + l1_time_planes_weight * self._l1_regulation()
+    
+    def _opacity_emb_reg(self):
+        return (self._opacity).mean()
+        
+    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight, opacity_embed_lambda):
+        return plane_tv_weight * self._plane_regulation() + \
+            time_smoothness_weight * self._time_regulation() + \
+                l1_time_planes_weight * self._l1_regulation()
+                    # opacity_embed_lambda * self._opacity_emb_reg()

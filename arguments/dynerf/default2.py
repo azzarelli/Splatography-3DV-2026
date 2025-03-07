@@ -2,8 +2,14 @@ ModelHiddenParams = dict(
     kplanes_config = {
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
-     'output_coordinate_dim': 16,
+     'output_coordinate_dim': 32,
      'resolution': [264, 264, 264, 150],
+     'opacity_config':{
+            'grid_dimensions': 2,
+            'input_coordinate_dim': 4,
+            'output_coordinate_dim': 16,
+            'resolution': [128, 128, 128, 0],
+        }
     },
     multires = [1,2],
     defor_depth = 0,

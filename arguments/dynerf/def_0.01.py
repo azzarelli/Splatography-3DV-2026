@@ -4,6 +4,12 @@ ModelHiddenParams = dict(
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
      'resolution': [264, 264, 264, 150],
+     'opacity_config':{
+            'grid_dimensions': 2,
+            'input_coordinate_dim': 4,
+            'output_coordinate_dim': 16,
+            'resolution': [128, 128, 128, 0],
+        }
     },
     multires = [1,2],
     defor_depth = 0,
@@ -11,7 +17,7 @@ ModelHiddenParams = dict(
     plane_tv_weight = 0.0002,
     time_smoothness_weight = 0.001,
     l1_time_planes =  0.0001,
-    opacity_embed_lambda=0.1,
+    opacity_embed_lambda=0.0001,
     
     no_do=False,
     no_dshs=False,

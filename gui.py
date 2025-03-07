@@ -967,8 +967,7 @@ class GUI:
             radii_list.append(radii.unsqueeze(0))
             visibility_filter_list.append(visibility_filter.unsqueeze(0))
             viewspace_point_tensor_list.append(viewspace_point_tensor)
-
-
+            
         radii = torch.cat(radii_list, 0).max(dim=0).values
         visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
 
@@ -980,7 +979,12 @@ class GUI:
             self.track_cpu_gpu_usage(viewpoint_cam.time)
 
         if self.hyperparams.time_smoothness_weight != 0 and self.stage == 'fine':
-            loss += self.gaussians.compute_regulation(self.hyperparams.time_smoothness_weight, self.hyperparams.l1_time_planes, self.hyperparams.plane_tv_weight)
+            loss += self.gaussians.compute_regulation(
+                self.hyperparams.time_smoothness_weight, 
+                self.hyperparams.l1_time_planes, 
+                self.hyperparams.plane_tv_weight,
+                self.hyperparams.opacity_embed_lambda)
+
 
         if self.opt.lambda_dssim != 0:
             loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))

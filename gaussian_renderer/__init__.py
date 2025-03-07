@@ -77,14 +77,11 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     if "coarse" in stage:
         means3D_final, scales_final, rotations_final, opacity_final, shs_final = means3D, scales, rotations, opacity, shs
     elif "fine" in stage:
-        # time0 = get_time()
-        # means3D_deform, scales_deform, rotations_deform, opacity_deform = pc._deformation(means3D[deformation_point], scales[deformation_point],
-        #                                                                  rotations[deformation_point], opacity[deformation_point],
-        #                                                                  time[deformation_point])
         means3D_final, scales_final, rotations_final, opacity_final, shs_final = pc._deformation(means3D, scales,
                                                                                                  rotations, opacity,
                                                                                                  shs,
                                                                                                  time)
+        
     else:
         raise NotImplementedError
 
@@ -128,11 +125,21 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     # breakpoint()
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return {"render": rendered_image,
-            "viewspace_points": screenspace_points,
-            "visibility_filter": radii > 0,
-            "radii": radii,
-            "depth": depth}
+    
+    if 'coarse' in stage:
+        return {"render": rendered_image,
+                "viewspace_points": screenspace_points,
+                "visibility_filter": radii > 0,
+                "radii": radii,
+                "depth": depth}
+        
+    else:
+        return {"render": rendered_image,
+                "viewspace_points": screenspace_points,
+                "visibility_filter": radii > 0,
+                "radii": radii,
+                "depth": depth,
+                "w":w, "h":h}
 
 
 def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
@@ -278,10 +285,6 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
             "visibility_filter": radii > 0,
             "radii": radii,
             "depth": depth}
-
-
-
-
 
 
 def deform_gs(time, pc: GaussianModel, stage="fine"):

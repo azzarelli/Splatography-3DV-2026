@@ -82,9 +82,14 @@ def interpolate_ms_features(pts: torch.Tensor,
     if num_levels is None:
         num_levels = len(ms_grids)
     multi_scale_interp = [] if concat_features else 0.
+    multi_scale_interp_sp = [] if concat_features else 0.
+
     grid: nn.ParameterList
+    
+    
     for scale_id,  grid in enumerate(ms_grids[:num_levels]):
         interp_space = 1.
+        sp_interp = 1.
         for ci, coo_comb in enumerate(coo_combs):
             # interpolate in plane
             feature_dim = grid[ci].shape[1]  # shape of grid[ci]: 1, out_dim, *reso
@@ -94,16 +99,21 @@ def interpolate_ms_features(pts: torch.Tensor,
             )
             # compute product over planes
             interp_space = interp_space * interp_out_plane
+            if ci in [0,1,3]:
+                sp_interp = sp_interp * interp_out_plane
 
         # combine over scales
         if concat_features:
             multi_scale_interp.append(interp_space)
+            multi_scale_interp_sp.append(sp_interp)
         else:
             multi_scale_interp = multi_scale_interp + interp_space
+            multi_scale_interp_sp = multi_scale_interp_sp + sp_interp
 
     if concat_features:
         multi_scale_interp = torch.cat(multi_scale_interp, dim=-1)
-    return multi_scale_interp
+        multi_scale_interp_sp = torch.cat(multi_scale_interp_sp, dim=-1)
+    return multi_scale_interp, multi_scale_interp_sp
 
 
 class HexPlaneField(nn.Module):
@@ -121,7 +131,7 @@ class HexPlaneField(nn.Module):
         self.grid_config =  [planeconfig]
         self.multiscale_res_multipliers = multires
         self.concat_features = True
-
+        self.is_waveplanes = False
         # 1. Init planes
         self.grids = nn.ModuleList()
         self.feat_dim = 0
@@ -132,6 +142,8 @@ class HexPlaneField(nn.Module):
             config["resolution"] = [
                 r * res for r in config["resolution"][:3]
             ] + config["resolution"][3:]
+            
+            print(config["resolution"] )
             gp = init_grid_param(
                 grid_nd=config["grid_dimensions"],
                 in_dim=config["input_coordinate_dim"],

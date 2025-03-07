@@ -79,6 +79,8 @@ class ModelHiddenParams(ParamGroup):
         self.plane_tv_weight = 0.0001 # TV loss of spatial grid
         self.time_smoothness_weight = 0.01 # TV loss of temporal grid
         self.l1_time_planes = 0.0001  # TV loss of temporal grid
+        self.opacity_embed_lambda = 0.01  # TV loss of temporal grid
+
         self.kplanes_config = {
                              'grid_dimensions': 2,
                              'input_coordinate_dim': 4,

@@ -44,8 +44,21 @@ else
   exit 1
 fi
 
-# 4 Training Cameras at extremities
-python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/$ARGS --test_iterations 1000
 
+SAVEDIR="flame_steak"
+ARGS=flame_steak.py
+EVAL_LIST="0 2 3 4 5 6 7 8 9 12 13 14 15 16 17 18 19"
+# 4 Training Cameras at extremities
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+
+
+# SAVEDIR="sear_steak"
+# ARGS=sear_steak.py
+# EVAL_LIST="0 2 3 4 5 6 7 8 9 12 13 14 15 16 17 18 19"
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+
+
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/halfref_$EXP_NAME" --configs arguments/dynerf/default2.py --test_iterations 1000
+# python render.py --model_path "output/dynerf/$SAVEDIR/$EXP_NAME" --skip_train --configs arguments/dynerf/default.py
 # Metrics
 #python render.py --model_path "output/dynerf/$SAVEDIR/$EXP_NAME" --skip_train --configs arguments/dynerf/$ARGS

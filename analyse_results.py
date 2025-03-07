@@ -3,10 +3,10 @@ import json
 import matplotlib.pyplot as plt
 
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
-folder = 'cut_roasted_beef/'
+folder = 'flame_steak/'
 
-focal_word = ''
-non_words = []
+focal_word = 'Cos'
+non_words = ['4-D', 'temb', 'Test', 'test','reset', 'Sep']
 
 root =  os.path.join(root, folder)
 

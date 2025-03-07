@@ -362,7 +362,7 @@ class HexPlaneField(nn.Module):
         self.cacheplanes = True
         self.is_waveplanes = True
         
-        res_multiplier = 3
+        res_multiplier = 2
         j, k = 0, 1
         for i in range(6):
             # We only need a grid for the space-time features
