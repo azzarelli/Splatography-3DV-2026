@@ -315,23 +315,16 @@ class GridSet(nn.Module):
         if self.cachesig:
             signal.append(plane)
         
-        if self.what == 'spacetime': 
-            # Sample features
-            feature = (
-                grid_sample_wrapper(plane, pts)
-                .view(-1, plane.shape[1])
-            )
-        else:
-            # Sample features
-            feature = (
-                grid_sample_wrapper(plane, pts)
-                .view(-1, plane.shape[1])
-            )
+        # Sample features
+        feature = (
+            grid_sample_wrapper(plane, pts)
+            .view(-1, plane.shape[1])
+        )
+
 
         self.signal = signal
         self.step += 1
 
-        
         # Return multiscale features
         return feature
 

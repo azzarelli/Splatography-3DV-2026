@@ -58,7 +58,8 @@ class Deformation(nn.Module):
     def create_net(self):
         # Prep features for decoding
         net_size = self.W
-        self.feature_out = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
+        insize = self.grid.feat_dim 
+        self.feature_out = nn.Sequential(nn.Linear(insize,net_size))
 
         self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
@@ -66,7 +67,7 @@ class Deformation(nn.Module):
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
 
         # Same for opacity grid
-        self.opacity_featu_out = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
+        self.opacity_featu_out = nn.Sequential(nn.Linear(insize, net_size))
       
         # self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
         self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))

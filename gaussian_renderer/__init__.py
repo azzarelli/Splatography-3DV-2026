@@ -138,8 +138,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
                 "viewspace_points": screenspace_points,
                 "visibility_filter": radii > 0,
                 "radii": radii,
-                "depth": depth,
-                "w":w, "h":h}
+                "depth": depth}
 
 
 def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,

@@ -46,10 +46,23 @@ fi
 
 
 SAVEDIR="flame_steak"
-ARGS=flame_steak.py
+ARGS=default.py
 EVAL_LIST="0 2 3 4 5 6 7 8 9 12 13 14 15 16 17 18 19"
 # 4 Training Cameras at extremities
-python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/d05_$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+
+SAVEDIR="flame_steak"
+ARGS=d01.py
+EVAL_LIST="0 2 3 4 5 6 7 8 9 12 13 14 15 16 17 18 19"
+# 4 Training Cameras at extremities
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/d01_$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+
+
+SAVEDIR="flame_steak"
+ARGS=d01_b4.py
+EVAL_LIST="0 2 3 4 5 6 7 8 9 12 13 14 15 16 17 18 19"
+# 4 Training Cameras at extremities
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/batch4_d01_$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
 
 
 # SAVEDIR="sear_steak"
