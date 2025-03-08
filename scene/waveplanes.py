@@ -22,7 +22,7 @@ def normalize_aabb(pts, aabb):
     return (pts - aabb[0]) * (2.0 / (aabb[1] - aabb[0])) - 1.0
 
 
-def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners: bool = True) -> torch.Tensor:
+def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners: bool = True, st_flag:bool=False) -> torch.Tensor:
     grid_dim = coords.shape[-1]
 
     if grid.dim() == grid_dim + 1:
@@ -41,12 +41,21 @@ def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners:
     B, feature_dim = grid.shape[:2]
     n = coords.shape[-2]
     
+    # For bezier functionality we want the mode to be NN so the next grid feature is selected
+    # We dont do this for space-only planes 
+    if st_flag:
+        mode = 'nearest'
+    else:
+        mode = 'bilinear'
+    # TODO: Check `align_corners` as we could default this to False to avoid antialiasing feature effects,
+    # Turning this to True treams the extrema as the corners for better symetry? (not sure what the last part means)
+    
     # Grid is range -1 to 1 and is dependant on the resolution
     interp = grid_sampler(
         grid,  # [B, feature_dim, reso, ...]
         coords,  # [B, 1, ..., n, grid_dim]
         align_corners=align_corners,
-        mode='bilinear', padding_mode='border')
+        mode=mode, padding_mode='border')
     interp = interp.view(B, feature_dim, n).transpose(-1, -2)  # [B, n, feature_dim]
     interp = interp.squeeze()  # [B?, n, feature_dim?]
     return interp
@@ -77,8 +86,22 @@ def init_grid_param(
     return grid_coefs
 
 
-def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
+def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, temporal_resolution):
     """Generate features for each point
+    
+    Notes:
+        - The bezier features relate to the following and require all six planes:
+            1. color (maybe not if done with shs)
+            2. displacement
+            3. scale
+            4. rotation
+        - The temporal opacity only needs the space-only planes and should not require the next feature
+        
+        This means:
+            1. the space-only planes should be bilinearly interpollated
+            2. the space-time planes should be NN interpollation (the bezier functionality does the interp for us)
+        - We need the current and next space-time feature for bezier features
+        
     """
     if ro_grid is not None:
         rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
@@ -86,6 +109,7 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
 
     # time m feature
     interp_1 = 1.
+    intero_4 = 1.
     sp_interp = 1.
     
     # q,r are the coordinate combinations needed to retrieve pts
@@ -95,18 +119,33 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
         
         coeff = kplanes[i]
 
-        feature = coeff(pts[..., (q, r)], idwt)
-
+        # Get the current features
+        feature = coeff(pts[..., (q, r)], idwt, )
         interp_1 = interp_1 * feature
-        if r != 3:
+
+        if r != 3: # space-time only conditions
+            # Get space-only planes for temporal opacity
             sp_interp = sp_interp * feature
+        else: # space-only places
+            # TODO: Do we need gradients for the grid shifting?
+            
+            # Get the (space, time) projection coordinates
+            pts_ = pts[..., (q, r)]
+            # Shift the time values to the right (positive direction) by 1 grid cell
+            # TODO: varify that the temporal coordinates are -1 to 1 not 0 to 1 (see pytorch docs on sampling) 
+            pts_[..., -1] += float(1./temporal_resolution)
+            # TODO: Do I need to clamp this again? Maybe if I choose the right padding mode then no=
+            
+            feature = coeff(pts_, idwt)
+
+            intero_4 = intero_4 * feature
         
         r += 1
         if r == 4:
             q += 1
             r = q + 1
 
-    return interp_1, sp_interp
+    return interp_1, sp_interp, intero_4
 
 # Define the grid
 class GridSet(nn.Module):
@@ -315,9 +354,13 @@ class GridSet(nn.Module):
         if self.cachesig:
             signal.append(plane)
         
+        # To sample the space-time planes differently to the space-only planes we set the following flag
+        st_flag = False
+        if self.what == 'spacetime':st_flag = True
+        
         # Sample features
         feature = (
-            grid_sample_wrapper(plane, pts)
+            grid_sample_wrapper(plane, pts, st_flag)
             .view(-1, plane.shape[1])
         )
 
@@ -475,7 +518,7 @@ class HexPlaneField(nn.Module):
         pts = pts.reshape(-1, pts.shape[-1])
 
         return interpolate_features_MUL(
-            pts, self.grids, self.idwt, self.reorient_grid, self.is_opacity_grid
+            pts, self.grids, self.idwt, self.reorient_grid, self.grid_config[0]['resolution'][3]
         )
 
     def forward(self,

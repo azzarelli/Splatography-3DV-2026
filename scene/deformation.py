@@ -74,26 +74,32 @@ class Deformation(nn.Module):
         self.opacity_w = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
         self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
 
+        self.bezier_1 = nn.Sequential(nn.ReLU(),nn.Linear(insize,self.W),nn.ReLU(), nn.Linear(self.W,insize))
+        self.bezier_2 = nn.Sequential(nn.ReLU(),nn.Linear(insize,self.W),nn.ReLU(), nn.Linear(self.W,insize))
+        
 
-    def query_time(self, rays_pts_emb, time_emb,opacity_emb):
+    def query_time(self, rays_pts_emb, time_emb, opacity_emb):
         
-        st, sp = self.grid(rays_pts_emb[:,:3], time_emb[:,:1])
-        # Querying the feature grids
-        st_features = self.feature_out(
-            st
-        )
+        st, sp, st_next = self.grid(rays_pts_emb[:,:3], time_emb[:,:1])
         
-        sp_features = self.opacity_featu_out(
-            sp
-        )
+        # Determine the 2 and 3 bezier control points
+        dx2 = self.bezier_1(st)
+        dx3 = self.bezier_1(st)
+        # normalize the fourth control point so that dx1 is center at the origin (less math though I dont think the computation diference is too lagre)
+        dx4 = st_next - st
         
-        return st_features, sp_features
-        # # Opacity comes from the index feature/point opacity_emb[:,:1]*mask 
-        # opacity_features = self.opacity_featu_out(
-        #     self.opacity_grid(rays_pts_emb[:,:3], opacity_emb)
-        # )
-                
-        return features # opacity_features
+        # Linearly interpolate between the start and end of the grid cell range/error margin -
+        #  i.e. where are we along our bezier curve
+        t = time_emb % (1. / self.grid.grid_config[0]['resolution'][3])
+        # Apply the bezier transorm on out normlaized time position
+        d = 3*((1-t)**2)*t*dx2 + 3*(1-t)*(t**2)*dx3  + t**2 * dx4
+        
+        
+        # For now we return both the current st and the bezier st feature as the bezier feature is used for position difference
+        # and the current st feature is used for rotation and scale - 
+        # TODO: it might be wise to do all parameters on the same bezier st features
+        # as st features always use 10 res
+        return self.opacity_featu_out(sp), self.feature_out(d)
     
     
     @property
@@ -113,14 +119,14 @@ class Deformation(nn.Module):
     
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, opacity_emb, shs_emb, time_feature, time_emb,):
         
-        hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, opacity_emb)
+        hidden_opac, hidden_bez = self.query_time(rays_pts_emb, time_emb, opacity_emb)
 
         # Change in position
         if self.args.no_dx:
             pts = rays_pts_emb[:,:3]
         else:
 
-            dx_start = self.pos_deform(hidden)
+            dx_start = self.pos_deform(hidden_bez)
             pts = rays_pts_emb[:,:3] + dx_start
 
         # Change in scale
@@ -128,14 +134,14 @@ class Deformation(nn.Module):
             
             scales = scales_emb[:,:3]
         else:
-            ds = self.scales_deform(hidden)
+            ds = self.scales_deform(hidden_bez)
             scales = scales_emb[:,:3] + ds
 
         # Change in rotation
         if self.args.no_dr :
             rotations = rotations_emb[:,:4]
         else:
-            dr = self.rotations_deform(hidden)
+            dr = self.rotations_deform(hidden_bez)
 
             if self.args.apply_rotation:
                 rotations = batch_quaternion_multiply(rotations_emb, dr)
@@ -164,7 +170,7 @@ class Deformation(nn.Module):
         if self.args.no_dshs:
             shs = shs_emb
         else:
-            dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
+            dshs = self.shs_deform(hidden_bez).reshape([shs_emb.shape[0],16,3])
 
             shs = torch.zeros_like(shs_emb)
             # breakpoint()
