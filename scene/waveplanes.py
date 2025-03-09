@@ -46,7 +46,7 @@ def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners:
     if st_flag:
         mode = 'nearest'
     else:
-        mode = 'bilinear'
+        mode = 'nearest'
     # TODO: Check `align_corners` as we could default this to False to avoid antialiasing feature effects,
     # Turning this to True treams the extrema as the corners for better symetry? (not sure what the last part means)
     
@@ -109,7 +109,7 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, temporal
 
     # time m feature
     interp_1 = 1.
-    intero_4 = 1.
+    interp_4 = 1.
     sp_interp = 1.
     
     # q,r are the coordinate combinations needed to retrieve pts
@@ -119,33 +119,44 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, temporal
         
         coeff = kplanes[i]
 
-        # Get the current features
-        feature = coeff(pts[..., (q, r)], idwt, )
-        interp_1 = interp_1 * feature
+        
 
         if r != 3: # space-time only conditions
+            feature = coeff(pts[..., (q, r)], idwt )
             # Get space-only planes for temporal opacity
             sp_interp = sp_interp * feature
+            # Get the current features
+            interp_1 = interp_1 * feature
+            interp_4 = interp_4 * feature    
+
         else: # space-only places
             # TODO: Do we need gradients for the grid shifting?
             
             # Get the (space, time) projection coordinates
             pts_ = pts[..., (q, r)]
+            pts_[:,-1] = (pts_[:, -1]*2.)-1. # Normalize time
+            
+            # Get the current features
+            interp_1 = interp_1 * coeff(pts_, idwt )
+
             # Shift the time values to the right (positive direction) by 1 grid cell
             # TODO: varify that the temporal coordinates are -1 to 1 not 0 to 1 (see pytorch docs on sampling) 
-            pts_[..., -1] += float(1./temporal_resolution)
+            # pts_[..., -1] += float(1./temporal_resolution)
             # TODO: Do I need to clamp this again? Maybe if I choose the right padding mode then no=
             
-            feature = coeff(pts_, idwt)
-
-            intero_4 = intero_4 * feature
-        
+            grid_shift = torch.zeros_like(pts[..., (q, r)])
+            # Grid position will be current poistion + 1/resolution
+            grid_shift[:, -1] = grid_shift[:, -1] + (1./ temporal_resolution)
+            
+            interp_4 = interp_4 * coeff(pts_+grid_shift, idwt)        
+            
+            
         r += 1
         if r == 4:
             q += 1
             r = q + 1
 
-    return interp_1, sp_interp, intero_4
+    return interp_1, sp_interp, interp_4
 
 # Define the grid
 class GridSet(nn.Module):

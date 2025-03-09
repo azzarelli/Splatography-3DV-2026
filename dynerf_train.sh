@@ -45,7 +45,7 @@ else
 fi
 
 # 4 Training Cameras at extremities
-python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/d05_$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
 
 
 # SAVEDIR="sear_steak"

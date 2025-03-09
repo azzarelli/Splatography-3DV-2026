@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = 'NoCos'
-non_words = ['4-D', 'temb', 'Test', 'test','reset', 'Sep', 'Activation', 'W']
+focal_word = ''
+non_words = ['4-D', 'sepa', 'Shared','temb', 'Test', 'test','reset', 'Sep', 'Activation', 'W']
 
 root =  os.path.join(root, folder)
 
