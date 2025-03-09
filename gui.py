@@ -1046,12 +1046,8 @@ class GUI:
                 if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                     self.gaussians.prune(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold)
-                    
-                # if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0 :
-                if self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000 and self.opt.add_point:
-                    self.gaussians.grow(5,5, self.scene.model_path, self.iteration, self.stage)
-                    # torch.cuda.empty_cache()
-                
+
+
                 if self.iteration % self.opt.opacity_reset_interval == 0:
                     print("reset opacity")
                     self.gaussians.reset_opacity()

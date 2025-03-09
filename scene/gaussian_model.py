@@ -125,6 +125,8 @@ class GaussianModel:
 
     @property
     def get_opacity(self):
+        """Instead of getting the initial opacity, lets get the h value from opacity
+        """
         return self.opacity_activation(self._opacity)
 
     def get_covariance(self, scaling_modifier = 1):
@@ -486,6 +488,17 @@ class GaussianModel:
         return selected_xyz, new_xyz
 
     def prune(self, max_grad, min_opacity, extent, max_screen_size):
+        """
+        
+            Notes:
+                As we've change the opacity functionality getting the opacity w.r.t threshold is not
+                going to work well
+                
+                Also, the get_opacity, now that original opacity 
+
+         
+        """
+        
         prune_mask = (self.get_opacity < min_opacity).squeeze()
 
         if max_screen_size:

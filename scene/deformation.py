@@ -111,6 +111,8 @@ class Deformation(nn.Module):
         dx = self.static_mlp(grid_feature)
         return rays_pts_emb[:, :3] + dx
     
+
+        
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, opacity_emb, shs_emb, time_feature, time_emb,):
         
         hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, opacity_emb)
