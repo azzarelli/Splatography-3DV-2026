@@ -88,25 +88,43 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
     interp_1 = 1.
     sp_interp = 1.
     
-    # q,r are the coordinate combinations needed to retrieve pts
-    q, r = 0, 1
-    for i in range(6):
+    if is_opacity_grid:
+        # q,r are the coordinate combinations needed to retrieve pts
+        q, r = 0, 1
+        for i in range(3):
+            if i == 2:# Make sure we are using the space-only planes [0,1,3]
+                i == 3
+            coeff = kplanes[i]
+
+            feature = coeff(pts[..., (q, r)], idwt)
+
+            interp_1 = interp_1 * feature
+
+            r +=1
+            if r == 3:
+                q = 1
+                r = 2
+        return interp_1
+    else:
+        # q,r are the coordinate combinations needed to retrieve pts
+        q, r = 0, 1
+        for i in range(6):
+                
             
-        
-        coeff = kplanes[i]
+            coeff = kplanes[i]
 
-        feature = coeff(pts[..., (q, r)], idwt)
+            feature = coeff(pts[..., (q, r)], idwt)
 
-        interp_1 = interp_1 * feature
-        if r != 3:
-            sp_interp = sp_interp * feature
-        
-        r += 1
-        if r == 4:
-            q += 1
-            r = q + 1
+            interp_1 = interp_1 * feature
+            if r != 3:
+                sp_interp = sp_interp * feature
+            
+            r += 1
+            if r == 4:
+                q += 1
+                r = q + 1
 
-    return interp_1, sp_interp
+        return interp_1, sp_interp
 
 # Define the grid
 class GridSet(nn.Module):
@@ -465,7 +483,7 @@ class HexPlaneField(nn.Module):
 
         return ms_planes
 
-    def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None, LR_flag: bool = False):
+    def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
         """Computes and returns the densities."""
         # breakpoint()
         pts = normalize_aabb(pts, self.aabb)
@@ -475,11 +493,18 @@ class HexPlaneField(nn.Module):
         pts = pts.reshape(-1, pts.shape[-1])
 
         return interpolate_features_MUL(
-            pts, self.grids, self.idwt, self.reorient_grid, self.is_opacity_grid
+            pts, self.grids, self.idwt, self.reorient_grid, False
+        )
+
+    def get_opacity_vars(self, pts):
+        pts = normalize_aabb(pts, self.aabb)
+        pts = pts.reshape(-1, pts.shape[-1])
+        return interpolate_features_MUL(
+            pts, self.grids, self.idwt, self.reorient_grid, True
         )
 
     def forward(self,
                 pts: torch.Tensor,
                 timestamps: Optional[torch.Tensor] = None, LR_flag: bool = False):
 
-        return self.get_density(pts, timestamps, LR_flag=LR_flag)
+        return self.get_density(pts, timestamps)

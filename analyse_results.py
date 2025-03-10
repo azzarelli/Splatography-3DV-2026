@@ -6,7 +6,7 @@ root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
 focal_word = 'NoCos'
-non_words = ['4-D', 'temb', 'Test', 'test','reset', 'Sep', 'Activation', 'W']
+non_words = ['4-D', 'Bez', 'Fix', 'Feat', 'temb', 'Test', 'test','reset', 'Sep', 'Activation', 'd0', 'rotation', 'LR', 'Reg']
 
 root =  os.path.join(root, folder)
 

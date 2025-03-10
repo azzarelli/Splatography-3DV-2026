@@ -982,8 +982,7 @@ class GUI:
             loss += self.gaussians.compute_regulation(
                 self.hyperparams.time_smoothness_weight, 
                 self.hyperparams.l1_time_planes, 
-                self.hyperparams.plane_tv_weight,
-                self.hyperparams.opacity_embed_lambda)
+                self.hyperparams.plane_tv_weight)
 
 
         if self.opt.lambda_dssim != 0:
@@ -1043,14 +1042,14 @@ class GUI:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                     self.gaussians.densify(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold, 5, 5, self.scene.model_path, self.iteration, self.stage)
                 
-                if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
+                if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>2000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                     self.gaussians.prune(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold)
 
 
-                if self.iteration % self.opt.opacity_reset_interval == 0:
-                    print("reset opacity")
-                    self.gaussians.reset_opacity()
+                # if self.iteration % self.opt.opacity_reset_interval == 0:
+                #     print("reset opacity")
+                #     self.gaussians.reset_opacity()
 
             # Optimizer step
             if self.iteration < self.opt.iterations:

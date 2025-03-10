@@ -60,7 +60,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
 
 
     means2D = screenspace_points
-    opacity = pc._opacity
     shs = pc.get_features
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -73,12 +72,12 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     else:
         scales = pc._scaling
         rotations = pc._rotation
-    deformation_point = pc._deformation_table
+
     if "coarse" in stage:
-        means3D_final, scales_final, rotations_final, opacity_final, shs_final = means3D, scales, rotations, opacity, shs
+        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity_final, shs_final = pc._deformation(means3D, scales,
-                                                                                                 rotations, opacity,
+        means3D_final, scales_final, rotations_final, opacity, shs_final = pc._deformation(means3D, scales,
+                                                                                                 rotations,
                                                                                                  shs,
                                                                                                  time)
         
@@ -89,7 +88,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     # print("asset value:",time2-time1)
     scales_final = pc.scaling_activation(scales_final)
     rotations_final = pc.rotation_activation(rotations_final)
-    opacity = pc.opacity_activation(opacity_final)
+    # opacity = pc.opacity_activation(opacity_final)
 
     # print(opacity.max())
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
@@ -178,7 +177,6 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
 
     # Need to add to opacity and shs features (though maybe we can inject gaussians later)
     means2D = screenspace_points
-    opacity = pc._opacity
     shs = pc.get_features
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -196,19 +194,22 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
     # Commented out line below because it doesnt seem to be used
     # deformation_point = pc._deformation_table
     if "coarse" in stage:
-        means3D_final, scales_final, rotations_final, opacity_final, shs_final = means3D, scales, rotations, opacity, shs
+        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity_final, shs_final = pc._deformation(means3D, scales,
-                                                                                                 rotations, opacity,
+        means3D_final, scales_final, rotations_final, opacity, shs_final = pc._deformation(means3D, scales,
+                                                                                                 rotations,
                                                                                                  shs,
                                                                                                  time)
+    
+        # opacity = pc.opacity_activation(opacity_final)
+
     else:
         raise NotImplementedError
 
     # Recover final scales, rotations and opacities
     scales_final = pc.scaling_activation(scales_final)
     rotations_final = pc.rotation_activation(rotations_final)
-    opacity = pc.opacity_activation(opacity_final)
+    # opacity = pc.opacity_activation(opacity_final)
 
     # We don't need this
     cov3D_precomp = None

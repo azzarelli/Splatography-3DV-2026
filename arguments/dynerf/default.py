@@ -29,14 +29,14 @@ OptimizationParams = dict(
     dataloader=True,
     iterations = 16000,
     batch_size=2, # Was 4
-    coarse_iterations = 3000,
+    coarse_iterations = 3,
     densify_until_iter = 10_000,
     opacity_reset_interval = 60000,
     opacity_threshold_coarse = 0.005,
     opacity_threshold_fine_init = 0.005,
     opacity_threshold_fine_after = 0.005,
-    
-    
+    # pruning_from_iter = 1,
+    # pruning_interval=1,
     # lambda_dssim = 0.5,
     # pruning_interval = 2000
 )
