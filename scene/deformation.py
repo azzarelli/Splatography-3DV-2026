@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-import torchvision.transforms.functional as TF
+from pytorch3d.transforms import matrix_to_quaternion
 from utils.graphics_utils import apply_rotation, batch_quaternion_multiply
 from scene.hexplane import HexPlaneField
 
@@ -139,7 +139,7 @@ class Deformation(nn.Module):
             dr = self.rotation_continuty(rays_pts_emb[:,:3], pts)
             
             # Turn dr from 3x3 to quaternion
-            rotations = rotations_emb[:,:4] + TF.matrix_to_quaternion(dr)
+            rotations = rotations_emb[:,:4] + matrix_to_quaternion(dr)
 
         # Change in scale
         if self.args.no_ds :

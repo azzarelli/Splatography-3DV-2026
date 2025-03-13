@@ -46,17 +46,17 @@ class Model(nn.Module):
         
     #pt b*point_num*3
     def forward(self, pt1, pt2):
-        batch = pt1.shape[0]
-        point_num =pt1.shape[1]
+        batch = pt1.shape[0]        
+        # the input is batch, 3, n points, and the below functionality puts out num points in the batch positon
+        # Im assumin this is correct as num points may refer to all points in the a group undergoing the same rotation mayhe? idk
         
-        feature_pt1 = self.feature_extracter(pt1.transpose(1,2)).view(batch,-1)#b*512
-        feature_pt2 = self.feature_extracter(pt2.transpose(1,2)).view(batch,-1)#b*512
+        feature_pt1 = self.feature_extracter(pt1.unsqueeze(-1)).view(batch,-1)#b*512
+        feature_pt2 = self.feature_extracter(pt2.unsqueeze(-1)).view(batch,-1)#b*512
         
         f = torch.cat((feature_pt1, feature_pt2), 1) #batch*1024
         
         out_data = self.mlp(f)#batch*out_channel
         if(self.regress_t == True):
-            out_translation=out_data[:,0:3]#batch*3
             out_rotation = out_data[:,3:3+self.out_channel] #batch*(out_channel-3)
         else:
             out_rotation = out_data #batch*out_channel
@@ -76,14 +76,8 @@ class Model(nn.Module):
             out_r_mat = tools.compute_rotation_matrix_from_axisAngle(out_rotation)#b*3*3
         elif(self.out_rotation_mode=="euler"):
             out_r_mat = tools.compute_rotation_matrix_from_euler(out_rotation)#b*3*3
-            
-        out_pt2 = torch.bmm(out_r_mat.view(batch,1,3,3).expand(batch, point_num, 3,3).contiguous().view(-1,3,3), pt1.view(-1,3,1)).view(batch, point_num,3)
-        
-        if(self.regress_t == True):
-            out_pt2 = out_pt2 + out_translation.view(batch,1,3).expand(batch, point_num,3)
-            return out_r_mat, out_translation, out_pt2
-        else:
-            return out_r_mat, out_pt2
+                    
+        return out_r_mat
 
         
         
