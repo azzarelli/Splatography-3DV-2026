@@ -67,11 +67,11 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     scales = None
     rotations = None
     cov3D_precomp = None
-    if pipe.compute_cov3D_python:
-        cov3D_precomp = pc.get_covariance(scaling_modifier)
-    else:
-        scales = pc._scaling
-        rotations = pc._rotation
+    # if pipe.compute_cov3D_python:
+    #     cov3D_precomp = pc.get_covariance(scaling_modifier)
+    # else:
+    scales = pc._scaling
+    rotations = pc._rotation
 
     if "coarse" in stage:
         means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
@@ -80,7 +80,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
                                                                                                  rotations,
                                                                                                  shs,
                                                                                                  time)
-        
     else:
         raise NotImplementedError
 

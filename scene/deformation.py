@@ -9,12 +9,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
+import torchvision.transforms.functional as TF
 from utils.graphics_utils import apply_rotation, batch_quaternion_multiply
 from scene.hexplane import HexPlaneField
 
 from scene.waveplanes import HexPlaneField as WavePlaneField
-
 from scene.grid import DenseGrid
+
+from scene.rotationcontinuity import Model as RCModel
 
 import time
 # from scene.grid import HashHexPlane
@@ -43,6 +45,8 @@ class Deformation(nn.Module):
             self.empty_voxel = DenseGrid(channels=1, world_size=[64,64,64])
         if self.args.static_mlp:
             self.static_mlp = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
+        
+        self.rotation_continuty = RCModel(out_rotation_mode='ortho5d', regress_t=False)
         
         self.ratio=0
         self.create_net()
@@ -122,6 +126,21 @@ class Deformation(nn.Module):
             dx_start = self.pos_deform(hidden)
             pts = rays_pts_emb[:,:3] + dx_start
 
+        # Change in rotation
+        if self.args.no_dr :
+            rotations = rotations_emb[:,:4]
+        else:
+            # TODO: Rotation embedding seems to be 4-values/channels an are converted to 3x3 in the get_covariance part
+            # After more digging and realizing, the 4 params might be related to the quaternion rep and these values are
+            # later converted in the rasterizer (I assume)
+            # If our continuity model outputs 3x3 rotations, we need to turn them into quaternions
+
+            # For now lets test generating the rotation different
+            dr = self.rotation_continuty(rays_pts_emb[:,:3], pts)
+            
+            # Turn dr from 3x3 to quaternion
+            rotations = rotations_emb[:,:4] + TF.matrix_to_quaternion(dr)
+
         # Change in scale
         if self.args.no_ds :
             
@@ -130,16 +149,6 @@ class Deformation(nn.Module):
             ds = self.scales_deform(hidden)
             scales = scales_emb[:,:3] + ds
 
-        # Change in rotation
-        if self.args.no_dr :
-            rotations = rotations_emb[:,:4]
-        else:
-            dr = self.rotations_deform(hidden)
-
-            if self.args.apply_rotation:
-                rotations = batch_quaternion_multiply(rotations_emb, dr)
-            else:
-                rotations = rotations_emb[:,:4] + dr
         
         # Change in opacity
         if self.args.no_do :

@@ -132,8 +132,8 @@ class GaussianModel:
         """
         return self._deformation.deformation_net.foward_opac(self._xyz)
 
-    def get_covariance(self, scaling_modifier = 1):
-        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+    # def get_covariance(self, scaling_modifier = 1):
+    #     return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
@@ -543,7 +543,6 @@ class GaussianModel:
         rotation_error = (rotations_deform - rotations)**2
         scaling_erorr = (scales_deform - scales)**2
         return position_error.mean() + rotation_error.mean() + scaling_erorr.mean()
-
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
