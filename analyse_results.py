@@ -6,7 +6,14 @@ root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
 focal_word = 'Hthresh00001_NoActivPruneW' 
-bench_marks = ['l10005TuningNoActivPruneHW','Hthresh001_NoActivPruneW', 'Hthresh01_NoActivPruneW', 'Hthresh1_NoActivPruneW',]#'Wthresh1_NoActivPruneW', 'Wthresh01_NoActivPruneW','Wthresh001_NoActivPruneW','Wthresh0001_NoActivPruneW'] # 'HSUM001_NoActivPruneHW', 'HSUM0_NoActivPruneHW', 'HSUM1_NoActivPruneHW', 'HSUM01_NoActivPruneHW']
+bench_marks = ['l10005TuningNoActivPruneHW']
+
+# Only using h for pruning and messing with the theshold
+#'Hthresh00001_NoActivPruneW','Hthresh001_NoActivPruneW', 'Hthresh01_NoActivPruneW', 'Hthresh1_NoActivPruneW',]
+# Only using the w for pruning and messing with the width threshold
+#'Wthresh1_NoActivPruneW', 'Wthresh01_NoActivPruneW','Wthresh001_NoActivPruneW','Wthresh0001_NoActivPruneW'] 
+# HSUM is used to maximise h during regularization
+# 'HSUM001_NoActivPruneHW', 'HSUM0_NoActivPruneHW', 'HSUM1_NoActivPruneHW', 'HSUM01_NoActivPruneHW']
 """
 benchmark description
 

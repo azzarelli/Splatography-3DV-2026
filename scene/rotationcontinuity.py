@@ -29,20 +29,19 @@ class Model(nn.Module):
         #in b*point_num*3
         #out b*1*512
         self.feature_extracter = nn.Sequential(
-                nn.Conv1d(3, 64, kernel_size=1),
-                nn.LeakyReLU(),
-                nn.Conv1d(64, 128, kernel_size=1),
-                nn.LeakyReLU(),
-                nn.Conv1d(128, 1024, kernel_size=1),
-                nn.AdaptiveMaxPool1d(output_size=1)
-                )
-        
-        #in b*1024
-        #out b*out_channel
+            nn.Conv1d(3, 64, kernel_size=1),
+            nn.LeakyReLU(inplace=True),  # Fused
+            nn.Conv1d(64, 128, kernel_size=1),
+            nn.LeakyReLU(inplace=True),  # Fused
+            nn.Conv1d(128, 1024, kernel_size=1),
+            nn.AdaptiveMaxPool1d(output_size=1)
+        )
+
         self.mlp = nn.Sequential(
-                nn.Linear(2048, 512),
-                nn.LeakyReLU(),
-                nn.Linear(512, self.out_channel))
+            nn.Linear(2048, 512),
+            nn.LeakyReLU(inplace=True),  # Fused
+            nn.Linear(512, self.out_channel)
+        )
         
     #pt b*point_num*3
     def forward(self, pt1, pt2):
