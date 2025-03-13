@@ -95,7 +95,7 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
             if i == 2:# Make sure we are using the space-only planes [0,1,3]
                 i == 3
             coeff = kplanes[i]
-
+                
             feature = coeff(pts[..., (q, r)], idwt)
 
             interp_1 = interp_1 * feature
@@ -307,29 +307,22 @@ class GridSet(nn.Module):
         if self.what == 'spacetime':
             return fine + 1.
         return fine
+    
+    def yl_only(self):
 
-    def LR(self, pts, idwt):
-        yl = self.scaler[0] * self.grids[0]
-
+        fine = self.scaler[0] * self.grids[0]
         if self.what == 'spacetime':
-            feature = (
-                grid_sample_wrapper(yl + 1., pts, st=True)
-                .view(-1, yl.shape[1])
-            )
-        else:
-            feature = (
-                grid_sample_wrapper(yl, pts)
-                .view(-1, yl.shape[1])
-            )
+            return fine + 1.
+        return fine
 
-        return [feature, feature]
 
     def forward(self, pts, idwt):
         """Given a set of points sample the dwt transformed Kplanes and return features
         """
-        # List: coarse to fine with Feature size (1, N, H, W)
         plane = self.idwt_transform(idwt)
+            
         signal = []
+        
         if self.cachesig:
             signal.append(plane)
         
@@ -338,7 +331,6 @@ class GridSet(nn.Module):
             grid_sample_wrapper(plane, pts)
             .view(-1, plane.shape[1])
         )
-
 
         self.signal = signal
         self.step += 1
@@ -505,6 +497,6 @@ class HexPlaneField(nn.Module):
 
     def forward(self,
                 pts: torch.Tensor,
-                timestamps: Optional[torch.Tensor] = None, LR_flag: bool = False):
+                timestamps: Optional[torch.Tensor] = None, iterations: int = 0):
 
         return self.get_density(pts, timestamps)

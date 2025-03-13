@@ -44,10 +44,29 @@ else
   exit 1
 fi
 
+SAVEDIR="flame_steak"
+ARGS=flame_steak.py
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/Hthresh_$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/Hthresh1_$EXP_NAME" --configs arguments/dynerf/hs1.py --test_iterations 1000
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/Hthresh01_$EXP_NAME" --configs arguments/dynerf/hs01.py --test_iterations 1000
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/Hthresh001_$EXP_NAME" --configs arguments/dynerf/hs001.py --test_iterations 1000
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/Hthresh00001_$EXP_NAME" --configs arguments/dynerf/hs00001.py --test_iterations 1000
 
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/dssim2.py --test_iterations 1000
+
+# SAVEDIR="coffee_martini"
+# ARGS=coffee_martini.py
 # 4 Training Cameras at extremities
-python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/l1005$EXP_NAME" --configs arguments/dynerf/l1005.py --test_iterations 1000
 
+# SAVEDIR="cut_roasted_beef"
+# ARGS=cut_roasted_beef.py
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/l1005$EXP_NAME" --configs arguments/dynerf/l1005.py --test_iterations 1000
+
+# SAVEDIR="sear_steak"
+#   ARGS=sear_steak.py
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/l1005$EXP_NAME" --configs arguments/dynerf/l1005.py --test_iterations 1000
 
 # SAVEDIR="sear_steak"
 # ARGS=sear_steak.py

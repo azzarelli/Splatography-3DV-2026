@@ -11,7 +11,7 @@ ModelHiddenParams = dict(
     plane_tv_weight = 0.0002,
     time_smoothness_weight = 0.001,
     l1_time_planes =  0.005,
-    opacity_lambda = 0.,
+    opacity_embed_lambda=0.1,
     
     no_do=False,
     no_dshs=False,
@@ -32,13 +32,13 @@ OptimizationParams = dict(
     coarse_iterations = 3000,
     densify_until_iter = 10_000,
     opacity_reset_interval = 60000,
-    opacity_threshold_coarse = 0.005,
-
-
+    opacity_threshold_coarse = 0.001,
+    
+    
     opacity_threshold_fine_init = 0.005,
     opacity_threshold_fine_after = 0.005,
     # pruning_from_iter = 1,
     # pruning_interval=1,
-    # lambda_dssim = 0.2,
+    # lambda_dssim = 0.5,
     # pruning_interval = 2000
 )

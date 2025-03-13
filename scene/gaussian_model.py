@@ -472,17 +472,20 @@ class GaussianModel:
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation, new_deformation_table)
         return selected_xyz, new_xyz
 
-    def compute_topac_width(self, m, w, h, threshold=0.05):
+    def compute_topac_width(self, w, h, threshold=0.05):
         """ Implementing the function: t = m +- sqrt(-ln(0.05/h)/(w**2))
                         
             Notes:
                 as this returns equi-distant values from m to the intersection with h, we can re-write the function as:
                     t = 2*(+sqrt(-ln(0.05/h)/(w**2)))
+                    
+                Actually to reduce computation, we calulcate just: torch.sqrt(-torch.log(threshold / h) / (w ** 2))
+                The 2x factor apears in the width calculation as a half, meaning a tiny bit better
                         
         """
-        return 2* torch.sqrt(-torch.log(threshold / h) / (w ** 2))
+        return 2. * torch.sqrt(-torch.log(threshold / h) / (w ** 2))
 
-    def prune(self, max_grad, min_opacity, extent, max_screen_size):
+    def prune(self, h_thresold, extent, max_screen_size):
         """
         
             Notes:
@@ -498,13 +501,14 @@ class GaussianModel:
         """
         w, h, mu = self.get_opacity
         
+        prune_mask = (h < h_thresold).squeeze()
+        
         # Hyper params
-        h_thresold = 0.05
-        width_threshold = float(1./self._deformation.deformation_net.grid.grid_config[0]['resolution'][3])
-        # Calulcate min width
-        width = self.compute_topac_width(mu, w, h, h_thresold)
-        prune_mask = (width < width_threshold).squeeze()
-        # prune_mask = (h < 0.005).squeeze() # torch.logical_or((h < 0.005).squeeze(), (w < 0.01).squeeze())
+        # width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
+        # # Calulcate min width
+        # width = self.compute_topac_width(w, h, 0.05)
+        # prune_mask = (width < h_thresold).squeeze()
+        # prune_mask = torch.logical_or((h < 0.05).squeeze(), prune_mask)
         
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
@@ -630,7 +634,7 @@ class GaussianModel:
         return total
     
         
-    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight, ):
+    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight ):
         return plane_tv_weight * self._plane_regulation() + \
             time_smoothness_weight * self._time_regulation() + \
-                l1_time_planes_weight * self._l1_regulation()
+                l1_time_planes_weight * self._l1_regulation() 
