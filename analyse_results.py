@@ -5,11 +5,14 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = 'Hthresh00001_NoActivPruneW' 
-bench_marks = ['l10005TuningNoActivPruneHW','Hthresh001_NoActivPruneW', 'Hthresh01_NoActivPruneW', 'Hthresh1_NoActivPruneW',]#'Wthresh1_NoActivPruneW', 'Wthresh01_NoActivPruneW','Wthresh001_NoActivPruneW','Wthresh0001_NoActivPruneW'] # 'HSUM001_NoActivPruneHW', 'HSUM0_NoActivPruneHW', 'HSUM1_NoActivPruneHW', 'HSUM01_NoActivPruneHW']
+focal_word = 'W4PruneHW_l10005_WaveLvl_1024feautreplaneres'  #Hthresh1_PruneHW_l10005_redo
+bench_marks = ['l10005TuningNoActivPruneHW', 'PruneHW_l10005_redo', 'W3PruneHW_l10005_WaveLvl']
+               
+# 'Hthresh00001_NoActivPruneW', 'Hthresh001_NoActivPruneW', 'Hthresh01_NoActivPruneW', 'Hthresh1_NoActivPruneW',]
+# #'Wthresh1_NoActivPruneW', 'Wthresh01_NoActivPruneW','Wthresh001_NoActivPruneW','Wthresh0001_NoActivPruneW'] 
+# # 'HSUM001_NoActivPruneHW', 'HSUM0_NoActivPruneHW', 'HSUM1_NoActivPruneHW', 'HSUM01_NoActivPruneHW']
 """
 benchmark description
-
 l10005TuningNoActivPruneHW:
     Tested l1 weight with 0.00005
     Pruning using the HW method with threshold 0.005

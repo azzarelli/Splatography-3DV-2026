@@ -71,6 +71,7 @@ class PipelineParams(ParamGroup):
         self.compute_cov3D_python = False
         self.debug = False
         super().__init__(parser, "Pipeline Parameters")
+        
 class ModelHiddenParams(ParamGroup):
     def __init__(self, parser):
         self.net_width = 64 # width of deformation MLP, larger will increase the rendering quality and decrase the training/rendering speed.

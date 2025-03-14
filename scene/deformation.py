@@ -142,37 +142,18 @@ class Deformation(nn.Module):
                 rotations = rotations_emb[:,:4] + dr
         
         # Change in opacity
-        if self.args.no_do :
-            w = None
-        else:
+        w = self.opacity_w(hidden_opac)
+        h = torch.sigmoid(self.opacity_h(hidden_opac)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
+        mu = torch.sigmoid(self.opacity_mu(hidden_opac)) #opacity_emb #self.opacity_mu(hidden_opac) #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
 
-            # Lets start with the simple part - 
-            # Lets decode the main feature into width and height features, seperately
-            w = self.opacity_w(hidden_opac)
-            h = torch.sigmoid(self.opacity_h(hidden_opac)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
-            # mu = (torch.cos(self.opacity_mu(hidden_opacity))+1.)/2. # between 0 and 1
-            mu = torch.sigmoid(self.opacity_mu(hidden_opac)) #opacity_emb #self.opacity_mu(hidden_opac) #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
-
-            # Now for the temporal opacity function
-            #  y = h exp(-(w^2)|x-u|^2)
-            opacity = h * torch.exp(-(w**2)*((time_emb- mu)**2))
+        opacity = h * torch.exp(-(w**2)*((time_emb- mu)**2))
 
         
         # Change in color        
-        if self.args.no_dshs:
-            shs = shs_emb
-        else:
-            dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
+        dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
+        shs = shs_emb + dshs
 
-            shs = torch.zeros_like(shs_emb)
-            # breakpoint()
-            shs = shs_emb + dshs
-
-        if w is not None:
-            return pts, scales, rotations, opacity, shs
-
-        else:
-            return pts, scales, rotations, opacity, shs
+        return pts, scales, rotations, opacity, shs
     
     def get_mlp_parameters(self):
         parameter_list = []
@@ -249,8 +230,8 @@ def initialize_weights(m):
         if m.bias is not None:
             init.xavier_uniform_(m.weight,gain=1)
             # init.constant_(m.bias, 0)
+            
 def poc_fre(input_data,poc_buf):
-
     input_data_emb = (input_data.unsqueeze(-1) * poc_buf).flatten(-2)
     input_data_sin = input_data_emb.sin()
     input_data_cos = input_data_emb.cos()

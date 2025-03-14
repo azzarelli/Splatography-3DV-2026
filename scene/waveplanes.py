@@ -183,7 +183,6 @@ class GridSet(nn.Module):
 
         for i in range(self.J + 1):
             grids.append((1. / coef_scaler[i]) * grid_set[i])
-
         # Rescale so our initial coeff return initialisation
         self.grids = nn.ParameterList(grids)
         self.scaler = coef_scaler
@@ -365,22 +364,22 @@ class HexPlaneField(nn.Module):
         self.cacheplanes = True
         self.is_waveplanes = True
         
-        res_multiplier = 2
+        res_multiplier = 1
         j, k = 0, 1
         for i in range(6):
             # We only need a grid for the space-time features
             if k == 3: 
                 what = 'spacetime'
-                res = [self.grid_config[0]['resolution'][j] * res_multiplier, self.grid_config[0]['resolution'][k]]
+                res = [self.grid_config[0]['resolution'][j], self.grid_config[0]['resolution'][k]]
             else:
                 what = 'space'
-                res = [self.grid_config[0]['resolution'][j] * res_multiplier,
-                       self.grid_config[0]['resolution'][k] * res_multiplier]
+                res = [self.grid_config[0]['resolution'][j],
+                       self.grid_config[0]['resolution'][k]]
             
             gridset = GridSet(
                 what=what,
                 resolution=res,
-                J=2,
+                J=self.grid_config[0]['wavelevel'],
                 config={
                     'feature_size': self.grid_config[0]["output_coordinate_dim"],
                     'a': 0.1,

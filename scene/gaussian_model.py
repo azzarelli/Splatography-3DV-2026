@@ -501,14 +501,12 @@ class GaussianModel:
         """
         w, h, mu = self.get_opacity
         
-        prune_mask = (h < h_thresold).squeeze()
-        
         # Hyper params
-        # width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
-        # # Calulcate min width
-        # width = self.compute_topac_width(w, h, 0.05)
-        # prune_mask = (width < h_thresold).squeeze()
-        # prune_mask = torch.logical_or((h < 0.05).squeeze(), prune_mask)
+        width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
+        # Calulcate min width
+        width = self.compute_topac_width(w, h, 0.05)
+        prune_mask = (width < width_threshold).squeeze()
+        prune_mask = torch.logical_or((h < 0.05).squeeze(), prune_mask)
         
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
