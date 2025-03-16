@@ -59,7 +59,6 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
-        self._deformation_table = torch.empty(0)
         self.setup_functions()
 
     def capture(self):
@@ -67,8 +66,6 @@ class GaussianModel:
             self.active_sh_degree,
             self._xyz,
             self._deformation.state_dict(),
-            self._deformation_table,
-            # self.grid,
             self._features_dc,
             self._features_rest,
             self._scaling,
@@ -84,7 +81,6 @@ class GaussianModel:
         (self.active_sh_degree,
         self._xyz,
         deform_state,
-        self._deformation_table,
 
         # self.grid,
         self._features_dc,
@@ -163,14 +159,11 @@ class GaussianModel:
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-        self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
     
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self._deformation_accum = torch.zeros((self.get_xyz.shape[0],3),device="cuda")
-
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -235,18 +228,11 @@ class GaussianModel:
         weight_dict = torch.load(os.path.join(path,"deformation.pth"),map_location="cuda")
         self._deformation.load_state_dict(weight_dict)
         self._deformation = self._deformation.to("cuda")
-        self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
-        self._deformation_accum = torch.zeros((self.get_xyz.shape[0],3),device="cuda")
-        if os.path.exists(os.path.join(path, "deformation_table.pth")):
-            self._deformation_table = torch.load(os.path.join(path, "deformation_table.pth"),map_location="cuda")
-        if os.path.exists(os.path.join(path, "deformation_accum.pth")):
-            self._deformation_accum = torch.load(os.path.join(path, "deformation_accum.pth"),map_location="cuda")
+        
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         # print(self._deformation.deformation_net.grid.)
     def save_deformation(self, path):
         torch.save(self._deformation.state_dict(),os.path.join(path, "deformation.pth"))
-        torch.save(self._deformation_table,os.path.join(path, "deformation_table.pth"))
-        torch.save(self._deformation_accum,os.path.join(path, "deformation_accum.pth"))
     
     def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
@@ -350,9 +336,8 @@ class GaussianModel:
         self._features_rest = optimizable_tensors["f_rest"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
-        self._deformation_accum = self._deformation_accum[valid_points_mask]
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
-        self._deformation_table = self._deformation_table[valid_points_mask]
+
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
 
@@ -379,13 +364,12 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation, new_deformation_table):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
         "scaling" : new_scaling,
         "rotation" : new_rotation,
-        # "deformation": new_deformation
        }
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
@@ -394,11 +378,8 @@ class GaussianModel:
         self._features_rest = optimizable_tensors["f_rest"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
-        # self._deformation = optimizable_tensors["deformation"]
 
-        self._deformation_table = torch.cat([self._deformation_table,new_deformation_table],-1)
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self._deformation_accum = torch.zeros((self.get_xyz.shape[0], 3), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
@@ -423,8 +404,8 @@ class GaussianModel:
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_deformation_table = self._deformation_table[selected_pts_mask].repeat(N)
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation, new_deformation_table)
+
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -440,8 +421,8 @@ class GaussianModel:
         new_features_rest = self._features_rest[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
-        new_deformation_table = self._deformation_table[selected_pts_mask]
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation, new_deformation_table)
+
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation)
 
     @property
     def get_aabb(self):
@@ -460,7 +441,7 @@ class GaussianModel:
         """
         return 2. * torch.sqrt(-torch.log(threshold / h) / (w ** 2))
 
-    def prune(self, h_thresold, extent, max_screen_size):
+    def prune(self, h_thresold, extent, max_screen_size,):
         """
         
             Notes:
@@ -475,7 +456,7 @@ class GaussianModel:
                     grid resolution (basically temporal pruning)
         """
         w, h, mu = self.get_opacity
-        
+
         # Hyper params
         width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
         # Calulcate min width
@@ -486,7 +467,10 @@ class GaussianModel:
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
-            prune_mask = torch.logical_or(prune_mask, big_points_vs)
+            if prune_mask is None:
+                prune_mask = big_points_vs
+            else:
+                prune_mask = torch.logical_or(prune_mask, big_points_vs)
             prune_mask = torch.logical_or(prune_mask, big_points_ws)
         self.prune_points(prune_mask)
 

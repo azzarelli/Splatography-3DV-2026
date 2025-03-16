@@ -74,8 +74,9 @@ class Scene:
 
         self.train_camera = FourDGSdataset(scene_info.train_cameras, args, dataset_type)
         self.test_camera = FourDGSdataset(scene_info.test_cameras, args, dataset_type)
-
-
+        self.video_camera = FourDGSdataset(scene_info.video_cameras, args, dataset_type)
+        
+        
         # self.video_camera = cameraList_from_camInfos(scene_info.video_cameras,-1,args)
         xyz_max = scene_info.point_cloud.points.max(axis=0)
         xyz_min = scene_info.point_cloud.points.min(axis=0)
@@ -115,3 +116,6 @@ class Scene:
 
     def getTestCameras(self, scale=1.0):
         return self.test_camera
+    
+    def getVideoCameras(self, scale=1.0):
+        return self.video_camera

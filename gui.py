@@ -984,7 +984,9 @@ class GUI:
                 self.hyperparams.l1_time_planes, 
                 self.hyperparams.plane_tv_weight,
                 )
-
+            
+            w_, h_, mu_ = self.gaussians.get_opacity
+            loss += ((1 - h_)**2).mean()            
 
         if self.opt.lambda_dssim != 0:
             loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
@@ -1045,7 +1047,8 @@ class GUI:
                 
                 if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-                    self.gaussians.prune(self.hyperparams.opacity_lambda,self.scene.cameras_extent, size_threshold)
+                
+                    self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
 
 
                 # if self.iteration % self.opt.opacity_reset_interval == 0:
@@ -1142,6 +1145,8 @@ class GUI:
             else:
                 dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
                 dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
+
+
 
 
 def prepare_output_and_logger(expname):    

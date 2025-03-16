@@ -56,7 +56,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         if idx == 0:time1 = time()
         
-        rendering = render(view, gaussians, pipeline, background,cam_type=cam_type)["render"]
+        rendering = render(view, gaussians, pipeline, background,cam_type=cam_type)["depth"]
         render_images.append(to8b(rendering).transpose(1,2,0))
         render_list.append(rendering)
         if name in ["train", "test"]:

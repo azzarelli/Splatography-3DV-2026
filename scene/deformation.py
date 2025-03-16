@@ -149,9 +149,41 @@ class Deformation(nn.Module):
         opacity = h * torch.exp(-(w**2)*((time_emb- mu)**2))
 
         
+        
+        
+        
         # Change in color        
         dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
         shs = shs_emb + dshs
+        
+        # w_np = w.cpu().numpy().flatten()
+        # h_np = h.cpu().numpy().flatten()
+        # mu_np = mu.cpu().numpy().flatten()
+        # opacity_np = opacity.cpu().numpy().flatten()
+
+
+
+        # import matplotlib.pyplot as plt
+
+        # fig, axes = plt.subplots(2, 2, figsize=(12, 8))  # 2x2 grid of subplots
+
+        # # Plot each histogram in its own axis
+        # axes[0, 0].hist(h_np, bins=30, color='blue', edgecolor='black')
+        # axes[0, 0].set_title('Histogram of h')
+
+        # axes[0, 1].hist(w_np, bins=100, color='green', edgecolor='black')
+        # axes[0, 1].set_title('Histogram of w')
+
+        # axes[1, 0].hist(mu_np, bins=30, color='red', edgecolor='black')
+        # axes[1, 0].set_title('Histogram of mu')
+
+        # axes[1, 1].hist(opacity_np, bins=30, color='purple', edgecolor='black')
+        # axes[1, 1].set_title('Histogram of opacity')
+
+        # # Adjust layout
+        # plt.tight_layout()
+        # plt.show()
+        # exit()
 
         return pts, scales, rotations, opacity, shs
     

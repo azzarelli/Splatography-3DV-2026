@@ -44,10 +44,8 @@ else
   exit 1
 fi
 
-SAVEDIR="flame_steak"
-ARGS=flame_steak.py
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/Wn$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
-python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/W4$EXP_NAME" --configs arguments/dynerf/wv4.py --test_iterations 1000
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/W4$EXP_NAME" --configs arguments/dynerf/wv4.py --test_iterations 1000
 
 # python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
 # python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/dssim2.py --test_iterations 1000
