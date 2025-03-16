@@ -1040,14 +1040,14 @@ class GUI:
             if self.stage == "fine": factor = 1.
             else: factor=10.
 
-            if self.opt.comprehensive_loss:
-                if self.opt.late_start:
-                    if self.iteration > 7000: # start late loss after 7000 its
-                        consistency_loss += factor * self.consistency_loss(viewpoint_cam, image, gt_img=gt_image)
-                else:
-                    consistency_loss += factor * self.consistency_loss(viewpoint_cam, image, gt_img=gt_image)
-            else:
-                consistency_loss += factor * self.consistency_loss(viewpoint_cam, image)
+            # if self.opt.comprehensive_loss:
+            #     if self.opt.late_start:
+            #         if self.iteration > 7000: # start late loss after 7000 its
+            #             consistency_loss += factor * self.consistency_loss(viewpoint_cam, image, gt_img=gt_image)
+            #     else:
+            #         consistency_loss += factor * self.consistency_loss(viewpoint_cam, image, gt_img=gt_image)
+            # else:
+            #     consistency_loss += factor * self.consistency_loss(viewpoint_cam, image)
 
 
             # train the gaussians inside the mask
@@ -1065,7 +1065,7 @@ class GUI:
         visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
 
         # Loss
-        loss = L1 + (consistency_loss /len(radii_list))
+        loss = L1 # + (consistency_loss /len(radii_list))
 
 
         if self.iteration % 1000 == 0:
@@ -1151,7 +1151,7 @@ class GUI:
             if self.iteration < self.opt.iterations:
                 self.gaussians.optimizer.step()
             
-            if (self.iteration in self.saving_iterations) and self.iteration != self.checkpoint:
+            if (self.iteration in self.saving_iterations) and self.iteration != self.checkpoint :
                 print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
                 torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
 
@@ -1314,7 +1314,7 @@ def save_gt_pred(gt, pred, iteration, idx, name):
 
     # image_array = image_array.astype(np.uint8)
 
-    cv2.imwrite(f'debugging/{iteration}/{name}_{idx}.png', image_array)
+    # cv2.imwrite(f'debugging/{iteration}/{name}_{idx}.png', image_array)
 
     return image_array
 
@@ -1332,7 +1332,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", type=int, default=1000)
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 14000, 20000, 30_000, 45000, 60000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[14000, 20000, 30_000, 45000, 60000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)

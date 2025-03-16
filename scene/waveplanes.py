@@ -327,7 +327,7 @@ class GridSet(nn.Module):
             if self.what == 'spacetime':
                 # Sample features
                 feature = (
-                    grid_sample_wrapper(plane, pts, st=True)
+                    grid_sample_wrapper(plane, pts)
                     .view(-1, plane.shape[1])
                 )
             else:

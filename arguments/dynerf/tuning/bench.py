@@ -35,5 +35,11 @@ OptimizationParams = dict(
     opacity_threshold_fine_after = 0.005,
     # pruning_interval = 2000
 
-    lr_baseline=0.1
+    lr_baseline=0.1,
+
+    comprehensive_loss=True,
+    LR_gt_loss=True,
+    LR_RL_loss=True,
+    LR_C_pred_loss=True,
+    late_start=True
 )
