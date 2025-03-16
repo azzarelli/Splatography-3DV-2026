@@ -164,6 +164,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
+    
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -445,32 +446,6 @@ class GaussianModel:
     @property
     def get_aabb(self):
         return self._deformation.get_aabb
-    def get_displayment(self,selected_point, point, perturb):
-        xyz_max, xyz_min = self.get_aabb
-        displacements = torch.randn(selected_point.shape[0], 3).to(selected_point) * perturb
-        final_point = selected_point + displacements
-
-        mask_a = final_point<xyz_max
-        mask_b = final_point>xyz_min
-        mask_c = mask_a & mask_b
-        mask_d = mask_c.all(dim=1)
-        final_point = final_point[mask_d]
-
-
-        return final_point, mask_d
-    def add_point_by_mask(self, selected_pts_mask, perturb=0):
-        selected_xyz = self._xyz[selected_pts_mask]
-        new_xyz, mask = self.get_displayment(selected_xyz, self.get_xyz.detach(),perturb)
-
-        new_features_dc = self._features_dc[selected_pts_mask][mask]
-        new_features_rest = self._features_rest[selected_pts_mask][mask]
-
-        new_scaling = self._scaling[selected_pts_mask][mask]
-        new_rotation = self._rotation[selected_pts_mask][mask]
-        new_deformation_table = self._deformation_table[selected_pts_mask][mask]
-
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_scaling, new_rotation, new_deformation_table)
-        return selected_xyz, new_xyz
 
     def compute_topac_width(self, w, h, threshold=0.05):
         """ Implementing the function: t = m +- sqrt(-ln(0.05/h)/(w**2))
@@ -522,77 +497,17 @@ class GaussianModel:
     #     optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
     #     self._opacity = optimizable_tensors["opacity"]
 
-
     def densify(self, max_grad, min_opacity, extent, max_screen_size, density_threshold, displacement_scale, model_path=None, iteration=None, stage=None):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
         self.densify_and_clone(grads, max_grad, extent, density_threshold, displacement_scale, model_path, iteration, stage)
         self.densify_and_split(grads, max_grad, extent)
-    
-    def standard_constaint(self):
-
-        means3D = self._xyz.detach()
-        scales = self._scaling.detach()
-        rotations = self._rotation.detach()
-        time =  torch.tensor(0).to("cuda").repeat(means3D.shape[0],1)
-        means3D_deform, scales_deform, rotations_deform, _ = self._deformation(means3D, scales, rotations, time)
-        position_error = (means3D_deform - means3D)**2
-        rotation_error = (rotations_deform - rotations)**2
-        scaling_erorr = (scales_deform - scales)**2
-        return position_error.mean() + rotation_error.mean() + scaling_erorr.mean()
-
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
-    @torch.no_grad()
-    def update_deformation_table(self,threshold):
-        # print("origin deformation point nums:",self._deformation_table.sum())
-        self._deformation_table = torch.gt(self._deformation_accum.max(dim=-1).values/100,threshold)
-    def print_deformation_weight_grad(self):
-        for name, weight in self._deformation.named_parameters():
-            if weight.requires_grad:
-                if weight.grad is None:
 
-                    print(name," :",weight.grad)
-                else:
-                    if weight.grad.mean() != 0:
-                        print(name," :",weight.grad.mean(), weight.grad.min(), weight.grad.max())
-        print("-"*50)
-    # def _plane_regulation(self):
-    #     gridsets = [self._deformation.deformation_net.grid]
-        
-    #     total = 0.
-    #     for gridset in gridsets:
-    #         # model.grids is 6 x [1, rank * F_dim, reso, reso]
-    #         for grids in gridset.grids_():
-    #             time_grids =  [0,1,3]
-    #             for grid_id in time_grids:
-    #                 total += compute_plane_smoothness(grids[grid_id])
-    #     return total
-
-    # def _time_regulation(self):
-    #     gridsets = [self._deformation.deformation_net.grid]
-        
-    #     total = 0.
-    #     for gridset in gridsets:
-    #         for grids in gridset.grids_():
-    #             spatiotemporal_grids =[2, 4, 5]
-    #             for grid_id in spatiotemporal_grids:
-    #                 total += compute_plane_smoothness(grids[grid_id])
-    #     return total
-    # def _l1_regulation(self):
-    #     gridsets = [self._deformation.deformation_net.grid]
-        
-    #     total = 0.
-    #     for gridset in gridsets:
-    #         for grids in gridset.grids_():
-    #             spatiotemporal_grids = [2, 4, 5]
-    #             for grid_id in spatiotemporal_grids:
-    #                 total += torch.abs(1 - grids[grid_id]).mean()
-    #     return total
-    
     def _plane_regulation(self):
         if self._deformation.deformation_net.grid.is_waveplanes:
             multi_res_grids = self._deformation.deformation_net.grid.grids_()

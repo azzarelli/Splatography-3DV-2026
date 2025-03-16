@@ -58,7 +58,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-
     means2D = screenspace_points
     shs = pc.get_features
 
