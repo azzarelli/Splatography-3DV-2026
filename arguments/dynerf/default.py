@@ -4,7 +4,7 @@ ModelHiddenParams = dict(
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
      'resolution': [264, 264, 264, 150],
-     'wavelevel':3
+     'wavelevel':2
     },
     multires = [1,2],
     defor_depth = 0,

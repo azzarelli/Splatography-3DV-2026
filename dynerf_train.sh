@@ -46,32 +46,4 @@ fi
 
 SAVEDIR="flame_steak"
 ARGS=flame_steak.py
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/Wn$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
-python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/W4$EXP_NAME" --configs arguments/dynerf/wv4.py --test_iterations 1000
-
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/dssim2.py --test_iterations 1000
-
-# SAVEDIR="coffee_martini"
-# ARGS=coffee_martini.py
-# 4 Training Cameras at extremities
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/l1005$EXP_NAME" --configs arguments/dynerf/l1005.py --test_iterations 1000
-
-# SAVEDIR="cut_roasted_beef"
-# ARGS=cut_roasted_beef.py
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/l1005$EXP_NAME" --configs arguments/dynerf/l1005.py --test_iterations 1000
-
-# SAVEDIR="sear_steak"
-#   ARGS=sear_steak.py
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/l1005$EXP_NAME" --configs arguments/dynerf/l1005.py --test_iterations 1000
-
-# SAVEDIR="sear_steak"
-# ARGS=sear_steak.py
-# EVAL_LIST="0 2 3 4 5 6 7 8 9 12 13 14 15 16 17 18 19"
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
-
-
-# python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/halfref_$EXP_NAME" --configs arguments/dynerf/default2.py --test_iterations 1000
-# python render.py --model_path "output/dynerf/$SAVEDIR/$EXP_NAME" --skip_train --configs arguments/dynerf/default.py
-# Metrics
-#python render.py --model_path "output/dynerf/$SAVEDIR/$EXP_NAME" --skip_train --configs arguments/dynerf/$ARGS
+python gui.py -s /home/barry/data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/F_to_shs_direct" --configs arguments/dynerf/default.py --test_iterations 1000

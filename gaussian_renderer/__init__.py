@@ -60,7 +60,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
 
 
     means2D = screenspace_points
-    shs = pc.get_features
+    shs = pc.get_features # shape N, 16, 3
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -74,7 +74,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         rotations = pc._rotation
 
     if "coarse" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
+        means3D_final, scales_final, rotations_final, opacity = means3D, scales, rotations, torch.ones_like(means3D[..., 0])
+        shs_final = shs #pc._deformation.deformation_net.get_scene_point_shs(shs)
     elif "fine" in stage:
         means3D_final, scales_final, rotations_final, opacity, shs_final = pc._deformation(means3D, scales,
                                                                                                  rotations,
@@ -92,20 +93,23 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
     # shs = None
+    # essential colors_precomp are RGB values that we can determine to overcome issues with shs
     colors_precomp = None
-    if override_color is None:
-        if pipe.convert_SHs_python:
-            shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree + 1) ** 2)
-            dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.cuda().repeat(pc.get_features.shape[0], 1))
-            dir_pp_normalized = dir_pp / dir_pp.norm(dim=1, keepdim=True)
-            sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
-            colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
-        else:
-            pass
-            # shs =
-    else:
-        colors_precomp = override_color
-
+    # if override_color is None:
+    #     if pipe.convert_SHs_python:
+    #         shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree + 1) ** 2)
+    #         dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.cuda().repeat(pc.get_features.shape[0], 1))
+    #         dir_pp_normalized = dir_pp / dir_pp.norm(dim=1, keepdim=True)
+    #         sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
+    #         colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
+    #     else:
+    #         pass
+    #         # shs =
+    # else:
+    #     colors_precomp = override_color
+        
+        
+    # print(colors_precomp)
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     # time3 = get_time()
     rendered_image, radii, depth = rasterizer(

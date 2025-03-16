@@ -77,7 +77,7 @@ def init_grid_param(
     return grid_coefs
 
 
-def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
+def interpolate_features_MUL_old(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
     """Generate features for each point
     """
     if ro_grid is not None:
@@ -125,6 +125,47 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
                 r = q + 1
 
         return interp_1, sp_interp
+
+
+def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
+    """Generate features for each point
+    """
+    if ro_grid is not None:
+        rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
+        pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
+
+    # time m feature
+    st_interp = 1.
+    sp_interp = 1.
+                
+    if is_opacity_grid:
+        # q,r are the coordinate combinations needed to retrieve pts
+        q, r = 0, 1
+        for i in range(3):
+            if i == 2:# Make sure we are using the space-only planes [0,1,3]
+                i == 3
+
+            sp_interp = sp_interp * kplanes[i](pts[..., (q, r)], idwt)
+
+            r +=1
+            if r == 3:
+                q = 1
+                r = 2
+        return sp_interp
+    else:
+        q,r = 0,1
+        for i in range(6):
+            if i in [2,4,5]: #spactime
+                st_interp = st_interp * kplanes[i](pts[..., (q, r)], idwt)
+            else: # space only
+                sp_interp = sp_interp * kplanes[i](pts[..., (q, r)], idwt)
+                
+            r += 1
+            if r == 4:
+                q += 1
+                r = q + 1
+
+        return st_interp, sp_interp
 
 # Define the grid
 class GridSet(nn.Module):

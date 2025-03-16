@@ -164,6 +164,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
+    
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -224,10 +225,6 @@ class GaussianModel:
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
         return l
-    def compute_deformation(self,time):
-        deform = self._deformation[:,:,:time].sum(dim=-1)
-        xyz = self._xyz + deform
-        return xyz
 
     def load_model(self, path):
         print("loading model from exists{}".format(path))
@@ -385,7 +382,7 @@ class GaussianModel:
         "scaling" : new_scaling,
         "rotation" : new_rotation,
         # "deformation": new_deformation
-       }
+        }
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]

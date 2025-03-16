@@ -46,6 +46,7 @@ class Deformation(nn.Module):
         
         self.ratio=0
         self.create_net()
+            
     @property
     def get_aabb(self):
         return self.grid.get_aabb
@@ -67,27 +68,35 @@ class Deformation(nn.Module):
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
 
         # Same for opacity grid
-        self.opacity_featu_out = nn.Sequential(nn.Linear(insize, net_size))
-      
+        self.st_feature_out = nn.Sequential(nn.Linear(insize, net_size))
+        self.sp_feature_out= nn.Sequential(nn.Linear(insize, net_size))
+
         # self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
         self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
         self.opacity_w = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
         self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
+
+        self.opacity_sp_shs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
 
 
     def query_time(self, rays_pts_emb, time_emb, iterations):
         
         st, sp = self.grid(rays_pts_emb[:,:3], time_emb[:,:1], iterations)
         # Querying the feature grids
-        st_features = self.feature_out(
-            st
+        features = self.feature_out(
+            st*sp
         )
         
-        sp_features = self.opacity_featu_out(
+        sp_features = self.st_feature_out(
             sp
         )
         
-        return st_features, sp_features
+        st_features = self.sp_feature_out(
+            st
+        )
+        
+        
+        return features, sp_features, st_features
     
     @property
     def get_empty_ratio(self):
@@ -105,14 +114,15 @@ class Deformation(nn.Module):
         return rays_pts_emb[:, :3] + dx
     
     def foward_opac(self, xyz):
-        feature =  self.opacity_featu_out(
+        feature =  self.st_feature_out(
             self.grid.get_opacity_vars(xyz)
         )
         return self.opacity_w(feature), torch.sigmoid(self.opacity_h(feature)), torch.sigmoid(self.opacity_mu(feature))
-        
+
+    
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration):
         
-        hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, iteration)
+        hidden, hidden_sp, hidden_st = self.query_time(rays_pts_emb, time_emb, iteration)
 
         # Change in position
         if self.args.no_dx:
@@ -127,6 +137,7 @@ class Deformation(nn.Module):
             
             scales = scales_emb[:,:3]
         else:
+            
             ds = self.scales_deform(hidden)
             scales = scales_emb[:,:3] + ds
 
@@ -142,16 +153,26 @@ class Deformation(nn.Module):
                 rotations = rotations_emb[:,:4] + dr
         
         # Change in opacity
-        w = self.opacity_w(hidden_opac)
-        h = torch.sigmoid(self.opacity_h(hidden_opac)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
-        mu = torch.sigmoid(self.opacity_mu(hidden_opac)) #opacity_emb #self.opacity_mu(hidden_opac) #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
+        w = self.opacity_w(hidden_sp)
+        h = torch.sigmoid(self.opacity_h(hidden_sp)) #(torch.cos(self.opacity_h(hidden_sp))+1.)/2. # between 0 and 1
+        mu = torch.sigmoid(self.opacity_mu(hidden_sp)) #opacity_emb #self.opacity_mu(hidden_sp) #(torch.cos(self.opacity_mu(hidden_sp))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
 
         opacity = h * torch.exp(-(w**2)*((time_emb- mu)**2))
 
         
-        # Change in color        
-        dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
-        shs = shs_emb + dshs
+        # Change in color 
+        """
+            `shs_emb` is the N,16,3 shs embedding per point
+            `self.scene_basis` is the 16,3 embedding for the whole scene
+            `hidden_st` features for the space-time functionality
+            
+            Here we use the linearly decoded space-time features that are then decoded to shs 
+            values. There are multiplied with the scene-point basis to provide the new shs fnction
+            
+            during coarse iterations we take the first part of the shs function
+        """
+        shs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
+        # shs =  (self.opacity_sp_shs(hidden_sp) * dshs).reshape([shs_emb.shape[0],16,3]) # self.get_scene_point_shs(shs_emb)
 
         return pts, scales, rotations, opacity, shs
     
