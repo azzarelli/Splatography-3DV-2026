@@ -12,7 +12,7 @@ import torch.nn.init as init
 from utils.graphics_utils import apply_rotation, batch_quaternion_multiply
 from scene.hexplane import HexPlaneField
 
-from scene.waveplanes import HexPlaneField as WavePlaneField
+from scene.waveplanes import WavePlaneField
 
 from scene.grid import DenseGrid
 
@@ -28,13 +28,8 @@ class Deformation(nn.Module):
         self.skips = skips
         self.no_grid = args.no_grid
 
-        self.opacity_grid = False
-        if args.use_waveplanes:
-            print("[Using WavePlanes]")
-            self.grid = WavePlaneField(args.bounds, args.kplanes_config, args.multires, use_rotation=args.plane_rotation_correction)
-            # self.opacity_grid = WavePlaneField(args.bounds, args.kplanes_config['opacity_config'], args.multires, use_rotation=args.plane_rotation_correction, is_opacity_grid=True)
-        else:
-            self.grid = HexPlaneField(args.bounds, args.kplanes_config, args.multires)
+        self.grid = WavePlaneField(args.bounds, args.kplanes_config, args.multires, use_rotation=args.plane_rotation_correction)
+        self.motion_grid = WavePlaneField(args.bounds, args.kplanes_config, args.multires, use_rotation=args.plane_rotation_correction, dynamic_triplane=True)
 
         # breakpoint()
         self.args = args
@@ -61,7 +56,9 @@ class Deformation(nn.Module):
         insize = self.grid.feat_dim 
         self.feature_out = nn.Sequential(nn.Linear(insize,net_size))
 
-        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(insize,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        
+        # self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
@@ -80,14 +77,22 @@ class Deformation(nn.Module):
         st, sp = self.grid(rays_pts_emb[:,:3], time_emb[:,:1], iterations)
         # Querying the feature grids
         st_features = self.feature_out(
-            st
+            st * sp # Multiply space and space-time features for general param deformations
         )
         
         sp_features = self.opacity_featu_out(
-            sp
+            sp  # Opacity RBF model
         )
         
-        return st_features, sp_features
+        st_2 = self.motion_grid(rays_pts_emb[:,:3], time_emb[:,:1], iterations)
+
+        motion = self.pos_deform(
+            sp * st_2
+        )
+        
+        
+        
+        return st_features, sp_features, motion
     
     @property
     def get_empty_ratio(self):
@@ -112,15 +117,14 @@ class Deformation(nn.Module):
         
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration):
         
-        hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, iteration)
+        hidden, hidden_opac, motion = self.query_time(rays_pts_emb, time_emb, iteration)
 
         # Change in position
         if self.args.no_dx:
             pts = rays_pts_emb[:,:3]
         else:
-
-            dx_start = self.pos_deform(hidden)
-            pts = rays_pts_emb[:,:3] + dx_start
+            # dx_start = self.pos_deform(hidden)
+            pts = rays_pts_emb[:,:3] + motion
 
         # Change in scale
         if self.args.no_ds :

@@ -77,6 +77,24 @@ def init_grid_param(
     return grid_coefs
 
 
+def interpolate_triplane_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid):
+    """Interpollate triplane features for dynamic tri-plane
+    """
+    if ro_grid is not None:
+        rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
+        pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
+
+    # time m feature
+    interp_1 = 1.
+        
+    # q,r are the coordinate combinations needed to retrieve pts
+    for i in range(3):
+        coeff = kplanes[i]
+        feature = coeff(pts[..., (i, 3)], idwt)
+        interp_1 = interp_1 * feature
+ 
+    return interp_1
+
 def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
     """Generate features for each point
     """
@@ -88,7 +106,7 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
     interp_1 = 1.
     sp_interp = 1.
     
-    if is_opacity_grid:
+    if is_opacity_grid: # Sample just the space-only grids
         # q,r are the coordinate combinations needed to retrieve pts
         q, r = 0, 1
         for i in range(3):
@@ -115,9 +133,11 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
 
             feature = coeff(pts[..., (q, r)], idwt)
 
-            interp_1 = interp_1 * feature
             if r != 3:
                 sp_interp = sp_interp * feature
+            else:
+                interp_1 = interp_1 * feature
+
             
             r += 1
             if r == 4:
@@ -338,7 +358,7 @@ class GridSet(nn.Module):
         return feature
 
 
-class HexPlaneField(nn.Module):
+class WavePlaneField(nn.Module):
     def __init__(
             self,
             bounds,
@@ -346,6 +366,7 @@ class HexPlaneField(nn.Module):
             multires,
             use_rotation=False,
             is_opacity_grid=False,
+            dynamic_triplane=False
     ):
         super().__init__()
         aabb = torch.tensor([[bounds, bounds, bounds],
@@ -364,34 +385,58 @@ class HexPlaneField(nn.Module):
         self.cacheplanes = True
         self.is_waveplanes = True
         
-        res_multiplier = 1
+        self.triplane = dynamic_triplane
+        
         j, k = 0, 1
         for i in range(6):
-            # We only need a grid for the space-time features
-            if k == 3: 
+            if dynamic_triplane and k == 3:
                 what = 'spacetime'
                 res = [self.grid_config[0]['resolution'][j], self.grid_config[0]['resolution'][k]]
-            else:
-                what = 'space'
-                res = [self.grid_config[0]['resolution'][j],
-                       self.grid_config[0]['resolution'][k]]
-            
-            gridset = GridSet(
-                what=what,
-                resolution=res,
-                J=self.grid_config[0]['wavelevel'],
-                config={
-                    'feature_size': self.grid_config[0]["output_coordinate_dim"],
-                    'a': 0.1,
-                    'b': 0.5,
-                    'wave': 'coif4',
-                    'wave_mode': 'periodization',
-                },
-                cachesig=self.cacheplanes
-            )
+                gridset = GridSet(
+                    what=what,
+                    resolution=res,
+                    J=self.grid_config[0]['wavelevel'],
+                    config={
+                        'feature_size': self.grid_config[0]["output_coordinate_dim"],
+                        'a': 0.1,
+                        'b': 0.5,
+                        'wave': 'coif4',
+                        'wave_mode': 'periodization',
+                    },
+                    cachesig=self.cacheplanes
+                )
 
-            self.grids.append(gridset)
-            
+                self.grids.append(gridset)
+                
+            elif dynamic_triplane:
+                pass
+                
+            else:
+                # We only need a grid for the space-time features
+                if k == 3: 
+                    what = 'spacetime'
+                    res = [self.grid_config[0]['resolution'][j], self.grid_config[0]['resolution'][k]]
+                else:
+                    what = 'space'
+                    res = [self.grid_config[0]['resolution'][j],
+                        self.grid_config[0]['resolution'][k]]
+                
+                gridset = GridSet(
+                    what=what,
+                    resolution=res,
+                    J=self.grid_config[0]['wavelevel'],
+                    config={
+                        'feature_size': self.grid_config[0]["output_coordinate_dim"],
+                        'a': 0.1,
+                        'b': 0.5,
+                        'wave': 'coif4',
+                        'wave_mode': 'periodization',
+                    },
+                    cachesig=self.cacheplanes
+                )
+
+                self.grids.append(gridset)
+                
             k += 1
             if k == 4:
                 j += 1
@@ -450,27 +495,43 @@ class HexPlaneField(nn.Module):
 
                 for j, feature_plane in enumerate(ms_feature_planes):
                     ms_planes[j].append(feature_plane)
-
         else:
             # Retrive planes to regularise
-            ms_planes = []
-            for i in range(6):
-                if time_only and i not in [2, 4, 5]:
-                    continue
+            if self.triplane:
+                ms_planes = []
+                for i in range(3):
+                    gridset = self.grids[i]
 
-                gridset = self.grids[i]
+                    if self.cacheplanes:
+                        ms_feature_planes = gridset.signal
+                    else:
+                        ms_feature_planes = gridset.idwt_transform(self.idwt)
 
-                if self.cacheplanes:
-                    ms_feature_planes = gridset.signal
-                else:
-                    ms_feature_planes = gridset.idwt_transform(self.idwt)
+                    # Initialise empty ms_planes
+                    if ms_planes == []:
+                        ms_planes = [[] for j in range(len(ms_feature_planes))]
 
-                # Initialise empty ms_planes
-                if ms_planes == []:
-                    ms_planes = [[] for j in range(len(ms_feature_planes))]
+                    for j, feature_plane in enumerate(ms_feature_planes):
+                        ms_planes[j].append(feature_plane)
+            else:
+                ms_planes = []
+                for i in range(6):
+                    if time_only and i not in [2, 4, 5]:
+                        continue
 
-                for j, feature_plane in enumerate(ms_feature_planes):
-                    ms_planes[j].append(feature_plane)
+                    gridset = self.grids[i]
+
+                    if self.cacheplanes:
+                        ms_feature_planes = gridset.signal
+                    else:
+                        ms_feature_planes = gridset.idwt_transform(self.idwt)
+
+                    # Initialise empty ms_planes
+                    if ms_planes == []:
+                        ms_planes = [[] for j in range(len(ms_feature_planes))]
+
+                    for j, feature_plane in enumerate(ms_feature_planes):
+                        ms_planes[j].append(feature_plane)
 
         return ms_planes
 
@@ -482,14 +543,21 @@ class HexPlaneField(nn.Module):
             pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
 
         pts = pts.reshape(-1, pts.shape[-1])
-
-        return interpolate_features_MUL(
-            pts, self.grids, self.idwt, self.reorient_grid, False
-        )
+        
+        if self.triplane: # if this is the dynamic tri-plane
+            return interpolate_triplane_features_MUL(
+                pts, self.grids, self.idwt, self.reorient_grid
+            )
+        else:
+            return interpolate_features_MUL(
+                pts, self.grids, self.idwt, self.reorient_grid, False
+            )
 
     def get_opacity_vars(self, pts):
         pts = normalize_aabb(pts, self.aabb)
         pts = pts.reshape(-1, pts.shape[-1])
+        
+        
         return interpolate_features_MUL(
             pts, self.grids, self.idwt, self.reorient_grid, True
         )

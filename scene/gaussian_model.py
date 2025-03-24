@@ -493,10 +493,8 @@ class GaussianModel:
         self.denom[update_filter] += 1
 
     def _plane_regulation(self):
-        if self._deformation.deformation_net.grid.is_waveplanes:
-            multi_res_grids = self._deformation.deformation_net.grid.grids_()
-        else:
-            multi_res_grids = self._deformation.deformation_net.grid.grids
+        multi_res_grids = self._deformation.deformation_net.grid.grids_()
+
         total = 0
         # model.grids is 6 x [1, rank * F_dim, reso, reso]
         for grids in multi_res_grids:
@@ -506,28 +504,29 @@ class GaussianModel:
         return total
 
     def _time_regulation(self):
-        if self._deformation.deformation_net.grid.is_waveplanes:
-            multi_res_grids = self._deformation.deformation_net.grid.grids_()
-        else:
-            multi_res_grids = self._deformation.deformation_net.grid.grids
+    
         total = 0
         # model.grids is 6 x [1, rank * F_dim, reso, reso]
-        for grids in multi_res_grids:
+        for grids in self._deformation.deformation_net.grid.grids_():
             time_grids =[2, 4, 5]
             for grid_id in time_grids:
                 total += compute_plane_smoothness(grids[grid_id])
+                
+        for grids in self._deformation.deformation_net.motion_grid.grids_():
+            for grid in grids:
+                total += compute_plane_smoothness(grid)
         return total
+    
     def _l1_regulation(self):
-        if self._deformation.deformation_net.grid.is_waveplanes:
-            multi_res_grids = self._deformation.deformation_net.grid.grids_()
-        else:
-            multi_res_grids = self._deformation.deformation_net.grid.grids
-
         total = 0.0
-        for grids in multi_res_grids:
+        for grids in self._deformation.deformation_net.grid.grids_():
             spatiotemporal_grids = [2, 4, 5]
             for grid_id in spatiotemporal_grids:
                 total += torch.abs(1 - grids[grid_id]).mean()
+                
+        for grids in self._deformation.deformation_net.motion_grid.grids_():
+            for grid in grids:
+                total += torch.abs(1 - grid).mean()
         return total
     
         
