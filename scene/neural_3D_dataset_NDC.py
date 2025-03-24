@@ -315,7 +315,7 @@ class Neural3D_NDC_Dataset(Dataset):
                 if split == "test":
                     continue
             
-            if index not in  [0,1, 10, 11, 20]:
+            if index in  [0,1, 10, 11, 20]:
                 N_cams +=1
                 count = 0
                 video_images_path = video_path.split('.')[0]
