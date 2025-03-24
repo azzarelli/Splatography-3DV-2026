@@ -289,11 +289,9 @@ class Neural3D_NDC_Dataset(Dataset):
         W, H = self.img_wh
         poses_i_train = []
 
-        for i in range(len(poses)):
-            if i != self.eval_index:
-                poses_i_train.append(i)
+        poses_i_train = [1,10,11,20]
         self.poses = poses[poses_i_train]
-        self.poses_all = poses
+        self.poses_all = poses #[[0]+poses_i_train]
         self.image_paths, self.image_poses, self.image_times, N_cam, N_time = self.load_images_path(videos, self.split)
         self.cam_number = N_cam
         self.time_number = N_time
@@ -316,53 +314,55 @@ class Neural3D_NDC_Dataset(Dataset):
             else:
                 if split == "test":
                     continue
-            N_cams +=1
-            count = 0
-            video_images_path = video_path.split('.')[0]
-            image_path = os.path.join(video_images_path,"images")
-            video_frames = cv2.VideoCapture(video_path)
-            if not os.path.exists(image_path):
-                print(f"no images saved in {image_path}, extract images from video.")
-                os.makedirs(image_path)
+            
+            if index not in  [0,1, 10, 11, 20]:
+                N_cams +=1
+                count = 0
+                video_images_path = video_path.split('.')[0]
+                image_path = os.path.join(video_images_path,"images")
+                video_frames = cv2.VideoCapture(video_path)
+                if not os.path.exists(image_path):
+                    print(f"no images saved in {image_path}, extract images from video.")
+                    os.makedirs(image_path)
+                    this_count = 0
+                    while video_frames.isOpened():
+                        ret, video_frame = video_frames.read()
+                        if this_count >= countss:break
+                        if ret:
+                            video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
+                            video_frame = Image.fromarray(video_frame)
+                            if self.downsample != 1.0:
+
+                                img = video_frame.resize(self.img_wh, Image.LANCZOS)
+                            img.save(os.path.join(image_path,"%04d.png"%count))
+
+                            # img = transform(img)
+                            count += 1
+                            this_count+=1
+                        else:
+                            break
+                        
+                images_path = os.listdir(image_path)
+                images_path.sort()
                 this_count = 0
-                while video_frames.isOpened():
-                    ret, video_frame = video_frames.read()
-                    if this_count >= countss:break
-                    if ret:
-                        video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
-                        video_frame = Image.fromarray(video_frame)
-                        if self.downsample != 1.0:
+                for idx, path in enumerate(images_path):
+                    if this_count >=countss:break
+                    image_paths.append(os.path.join(image_path,path))
+                    pose = np.array(self.poses_all[index])
+                    R = pose[:3,:3]
+                    R = -R
+                    R[:,0] = -R[:,0]
+                    T = -pose[:3,3].dot(R)
+                    image_times.append(idx/countss)
+                    image_poses.append((R,T))
+                    # if self.downsample != 1.0:
+                    #     img = video_frame.resize(self.img_wh, Image.LANCZOS)
+                    # img.save(os.path.join(image_path,"%04d.png"%count))
+                    this_count+=1
+                N_time = len(images_path)
 
-                            img = video_frame.resize(self.img_wh, Image.LANCZOS)
-                        img.save(os.path.join(image_path,"%04d.png"%count))
-
-                        # img = transform(img)
-                        count += 1
-                        this_count+=1
-                    else:
-                        break
-                    
-            images_path = os.listdir(image_path)
-            images_path.sort()
-            this_count = 0
-            for idx, path in enumerate(images_path):
-                if this_count >=countss:break
-                image_paths.append(os.path.join(image_path,path))
-                pose = np.array(self.poses_all[index])
-                R = pose[:3,:3]
-                R = -R
-                R[:,0] = -R[:,0]
-                T = -pose[:3,3].dot(R)
-                image_times.append(idx/countss)
-                image_poses.append((R,T))
-                # if self.downsample != 1.0:
-                #     img = video_frame.resize(self.img_wh, Image.LANCZOS)
-                # img.save(os.path.join(image_path,"%04d.png"%count))
-                this_count+=1
-            N_time = len(images_path)
-
-                #     video_data_save[count] = img.permute(1,2,0)
-                #     count += 1
+                    #     video_data_save[count] = img.permute(1,2,0)
+                    #     count += 1
         return image_paths, image_poses, image_times, N_cams, N_time
     def __len__(self):
         return len(self.image_paths)

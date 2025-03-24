@@ -40,6 +40,6 @@ OptimizationParams = dict(
     opacity_threshold_fine_after = 0.005,
     # pruning_from_iter = 1,
     # pruning_interval=20,
-    # lambda_dssim = 0.2,
+    lambda_dssim = 0.1,
     # pruning_interval = 2000
 )

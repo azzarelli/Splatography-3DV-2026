@@ -439,7 +439,7 @@ class GaussianModel:
                 The 2x factor apears in the width calculation as a half, meaning a tiny bit better
                         
         """
-        return 2. * torch.sqrt(-torch.log(threshold / h) / (w ** 2))
+        return torch.sqrt(-torch.log(threshold / h) / (w ** 2))
 
     def prune(self, h_thresold, extent, max_screen_size,):
         """
@@ -460,9 +460,9 @@ class GaussianModel:
         # Hyper params
         width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
         # Calulcate min width
-        width = self.compute_topac_width(w, h, 0.05)
+        width = self.compute_topac_width(w, h, 0.025)
         prune_mask = (width < width_threshold).squeeze()
-        prune_mask = torch.logical_or((h < 0.05).squeeze(), prune_mask)
+        prune_mask = torch.logical_or((h < 0.1).squeeze(), prune_mask)
         
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size

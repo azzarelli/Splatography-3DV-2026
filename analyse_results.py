@@ -3,10 +3,10 @@ import json
 import matplotlib.pyplot as plt
 
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
-folder = 'flame_steak/'
+folder = 'cook_spinach/'
 
-focal_word = 'reg_h1'  #Hthresh1_PruneHW_l10005_redo
-bench_marks = ['l10005TuningNoActivPruneHW','cleanrun', 'PruneHW_l10005_redo', 'W3PruneHW_l10005_WaveLvl']
+focal_word = 'sparsetest'  #Hthresh1_PruneHW_l10005_redo
+bench_marks = [] # ['l10005TuningNoActivPruneHW','reg_h1','reg_h1_median', 'reg_h01', 'cleanrun', 'PruneHW_l10005_redo', 'W3PruneHW_l10005_WaveLvl']
                
 # 'Hthresh00001_NoActivPruneW', 'Hthresh001_NoActivPruneW', 'Hthresh01_NoActivPruneW', 'Hthresh1_NoActivPruneW',]
 # #'Wthresh1_NoActivPruneW', 'Wthresh01_NoActivPruneW','Wthresh001_NoActivPruneW','Wthresh0001_NoActivPruneW'] 

@@ -169,7 +169,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []
-
+    
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
     ply_path = os.path.join(path, "sparse/0/points3D.ply")
@@ -519,13 +519,12 @@ def readdynerfInfo(datadir,use_bg_points,eval):
     train_cam_infos = format_infos(train_dataset,"train")
     val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset)
     nerf_normalization = getNerfppNorm(train_cam_infos)
+    print(f'Number of training cameras: {len(train_dataset)/300}')
 
     # xyz = np.load
     pcd = fetchPly(ply_path)
     print("origin points,",pcd.points.shape[0])
     
-    print("after points,",pcd.points.shape[0])
-
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_dataset,
                            test_cameras=test_dataset,

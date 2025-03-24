@@ -409,7 +409,7 @@ class GUI:
                  debug_from,
                  expname
                  ):
-        self.gui = False
+        self.gui = True
 
         self.dataset = dataset
         self.hyperparams = hyperparams
@@ -972,7 +972,7 @@ class GUI:
         visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
 
         # Loss
-        loss = L1 + (depth_loss /len(radii_list))
+        loss = 0.
 
 
         if self.iteration % 1000 == 0:
@@ -986,11 +986,13 @@ class GUI:
                 )
             
             w_, h_, mu_ = self.gaussians.get_opacity
-            loss += ((1 - h_)**2).mean()            
+            loss += (1 - h_).mean()            
 
         if self.opt.lambda_dssim != 0:
             loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
-
+            loss += L1 # (1. - self.opt.lambda_dssim ) * L1 
+        else:
+            loss += L1 
         # Include depth loss:
         # loss = loss # + (depth_loss / len(viewpoint_cams))
         # Backpass
