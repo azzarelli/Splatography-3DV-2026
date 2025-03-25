@@ -85,14 +85,8 @@ class Deformation(nn.Module):
         )
         
         st_2 = self.motion_grid(rays_pts_emb[:,:3], time_emb[:,:1], iterations)
-
-        motion = self.pos_deform(
-            sp * st_2
-        )
         
-        
-        
-        return st_features, sp_features, motion
+        return st_features, sp_features, st_2, sp
     
     @property
     def get_empty_ratio(self):
@@ -117,14 +111,11 @@ class Deformation(nn.Module):
         
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration):
         
-        hidden, hidden_opac, motion = self.query_time(rays_pts_emb, time_emb, iteration)
+        hidden, hidden_opac, stfeats, spfeats = self.query_time(rays_pts_emb, time_emb, iteration)
 
-        # Change in position
-        if self.args.no_dx:
-            pts = rays_pts_emb[:,:3]
-        else:
-            # dx_start = self.pos_deform(hidden)
-            pts = rays_pts_emb[:,:3] + motion
+        pts = rays_pts_emb[:,:3] + self.pos_deform(
+            stfeats*spfeats
+        )
 
         # Change in scale
         if self.args.no_ds :
@@ -185,7 +176,7 @@ class Deformation(nn.Module):
         # plt.show()
         # exit()
 
-        return pts, scales, rotations, opacity, shs
+        return pts, scales, rotations, opacity, shs, stfeats
     
     def get_mlp_parameters(self):
         parameter_list = []
@@ -243,13 +234,13 @@ class deform_network(nn.Module):
         rotations_emb = poc_fre(rotations,self.rotation_scaling_poc)
         # time_emb = poc_fre(times_sel, self.time_poc)
         # times_feature = self.timenet(time_emb)
-        means3D, scales, rotations, opacity, shs = self.deformation_net(point_emb,
+        means3D, scales, rotations, opacity, shs, f = self.deformation_net(point_emb,
                                                   scales_emb,
                                                 rotations_emb,
                                                 shs,
                                                 None,
                                                 times_sel, iterations)
-        return means3D, scales, rotations, opacity, shs
+        return means3D, scales, rotations, opacity, shs, f
     def get_mlp_parameters(self):
         return self.deformation_net.get_mlp_parameters() + list(self.timenet.parameters())
     def get_grid_parameters(self):

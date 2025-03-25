@@ -934,7 +934,7 @@ class GUI:
         visibility_filter_list = []
         viewspace_point_tensor_list = []
 
-        depth_loss = 0.
+        motionloss = 0.
         L1 = 0.
 
         for viewpoint_cam in viewpoint_cams:
@@ -961,6 +961,7 @@ class GUI:
             # train the gaussians inside the mask
             L1 += l1_loss(image, gt_image, viewpoint_cam.mask)
 
+            
             # gt_images.append(gt_image.unsqueeze(0))
             images.append(image.unsqueeze(0))
             gt_images.append(gt_image.unsqueeze(0))
@@ -973,7 +974,7 @@ class GUI:
 
         # Loss
         loss = 0.
-
+        
 
         if self.iteration % 1000 == 0:
             self.track_cpu_gpu_usage(viewpoint_cam.time)
@@ -986,7 +987,12 @@ class GUI:
                 )
             
             w_, h_, mu_ = self.gaussians.get_opacity
-            loss += (1 - h_).mean()            
+            loss += (1 - h_).mean()
+            
+            if render_pkg['stfeats'] is not None:
+                loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
+
+            
 
         if self.opt.lambda_dssim != 0:
             loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
@@ -1203,6 +1209,55 @@ def custom_pcd_loss(gt, pred, k= 4, threshold=0.01):
         return F.relu(distances.mean(-1) - threshold).mean()
 
     return None
+
+def nns(knn_indices, features):
+    # Gather neighbor features without for-loop
+    safe_indices = knn_indices.clone()
+    safe_indices[safe_indices == -1] = 0  # avoid indexing error
+    neighbor_features = features[safe_indices]  # (N, k, F)
+
+    # Mask out invalid neighbors
+    valid_mask = (knn_indices != -1).unsqueeze(-1)  # (N, k, 1)
+    neighbor_features = neighbor_features * valid_mask
+
+    # Mean of valid neighbor features
+    neighbor_sum = neighbor_features.sum(dim=1)
+    neighbor_count = valid_mask.sum(dim=1).clamp(min=1)
+    neighbor_mean = neighbor_sum / neighbor_count
+    
+    return neighbor_mean
+
+from pytorch3d.ops import ball_query, knn_gather
+
+def KNN_motion_features(positions, features):
+    N, F = features.shape
+    k = 4
+    radius = 2
+    
+    N, _ = positions.shape
+
+    # PyTorch3D expects batched inputs
+    device = positions.device
+    N, _ = positions.shape
+
+    # Add batch dimension
+    pos = positions.unsqueeze(0)  # (1, N, 3)
+    feat = features.unsqueeze(0)  # (1, N, F)
+
+    # Get K nearest neighbors
+    knn = knn_points(pos, pos, K=k+1)  # includes self as neighbor
+
+    # Exclude the first neighbor (self)
+    idx = knn.idx[:, :, 1:]  # (1, N, k)
+    neighbor_feats = knn_gather(feat, idx)  # (1, N, k, F)
+
+    # Compute mean of neighbors
+    neighbor_mean = neighbor_feats.mean(dim=2)  # (1, N, F)
+
+    # Difference between feature and neighborhood mean
+    diff = feat - neighbor_mean  # (1, N, F)
+    return (diff**2).mean()
+
 
 def save_gt_pred(gt, pred, iteration, idx, name):
     pred = (pred.permute(1, 2, 0)

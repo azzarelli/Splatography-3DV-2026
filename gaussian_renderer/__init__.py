@@ -67,15 +67,16 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     rotations = None
     cov3D_precomp = None
     if pipe.compute_cov3D_python:
-        cov3D_precomp = pc.get_covariance(scaling_modifier)
+        cov3D_precomp = pc.get_covariance(scaling_modifier) 
     else:
         scales = pc._scaling
         rotations = pc._rotation
 
+    stfeats = None
     if "coarse" in stage:
         means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final = pc._deformation(means3D, scales,
+        means3D_final, scales_final, rotations_final, opacity, shs_final, stfeats = pc._deformation(means3D, scales,
                                                                                                  rotations,
                                                                                                  shs,
                                                                                                  time)
@@ -125,7 +126,10 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             "viewspace_points": screenspace_points,
             "visibility_filter": radii > 0,
             "radii": radii,
-            "depth": depth}
+            "depth": depth,
+            "stfeats":stfeats,
+            "means3D":means3D_final
+            }
 
 
 def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
@@ -184,7 +188,7 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
     if "coarse" in stage:
         means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final = pc._deformation(means3D, scales,
+        means3D_final, scales_final, rotations_final, opacity, shs_final, _ = pc._deformation(means3D, scales,
                                                                                                  rotations,
                                                                                                  shs,
                                                                                                  time)
