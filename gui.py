@@ -989,8 +989,8 @@ class GUI:
             w_, h_, mu_ = self.gaussians.get_opacity
             loss += (1 - h_).mean()
             
-            if render_pkg['stfeats'] is not None:
-                loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
+            # if render_pkg['stfeats'] is not None:
+            #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
 
             
 
@@ -1227,36 +1227,36 @@ def nns(knn_indices, features):
     
     return neighbor_mean
 
-from pytorch3d.ops import ball_query, knn_gather
+# from pytorch3d.ops import ball_query, knn_gather
 
-def KNN_motion_features(positions, features):
-    N, F = features.shape
-    k = 4
-    radius = 2
+# def KNN_motion_features(positions, features):
+#     N, F = features.shape
+#     k = 4
+#     radius = 2
     
-    N, _ = positions.shape
+#     N, _ = positions.shape
 
-    # PyTorch3D expects batched inputs
-    device = positions.device
-    N, _ = positions.shape
+#     # PyTorch3D expects batched inputs
+#     device = positions.device
+#     N, _ = positions.shape
 
-    # Add batch dimension
-    pos = positions.unsqueeze(0)  # (1, N, 3)
-    feat = features.unsqueeze(0)  # (1, N, F)
+#     # Add batch dimension
+#     pos = positions.unsqueeze(0)  # (1, N, 3)
+#     feat = features.unsqueeze(0)  # (1, N, F)
 
-    # Get K nearest neighbors
-    knn = knn_points(pos, pos, K=k+1)  # includes self as neighbor
+#     # Get K nearest neighbors
+#     knn = knn_points(pos, pos, K=k+1)  # includes self as neighbor
 
-    # Exclude the first neighbor (self)
-    idx = knn.idx[:, :, 1:]  # (1, N, k)
-    neighbor_feats = knn_gather(feat, idx)  # (1, N, k, F)
+#     # Exclude the first neighbor (self)
+#     idx = knn.idx[:, :, 1:]  # (1, N, k)
+#     neighbor_feats = knn_gather(feat, idx)  # (1, N, k, F)
 
-    # Compute mean of neighbors
-    neighbor_mean = neighbor_feats.mean(dim=2)  # (1, N, F)
+#     # Compute mean of neighbors
+#     neighbor_mean = neighbor_feats.mean(dim=2)  # (1, N, F)
 
-    # Difference between feature and neighborhood mean
-    diff = feat - neighbor_mean  # (1, N, F)
-    return (diff**2).mean()
+#     # Difference between feature and neighborhood mean
+#     diff = feat - neighbor_mean  # (1, N, F)
+#     return (diff**2).mean()
 
 
 def save_gt_pred(gt, pred, iteration, idx, name):
