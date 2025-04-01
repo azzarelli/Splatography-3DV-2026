@@ -402,16 +402,22 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
-        n_init_points = self.get_xyz.shape[0]
+    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2, prob=None):
+        # n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
-        padded_grad = torch.zeros((n_init_points), device="cuda")
-        padded_grad[:grads.shape[0]] = grads.squeeze()
-        selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
+        # padded_grad = torch.zeros((n_init_points), device="cuda")
+        # padded_grad[:grads.shape[0]] = grads.squeeze()
+        # pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
+        
+        prob = 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+
+        selected_pts_mask = torch.randn(prob.shape[0]).to(prob.device) < prob
 
         # breakpoint()
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        
+        # selected_pts_mask = torch.logical_and(selected_pts_mask, pts_mask)
         # dyn_prob_mask = torch.where(torch.sigmoid(self._p) >= 0.5, True, False).squeeze(-1)
         # selected_pts_mask = torch.logical_and(selected_pts_mask, dyn_prob_mask)
         if not selected_pts_mask.any():
@@ -432,12 +438,14 @@ class GaussianModel:
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
-    def densify_and_clone(self, grads, grad_threshold, scene_extent, density_threshold=20, displacement_scale=20, model_path=None, iteration=None, stage=None):
-        grads_accum_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
-        
-        selected_pts_mask = torch.logical_and(grads_accum_mask,
+    def densify_and_clone(self, grads, grad_threshold, scene_extent, density_threshold=20, displacement_scale=20, model_path=None, iteration=None, stage=None, prob=None):
+        # grads_accum_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
+        prob = 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+
+        dynmask = torch.randn(prob.shape[0]).to(prob.device) < prob
+        selected_pts_mask = torch.logical_and(dynmask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
-        
+        # selected_pts_mask = torch.logical_and(selected_pts_mask, grads_accum_mask)
         # dyn_prob_mask = torch.where(torch.sigmoid(self._p) >= 0.5, True, False).squeeze(-1)
         # selected_pts_mask = torch.logical_and(selected_pts_mask, dyn_prob_mask)
 
@@ -511,7 +519,7 @@ class GaussianModel:
     def densify(self, max_grad, min_opacity, extent, max_screen_size, density_threshold, displacement_scale, model_path=None, iteration=None, stage=None):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
-
+        
         self.densify_and_clone(grads, max_grad, extent, density_threshold, displacement_scale, model_path, iteration, stage)
         self.densify_and_split(grads, max_grad, extent)
 

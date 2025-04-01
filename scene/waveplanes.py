@@ -146,6 +146,43 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
 
         return interp_1, sp_interp
 
+def get_feature_probability(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
+    """Generate features for each point
+    """
+    if ro_grid is not None:
+        rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
+        pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
+
+    pts = torch.concatenate([pts, torch.zeros_like(pts[:, 0].unsqueeze(-1), device=pts.device)], dim=-1)
+    
+    # time m feature
+    interp = 1.
+    # q,r are the coordinate combinations needed to retrieve pts
+    q, r = 0, 1
+    for i in range(6):
+        if r == 3:
+            vectorplane = kplanes[i].signal[0] # Get the feature plane
+            vectorplane = vectorplane.mean(-1).unsqueeze(-1)            
+            
+            feature = (
+                grid_sample_wrapper(vectorplane, pts[..., (q, 3)])
+                .view(-1, vectorplane.shape[1])
+            ).mean(-1)
+
+            interp = interp * feature
+        
+        r += 1
+        if r == 4:
+            q += 1
+            r = q + 1
+
+
+    # Now determine the probabilites
+    # \exp\left(-w^{2}\ \cdot\ \left(1-x\right)^{2}\right)
+    # w was 49 previously
+    return torch.exp(-9 * (1-interp)**2)
+
+
 # Define the grid
 class GridSet(nn.Module):
 
@@ -535,6 +572,15 @@ class WavePlaneField(nn.Module):
 
         return ms_planes
 
+    def get_dynamic_probabilities(self,pts: torch.Tensor,):
+        pts = normalize_aabb(pts, self.aabb)
+        pts = pts.reshape(-1, pts.shape[-1])
+        
+        return get_feature_probability(
+            pts, self.grids, self.idwt, self.reorient_grid, True
+        )
+
+
     def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
         """Computes and returns the densities."""
         # breakpoint()
@@ -556,8 +602,6 @@ class WavePlaneField(nn.Module):
     def get_opacity_vars(self, pts):
         pts = normalize_aabb(pts, self.aabb)
         pts = pts.reshape(-1, pts.shape[-1])
-        
-        
         return interpolate_features_MUL(
             pts, self.grids, self.idwt, self.reorient_grid, True
         )
