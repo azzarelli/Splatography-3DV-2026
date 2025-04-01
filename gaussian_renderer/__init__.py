@@ -79,7 +79,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         means3D_final, scales_final, rotations_final, opacity, shs_final, stfeats = pc._deformation(means3D, scales,
                                                                                                  rotations,
                                                                                                  shs,
-                                                                                                 time, pc._p)
+                                                                                                 time, pc._opacity)
         
     else:
         raise NotImplementedError
@@ -191,7 +191,7 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
         means3D_final, scales_final, rotations_final, opacity, shs_final, _ = pc._deformation(means3D, scales,
                                                                                                  rotations,
                                                                                                  shs,
-                                                                                                 time,pc._p)
+                                                                                                 time, pc._opacity)
     
         # opacity = pc.opacity_activation(opacity_final)
 
@@ -311,7 +311,7 @@ def deform_gs(time, pc: GaussianModel, stage="fine"):
         means3D_final, scales_final, rotations_final, opacity_final, shs_final = pc._deformation(means3D, scales,
                                                                                                  rotations, opacity,
                                                                                                  shs,
-                                                                                                 time)
+                                                                                                 time,  pc._opacity)
     else:
         raise NotImplementedError
 

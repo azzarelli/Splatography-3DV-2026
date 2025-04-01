@@ -19,7 +19,10 @@ class FourDGSdataset(Dataset):
         self.dataset = dataset
         self.args = args
         self.dataset_type=dataset_type
-
+        
+        print('Getting zero indexs for 4 cameras')
+        self.zero_idxs = [i*300 for i in range(4)]
+        
     def __getitem__(self, index):
         if self.dataset_type != "PanopticSports":
             if self.dataset_type == 'condense':

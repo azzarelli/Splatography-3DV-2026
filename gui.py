@@ -864,6 +864,7 @@ class GUI:
 
 
     def train_step(self):
+
         # Start recording step duration
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
@@ -880,47 +881,57 @@ class GUI:
 
       
         # Handle Data Loading:
-        if self.opt.dataloader and not self.load_in_memory:
+        if self.opt.dataloader and not self.load_in_memory and self.stage == 'fine':
             try:
                 viewpoint_cams = next(self.loader)
             except StopIteration:
-                print("reset dataloader into random dataloader.")
                 viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
                                                     num_workers=16, collate_fn=list)
                 self.random_loader = True
                 self.loader = iter(viewpoint_stack_loader)
                 viewpoint_cams = next(self.loader)
         else:
-            idx = 0
-            viewpoint_cams = []
+            viewpoint_cams = []            
             
-            # Construct batch for current step
-            while idx < self.opt.batch_size :
-                if not self.viewpoint_stack:
+            if not self.viewpoint_stack:
                     self.viewpoint_stack = self.scene.getTrainCameras().copy()
+            
+            zero_idxs = self.scene.train_camera.zero_idxs
+            
+            index = random.randrange(len(zero_idxs))  # get random index
+            item = self.viewpoint_stack[zero_idxs[index]]
+            viewpoint_cams.append(item)
 
-                if len(viewpoint_cams) > 0:
-                    # Ensure we select a camera with a different view
-                    nodiff = True
-                    while nodiff:
-                        # Select a random frame and check if the global position T appears already in the batch
-                        idx = randint(0, len(self.viewpoint_stack) - 1)
-                        temp_T = self.viewpoint_stack[idx].T
-                        cnt = 0
-                        for v in viewpoint_cams:
-                            if v.T == temp_T: cnt += 1
-                        # if it doesn't appear add it to the stack and break from the loop
-                        if cnt == 0:
-                            nodiff = False
-                            viewpoint_cam = self.viewpoint_stack.pop(idx)
+            while len(viewpoint_cams) < self.opt.batch_size :
+                curr_idx = random.randrange(len(zero_idxs))
+                if curr_idx != index:
+                    item = self.viewpoint_stack[zero_idxs[index]]
+                    viewpoint_cams.append(item)
+                    
+            # # Construct batch for current step
+            # while idx < self.opt.batch_size :
+            
+            #     if len(viewpoint_cams) > 0:
+            #         # Ensure we select a camera with a different view
+            #         nodiff = True
+            #         while nodiff:
+            #             # Select a random frame and check if the global position T appears already in the batch
+            #             idx = randint(0, len(self.viewpoint_stack) - 1)
+            #             temp_T = self.viewpoint_stack[idx].T
+            #             cnt = 0
+            #             for v in viewpoint_cams:
+            #                 if v.T == temp_T: cnt += 1
+            #             # if it doesn't appear add it to the stack and break from the loop
+            #             if cnt == 0:
+            #                 nodiff = False
+            #                 viewpoint_cam = self.viewpoint_stack.pop(idx)
+            #     else:
+            #         viewpoint_cam = random.choice(self.viewpoint_stack)
+                    
+            #     if viewpoint_cam.time == 0.0:
+            #         viewpoint_cams.append(viewpoint_cam)
+            #         idx +=1
 
-                if viewpoint_cam.time == 0.0:
-                    viewpoint_cams.append(viewpoint_cam)
-                    idx +=1
-
-            # If there are no cameras to load then end the current iteration
-            if len(viewpoint_cams) == 0:
-                return None
         
         
         # Render
@@ -1055,13 +1066,7 @@ class GUI:
                 
                 if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-                
-                    self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
-
-
-                # if self.iteration % self.opt.opacity_reset_interval == 0:
-                #     print("reset opacity")
-                #     self.gaussians.reset_opacity()
+                    self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold, self.iteration % self.opt.opacity_reset_interval == 0)
 
             # Optimizer step
             if self.iteration < self.opt.iterations:

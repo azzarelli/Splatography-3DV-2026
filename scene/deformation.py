@@ -103,13 +103,14 @@ class Deformation(nn.Module):
         dx = self.static_mlp(grid_feature)
         return rays_pts_emb[:, :3] + dx
     
-    def foward_opac(self, xyz):
+    def foward_opac(self, xyz, opac_emb):
         feature =  self.opacity_featu_out(
             self.grid.get_opacity_vars(xyz)
         )
         return self.opacity_w(feature), torch.sigmoid(self.opacity_h(feature)), torch.sigmoid(self.opacity_mu(feature))
+        # return self.opacity_w(feature), torch.sigmoid(opac_emb), torch.sigmoid(self.opacity_mu(feature))
         
-    def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration, p):
+    def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration, h_emb):
         
         hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, iteration)
         # hidden, hidden_opac, stfeats, spfeats = self.query_time(rays_pts_emb, time_emb, iteration)
@@ -118,12 +119,14 @@ class Deformation(nn.Module):
         )
 
         # Change in scale
-        if self.args.no_ds :
+        scales = scales_emb[:,:3]
+
+        # if self.args.no_ds :
             
-            scales = scales_emb[:,:3]
-        else:
-            ds = self.scales_deform(hidden)
-            scales = scales_emb[:,:3] + ds
+        #     scales = scales_emb[:,:3]
+        # else:
+        #     ds = self.scales_deform(hidden)
+        #     scales = scales_emb[:,:3] + ds
 
         # Change in rotation
         if self.args.no_dr :
