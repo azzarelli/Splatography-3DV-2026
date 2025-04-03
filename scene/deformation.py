@@ -119,14 +119,14 @@ class Deformation(nn.Module):
         )
 
         # Change in scale
-        scales = scales_emb[:,:3]
+        # scales = scales_emb[:,:3]
 
-        # if self.args.no_ds :
+        if self.args.no_ds :
             
-        #     scales = scales_emb[:,:3]
-        # else:
-        #     ds = self.scales_deform(hidden)
-        #     scales = scales_emb[:,:3] + ds
+            scales = scales_emb[:,:3]
+        else:
+            ds = self.scales_deform(hidden)
+            scales = scales_emb[:,:3] + ds
 
         # Change in rotation
         if self.args.no_dr :

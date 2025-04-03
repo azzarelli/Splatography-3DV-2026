@@ -32,7 +32,7 @@ OptimizationParams = dict(
     batch_size=2, # Was 4
     coarse_iterations=3000,
     
-    densify_from_iter=1000,
+    densify_from_iter=3001,
     # densification_interval=1,
     densify_until_iter = 10_000,
     
@@ -45,6 +45,6 @@ OptimizationParams = dict(
     opacity_threshold_fine_after = 0.005,
     # pruning_from_iter = 1,
     # pruning_interval=20,
-    lambda_dssim = 0.1,
+    lambda_dssim = 0., #0.1,
     # pruning_interval = 2000
 )

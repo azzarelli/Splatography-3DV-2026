@@ -467,6 +467,7 @@ class GUI:
         self.show_scene = True
         self.show_depth = False
         self.show_cameras = True
+        self.show_test = False
 
         self.results_dir = os.path.join(self.args.model_path, 'active_results')
         if os.path.exists(self.results_dir):
@@ -623,10 +624,14 @@ class GUI:
 
                 def callback_toggle_show_cameras(sender):
                     self.show_cameras = not self.show_cameras
+                    
+                def callback_toggle_show_tes(sender):
+                    self.show_test = not self.show_test
 
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="Show/Hide Scene", callback=callback_toggle_show_scene)
                     dpg.add_button(label="Show/Hide Cameras", callback=callback_toggle_show_cameras)
+                    dpg.add_button(label="Show/Hide Test", callback=callback_toggle_show_tes)
 
 
 
@@ -770,21 +775,26 @@ class GUI:
     @torch.no_grad()
     def viewer_step(self):
         
-        camera = MiniCam(
-            self.cam.pose,
-            self.cam.W,
-            self.cam.H,
-            self.cam.fovy,
-            self.cam.fovx,
-            self.cam.near,
-            self.cam.far, 
-            time=self.time)
+        if self.show_test:
+            camera =copy.deepcopy(self.scene.getTestCameras()[0])
+            camera.time = self.time
+        else:
+            camera = MiniCam(
+                self.cam.pose,
+                self.cam.W,
+                self.cam.H,
+                self.cam.fovy,
+                self.cam.fovx,
+                self.cam.near,
+                self.cam.far, 
+                time=self.time)
         
         if not self.show_depth:
             tag = 'render'
         else:
             tag = 'depth'
-            
+        
+        
             
         buffer_image = render_no_train(camera, 
                                     self.gaussians, 
@@ -881,7 +891,7 @@ class GUI:
 
       
         # Handle Data Loading:
-        if self.opt.dataloader and not self.load_in_memory and self.stage == 'fine':
+        if self.opt.dataloader and not self.load_in_memory: # and self.stage == 'fine':
             try:
                 viewpoint_cams = next(self.loader)
             except StopIteration:
@@ -945,7 +955,6 @@ class GUI:
         visibility_filter_list = []
         viewspace_point_tensor_list = []
 
-        motionloss = 0.
         L1 = 0.
 
         for viewpoint_cam in viewpoint_cams:
@@ -1009,7 +1018,30 @@ class GUI:
             loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
             loss += L1 # (1. - self.opt.lambda_dssim ) * L1 
         else:
-            loss += L1 
+            loss += L1
+            
+        # Phys Gaussian Loss (as per nerfstudio implementaton)
+        max_gauss_ratio = 10
+        scale_exp = self.gaussians.get_scaling
+        loss += 0.1*(
+            torch.maximum(
+                scale_exp.amax(dim=-1) / scale_exp.amin(dim=-1),
+                torch.tensor(max_gauss_ratio),
+            )
+            - max_gauss_ratio
+        ).mean()
+        # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
+        # loss += 0.1*(
+        #     torch.maximum(
+        #         s_v[:, 0] / s_v[:, 1],
+        #         torch.tensor(max_gauss_ratio),
+        #     )
+        #     - max_gauss_ratio
+        # ).mean()
+
+        
+        loss += 0.1* torch.abs(scale_exp.amin(dim=-1)).mean()
+
         # Include depth loss:
         # loss = loss # + (depth_loss / len(viewpoint_cams))
         # Backpass

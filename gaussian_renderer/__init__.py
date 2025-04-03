@@ -80,7 +80,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
                                                                                                  rotations,
                                                                                                  shs,
                                                                                                  time, pc._opacity)
-        
     else:
         raise NotImplementedError
 
