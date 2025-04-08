@@ -131,6 +131,9 @@ class GaussianModel:
         """
         return self._deformation.deformation_net.foward_opac(self._xyz, self._opacity)
 
+    def get_dynamic_point_prob(self):
+        return 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
@@ -377,25 +380,30 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
     
-    def densify(self, max_grad, min_opacity, extent, max_screen_size, density_threshold, displacement_scale, model_path=None, iteration=None, stage=None):
-        # grads = self.xyz_gradient_accum / self.denom
-        # grads[grads.isnan()] = 0.0
+    def densify(self, max_grad, extent):
+        grads = self.xyz_gradient_accum / self.denom
+        grads[grads.isnan()] = 0.0
         
-        self.densify_and_clone(extent, iteration)
-        self.densify_and_split(extent, iteration)
+        self.densify_and_clone(extent, grads=grads, grad_threshold=max_grad)
+        self.densify_and_split(extent, grads=grads, grad_threshold=max_grad)
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
         
-    def densify_and_split(self, scene_extent, it_ratio):
+    def densify_and_split(self, scene_extent, grads, grad_threshold):
+        n_init_points = self.get_xyz.shape[0]
+        # Extract points that satisfy the gradient condition
+        padded_grad = torch.zeros((n_init_points), device="cuda")
+        padded_grad[:grads.shape[0]] = grads.squeeze()
+        selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
+        
         N = 2
-        prob = self.get_dynamic_point_prob()
-        # w, h, mu = self.get_opacity
+        # prob = self.get_dynamic_point_prob()
+        # # w, h, mu = self.get_opacity
+        # # prob = prob * gaussian_integral(h,w,mu)
 
-        # prob = prob * gaussian_integral(h,w,mu)
-
-        selected_pts_mask = torch.randn(prob.shape[0]).to(prob.device) < (prob*it_ratio)
+        # selected_pts_mask = torch.randn(prob.shape[0]).to(prob.device) < (prob*it_ratio)
 
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
@@ -419,17 +427,13 @@ class GaussianModel:
             prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
             self.prune_points(prune_filter)
 
-    def get_dynamic_point_prob(self):
-        return 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
 
-    def densify_and_clone(self, scene_extent, it_ratio):
+    def densify_and_clone(self, scene_extent, grads,grad_threshold ):
         # Generate N random values and select points that are dynamic for cloning and splitting
-        prob = self.get_dynamic_point_prob()
-        # w, h, mu = self.get_opacity
-
-        # prob = prob * gaussian_integral(h,w,mu)
-
-        dynmask = torch.randn(prob.shape[0]).to(prob.device) < (prob)
+        # prob = self.get_dynamic_point_prob()
+        # dynmask = torch.randn(prob.shape[0]).to(prob.device) < (prob)
+        
+        dynmask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         
         if dynmask.shape[0] > 0:
             selected_pts_mask = torch.logical_and(dynmask,
@@ -581,7 +585,6 @@ class GaussianModel:
         #         total += torch.abs(1 - grid).mean()
         return total
     
-
     def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight ):
         return plane_tv_weight * self._plane_regulation() + \
             time_smoothness_weight * self._time_regulation() + \
@@ -621,8 +624,6 @@ class GaussianModel:
                         
         return 0
             
-
-        
 SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
 def gaussian_integral(h, w, mu):
     """Returns high weight (0 to 1) for solid materials

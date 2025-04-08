@@ -1006,7 +1006,7 @@ class GUI:
         #     w = 0.1 * self.gaussians.get_dynamic_point_prob()
         # else:
         w = 0.1
-        loss += (w * torch.abs(scale_exp.amin(dim=-1))).mean()
+        # loss += (w * torch.abs(scale_exp.amin(dim=-1))).mean()
         
         # Phys Gaussian Loss (as per nerfstudio implementaton)
         # loss += 0.1*(
@@ -1016,14 +1016,14 @@ class GUI:
         #     )
         #     - max_gauss_ratio
         # ).mean()
-        # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
-        # loss += 0.1*(
-        #     torch.maximum(
-        #         s_v[:, 0] / s_v[:, 1],
-        #         torch.tensor(max_gauss_ratio),
-        #     )
-        #     - max_gauss_ratio
-        # ).mean()
+        s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
+        loss += w*(
+            torch.maximum(
+                s_v[:, 0] / s_v[:, 1],
+                torch.tensor(max_gauss_ratio),
+            )
+            - max_gauss_ratio
+        ).mean()
 
         
 
@@ -1075,15 +1075,13 @@ class GUI:
                 self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
 
                 if self.stage == "coarse":
-                    opacity_threshold = self.opt.opacity_threshold_coarse
                     densify_threshold = self.opt.densify_grad_threshold_coarse
                 else:
-                    opacity_threshold = self.opt.opacity_threshold_fine_init - self.iteration*(self.opt.opacity_threshold_fine_init - self.opt.opacity_threshold_fine_after)/(self.opt.densify_until_iter)
                     densify_threshold = self.opt.densify_grad_threshold_fine_init - self.iteration*(self.opt.densify_grad_threshold_fine_init - self.opt.densify_grad_threshold_after)/(self.opt.densify_until_iter)
 
                 if  self.iteration > self.opt.densify_from_iter and self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-                    self.gaussians.densify(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold, 5, 5, self.scene.model_path, self.iteration/self.final_iter, self.stage)
+                    self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
                 
                 if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
@@ -1166,7 +1164,8 @@ class GUI:
         with open(save_file, 'w') as f:
             obj = {
                 'psnr': PSNR,
-                'ssim': SSIM.item()}
+                'ssim': SSIM.item(),
+                'points':self.gaussians._xyz.shape[0]}
             json.dump(obj, f)
 
 
@@ -1179,9 +1178,6 @@ class GUI:
             else:
                 dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
                 dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
-
-
-
 
 def prepare_output_and_logger(expname):    
     if not args.model_path:

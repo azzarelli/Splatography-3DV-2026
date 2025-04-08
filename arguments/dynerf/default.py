@@ -3,7 +3,7 @@ ModelHiddenParams = dict(
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
-     'resolution': [264, 264, 264, 25],
+     'resolution': [264, 264, 264, 150],
      'wavelevel':2
     },
     multires = [1,2],
@@ -40,9 +40,6 @@ OptimizationParams = dict(
     
     opacity_threshold_coarse = 0.005,
 
-
-    opacity_threshold_fine_init = 0.005,
-    opacity_threshold_fine_after = 0.005,
     # pruning_from_iter = 1,
     # pruning_interval=20,
     lambda_dssim = 0., #0.1,
