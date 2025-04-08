@@ -848,30 +848,6 @@ class GUI:
             "_texture", buffer_image
         )  # buffer must be contiguous, else seg fault!
 
-    def train_depth_step(self, path, time):
-        """
-        Get the point-cloud of the current time step and evaluate it
-        """
-        # self.track_cpu_gpu_usage(time)
-
-        loss = custom_pcd_loss(path, deform_gs(time, self.gaussians,self.stage),
-                               self.opt.pcd_k, self.opt.pcd_thresh)
-
-        if loss is not None:
-            with torch.no_grad():
-                # self.timer.pause()
-                if (self.iteration % 10) == 0 and self.gui:
-                    dpg.set_value("_log_depth", "Depth : {:>12.7f}".format(loss, ".5"))
-
-            # Error if loss becomes nan
-            if torch.isnan(loss).any():
-                print("loss is nan,end training, reexecv program now.")
-                os.execv(sys.executable, [sys.executable] + sys.argv)
-
-            return loss
-        else:
-            return 0.
-
 
     def train_step(self):
 
@@ -993,7 +969,7 @@ class GUI:
         visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
 
         # Loss
-        loss = 0.
+        loss = .0
         
 
         if self.iteration % 1000 == 0:
@@ -1007,7 +983,9 @@ class GUI:
                 )
             
             w_, h_, mu_ = self.gaussians.get_opacity
-            loss += (1 - h_).mean()
+            
+            # if self.iteration > 3000:
+            loss += ((1 - h_)).mean()
             
             # if render_pkg['stfeats'] is not None:
             #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
@@ -1019,17 +997,25 @@ class GUI:
             loss += L1 # (1. - self.opt.lambda_dssim ) * L1 
         else:
             loss += L1
-            
-        # Phys Gaussian Loss (as per nerfstudio implementaton)
-        max_gauss_ratio = 10
+        
+        # NeuSG flat Gaussian loss
+        max_gauss_ratio = 5
         scale_exp = self.gaussians.get_scaling
-        loss += 0.1*(
-            torch.maximum(
-                scale_exp.amax(dim=-1) / scale_exp.amin(dim=-1),
-                torch.tensor(max_gauss_ratio),
-            )
-            - max_gauss_ratio
-        ).mean()
+        
+        # if self.stage == 'fine':
+        #     w = 0.1 * self.gaussians.get_dynamic_point_prob()
+        # else:
+        w = 0.1
+        loss += (w * torch.abs(scale_exp.amin(dim=-1))).mean()
+        
+        # Phys Gaussian Loss (as per nerfstudio implementaton)
+        # loss += 0.1*(
+        #     torch.maximum(
+        #         scale_exp.amax(dim=-1) / scale_exp.amin(dim=-1),
+        #         torch.tensor(max_gauss_ratio),
+        #     )
+        #     - max_gauss_ratio
+        # ).mean()
         # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
         # loss += 0.1*(
         #     torch.maximum(
@@ -1040,7 +1026,10 @@ class GUI:
         # ).mean()
 
         
-        loss += 0.1* torch.abs(scale_exp.amin(dim=-1)).mean()
+
+        # final regularizer - we want to model surface position differences for solid dynamic points (so occurs later in training)
+        # if self.iteration > 1000 and self.stage == 'fine':
+        #     loss += self.gaussians.compute_rigidity_loss()
 
         # Include depth loss:
         # loss = loss # + (depth_loss / len(viewpoint_cams))
@@ -1094,7 +1083,7 @@ class GUI:
 
                 if  self.iteration > self.opt.densify_from_iter and self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-                    self.gaussians.densify(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold, 5, 5, self.scene.model_path, self.iteration, self.stage)
+                    self.gaussians.densify(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold, 5, 5, self.scene.model_path, self.iteration/self.final_iter, self.stage)
                 
                 if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
@@ -1321,6 +1310,22 @@ def save_gt_pred(gt, pred, iteration, idx, name):
     cv2.imwrite(f'debugging/{iteration}/{name}_{idx}.png', image_array)
 
     return image_array
+
+SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
+def gaussian_integral(h, w, mu):
+    """Returns high weight (0 to 1) for solid materials
+    
+        Notes on optimization:
+            We evaluate the function return 1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+            However, as this tends to 0 when out point is solid, we will do:
+            return 1- (1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)) = (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+ 
+            Note, we may want to remove transparent materials and this can be done by 
+            h*(SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2), which returns a low weight for transparent materiasl
+    """
+    erf_term_1 = torch.erf(w * mu)
+    erf_term_2 = torch.erf(w * (mu - 1))
+    return ((SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)).squeeze(-1)
 
 
 if __name__ == "__main__":

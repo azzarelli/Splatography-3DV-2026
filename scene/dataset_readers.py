@@ -519,7 +519,7 @@ def readdynerfInfo(datadir,use_bg_points,eval):
     train_cam_infos = format_infos(train_dataset,"train")
     val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset)
     nerf_normalization = getNerfppNorm(train_cam_infos)
-    print(f'Number of training cameras: {len(train_dataset)/300}')
+    print(f'Number of training cameras: {len(train_dataset)/50}')
 
     # xyz = np.load
     pcd = fetchPly(ply_path)
@@ -531,7 +531,7 @@ def readdynerfInfo(datadir,use_bg_points,eval):
                            video_cameras=val_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
-                           maxtime=300
+                           maxtime=50
                            )
     return scene_info
 

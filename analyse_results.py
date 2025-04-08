@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'cook_spinach/'
 
-focal_word = 'prob_3k_w9_neug_pgmod_nodssim'  #Hthresh1_PruneHW_l10005_redo
-bench_marks = ['sparsetest','prob_6k_w9_pg','prob_6k_w9_neug_nodssim', 'prob_3k_w9_pg_nodssim','prob_6k_w9_hemb_nos', 'prob_6k_w9_coarse','prob_6k_w9_gradthresh','prob_6k','prob_6k_w9_hemb', 'normal','test_full', 'test', 'Sparse_IsolatedMotionTriPlane', "Sparse_IsolatedMotionTriPlane_01"] # ['l10005TuningNoActivPruneHW','reg_h1','reg_h1_median', 'reg_h01', 'cleanrun', 'PruneHW_l10005_redo', 'W3PruneHW_l10005_WaveLvl']
+focal_word = 'prob_neug_dynweight_25timeres2'  #Hthresh1_PruneHW_l10005_redo
+bench_marks = ['prob_neug_dynweight_25timeres','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens','prob_neug_rigid','prob_neug_pg5','sparsetest','prob_6k_w9_pg','prob_6k_w9_neug_nodssim', 'prob_3k_w9_pg_nodssim','prob_6k_w9_hemb_nos', 'prob_6k_w9_coarse','prob_6k_w9_gradthresh','prob_6k','prob_6k_w9_hemb', 'normal','test_full', 'test', 'Sparse_IsolatedMotionTriPlane', "Sparse_IsolatedMotionTriPlane_01"] # ['l10005TuningNoActivPruneHW','reg_h1','reg_h1_median', 'reg_h01', 'cleanrun', 'PruneHW_l10005_redo', 'W3PruneHW_l10005_WaveLvl']
                
 # 'Hthresh00001_NoActivPruneW', 'Hthresh001_NoActivPruneW', 'Hthresh01_NoActivPruneW', 'Hthresh1_NoActivPruneW',]
 # #'Wthresh1_NoActivPruneW', 'Wthresh01_NoActivPruneW','Wthresh001_NoActivPruneW','Wthresh0001_NoActivPruneW'] 

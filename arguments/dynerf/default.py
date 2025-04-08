@@ -3,7 +3,7 @@ ModelHiddenParams = dict(
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
-     'resolution': [264, 264, 264, 150],
+     'resolution': [264, 264, 264, 25],
      'wavelevel':2
     },
     multires = [1,2],
@@ -32,7 +32,7 @@ OptimizationParams = dict(
     batch_size=2, # Was 4
     coarse_iterations=3000,
     
-    densify_from_iter=3001,
+    densify_from_iter=3000, #best at 3001
     # densification_interval=1,
     densify_until_iter = 10_000,
     

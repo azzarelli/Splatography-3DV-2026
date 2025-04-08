@@ -376,48 +376,73 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+    
+    def densify(self, max_grad, min_opacity, extent, max_screen_size, density_threshold, displacement_scale, model_path=None, iteration=None, stage=None):
+        # grads = self.xyz_gradient_accum / self.denom
+        # grads[grads.isnan()] = 0.0
+        
+        self.densify_and_clone(extent, iteration)
+        self.densify_and_split(extent, iteration)
 
-    def densify_and_split(self, scene_extent, prob):
+    def add_densification_stats(self, viewspace_point_tensor, update_filter):
+        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
+        self.denom[update_filter] += 1
+        
+    def densify_and_split(self, scene_extent, it_ratio):
         N = 2
-        prob = 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+        prob = self.get_dynamic_point_prob()
+        # w, h, mu = self.get_opacity
 
-        selected_pts_mask = torch.randn(prob.shape[0]).to(prob.device) < prob
+        # prob = prob * gaussian_integral(h,w,mu)
+
+        selected_pts_mask = torch.randn(prob.shape[0]).to(prob.device) < (prob*it_ratio)
 
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
-        
-        if not selected_pts_mask.any():
-            return
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
-        samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
-        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-        
-        self.densification_postfix(new_xyz,new_features_dc, new_features_rest,new_opacity, new_scaling, new_rotation)
+        if selected_pts_mask.shape[0] > 0:
 
-        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
-        self.prune_points(prune_filter)
+            if not selected_pts_mask.any():
+                return
+            stds = self.get_scaling[selected_pts_mask].repeat(N,1)
+            means =torch.zeros((stds.size(0), 3),device="cuda")
+            samples = torch.normal(mean=means, std=stds)
+            rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
+            new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
+            new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
+            new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
+            new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
+            new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
+            new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+            
+            self.densification_postfix(new_xyz,new_features_dc, new_features_rest,new_opacity, new_scaling, new_rotation)
 
-    def densify_and_clone(self, scene_extent, prob):
+            prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
+            self.prune_points(prune_filter)
+
+    def get_dynamic_point_prob(self):
+        return 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+
+    def densify_and_clone(self, scene_extent, it_ratio):
         # Generate N random values and select points that are dynamic for cloning and splitting
-        dynmask = torch.randn(prob.shape[0]).to(prob.device) < prob
-        selected_pts_mask = torch.logical_and(dynmask,
-                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        prob = self.get_dynamic_point_prob()
+        # w, h, mu = self.get_opacity
 
-        new_xyz = self._xyz[selected_pts_mask]
-        new_features_dc = self._features_dc[selected_pts_mask]
-        new_features_rest = self._features_rest[selected_pts_mask]
-        new_scaling = self._scaling[selected_pts_mask]
-        new_rotation = self._rotation[selected_pts_mask]
-        new_opacities = self._opacity[selected_pts_mask]
+        # prob = prob * gaussian_integral(h,w,mu)
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest,new_opacities, new_scaling, new_rotation)
+        dynmask = torch.randn(prob.shape[0]).to(prob.device) < (prob)
+        
+        if dynmask.shape[0] > 0:
+            selected_pts_mask = torch.logical_and(dynmask,
+                                                torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+
+            new_xyz = self._xyz[selected_pts_mask]
+            new_features_dc = self._features_dc[selected_pts_mask]
+            new_features_rest = self._features_rest[selected_pts_mask]
+            new_scaling = self._scaling[selected_pts_mask]
+            new_rotation = self._rotation[selected_pts_mask]
+            new_opacities = self._opacity[selected_pts_mask]
+
+            self.densification_postfix(new_xyz, new_features_dc, new_features_rest,new_opacities, new_scaling, new_rotation)
 
     @property
     def get_aabb(self):
@@ -517,18 +542,7 @@ class GaussianModel:
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
         
-    def densify(self, max_grad, min_opacity, extent, max_screen_size, density_threshold, displacement_scale, model_path=None, iteration=None, stage=None):
-        grads = self.xyz_gradient_accum / self.denom
-        grads[grads.isnan()] = 0.0
-        
-        prob = 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
-        
-        self.densify_and_clone(extent, prob)
-        self.densify_and_split(extent, prob)
-
-    def add_densification_stats(self, viewspace_point_tensor, update_filter):
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
-        self.denom[update_filter] += 1
+    
 
     def _plane_regulation(self):
         multi_res_grids = self._deformation.deformation_net.grid.grids_()
@@ -567,8 +581,104 @@ class GaussianModel:
         #         total += torch.abs(1 - grid).mean()
         return total
     
-        
+
     def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight ):
         return plane_tv_weight * self._plane_regulation() + \
             time_smoothness_weight * self._time_regulation() + \
                 l1_time_planes_weight * self._l1_regulation() 
+
+    def compute_rigidity_loss(self):
+        if self._deformation.deformation_net.hwmu_buffer is not None:
+            # As w_o tends to 1 the static opacity property tends to indefinately solid
+            w_o = gaussian_integral(self._deformation.deformation_net.hwmu_buffer[0], self._deformation.deformation_net.hwmu_buffer[1], self._deformation.deformation_net.hwmu_buffer[2])
+            
+            # as w_x tends to 1 the scale of motion throughout the scene also incerease
+            w_x = 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+            
+            # Combine the two to have a weighting and generate a mask based of a 0 to 1 threshold
+            thresh = 0.5
+            # When the likelihood of points being solid and dynamic we want to regularize their distances between frames
+            v = w_o * w_x 
+            points = self._xyz[v> 0.5]
+            # Instantiate after dubgging
+            if points.shape[0] < 100:
+                return 0.
+            else:
+                # Get the t1 and t2 positions of each point (same indexing)
+                t1, t2 = get_sorted_random_pair()
+                x_1 = self._deformation.deformation_net.forward_pos(points, t1)
+                x_2 = self._deformation.deformation_net.forward_pos(points, t2)
+                
+                # Get the K nearest point w.r.t t1
+                k, dist = knn_chunked(x_1, 4)
+
+                # Calculate the distances between all points and generate a mean()
+                x1_diff = dist
+                x2_diff = torch.norm(x_2[k] - x_2.unsqueeze(1), dim=2)
+                
+                # k is shared and x_1 and x_2 use the same indexing so the we can compare the distances between points to ensure a consistent distance
+                return ((x1_diff - x2_diff)**2).mean()
+                        
+        return 0
+            
+
+        
+SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
+def gaussian_integral(h, w, mu):
+    """Returns high weight (0 to 1) for solid materials
+    
+        Notes on optimization:
+            We evaluate the function return 1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+            However, as this tends to 0 when out point is solid, we will do:
+            return 1- (1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)) = (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+ 
+            Note, we may want to remove transparent materials and this can be done by 
+            h*(SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2), which returns a low weight for transparent materiasl
+    """
+    erf_term_1 = torch.erf(w * mu)
+    erf_term_2 = torch.erf(w * (mu - 1))
+    return ((SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)).squeeze(-1)
+
+import random
+def get_sorted_random_pair():
+    """Get a pair of random floats betwen 0 and 1
+    """
+    num1 = random.random()
+    num2 = random.random()
+    return num1, num2
+
+def knn_chunked(x, k, chunk_size=1024):
+    """
+    Efficient kNN using chunked pairwise distance calculation.
+    
+    Args:
+        x (Tensor): (N, 3) input point cloud (on CUDA)
+        k (int): number of neighbors
+        chunk_size (int): chunk size for memory efficiency
+
+    Returns:
+        knn_indices (Tensor): (N, k)
+        knn_distances (Tensor): (N, k)
+    """
+    N = x.size(0)
+    knn_indices = []
+    knn_distances = []
+
+    for start in range(0, N, chunk_size):
+        end = min(start + chunk_size, N)
+        chunk = x[start:end]  # (C, 3)
+
+        # Compute pairwise distances (C, N)
+        dists = torch.cdist(chunk, x, p=2)
+
+        # Avoid self-matching (only matters if chunk overlaps x[start:end])
+        mask = torch.arange(start, end, device=x.device)
+        dists[torch.arange(end - start), mask] = float('inf')
+
+        # Top-k distances and indices
+        topk_dists, topk_indices = torch.topk(dists, k, largest=False)
+
+        knn_indices.append(topk_indices)
+        knn_distances.append(topk_dists)
+
+    return torch.cat(knn_indices, dim=0), torch.cat(knn_distances, dim=0)

@@ -41,6 +41,8 @@ class Deformation(nn.Module):
         
         self.ratio=0
         self.create_net()
+        
+        self.hwmu_buffer = None
     @property
     def get_aabb(self):
         return self.grid.get_aabb
@@ -108,8 +110,13 @@ class Deformation(nn.Module):
             self.grid.get_opacity_vars(xyz)
         )
         return self.opacity_w(feature), torch.sigmoid(self.opacity_h(feature)), torch.sigmoid(self.opacity_mu(feature))
-        # return self.opacity_w(feature), torch.sigmoid(opac_emb), torch.sigmoid(self.opacity_mu(feature))
-        
+
+    def forward_pos(self, xyz, t):
+        st, sp = self.grid(xyz, (torch.ones_like(xyz[:, 0])*t).cuda().unsqueeze(-1), None)
+        return xyz + self.pos_deform(self.feature_out(
+            st * sp # Multiply space and space-time features for general param deformations
+        ))
+    
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration, h_emb):
         
         hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, iteration)
@@ -144,6 +151,8 @@ class Deformation(nn.Module):
         h = torch.sigmoid(self.opacity_h(hidden_opac)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
         mu = torch.sigmoid(self.opacity_mu(hidden_opac)) #opacity_emb #self.opacity_mu(hidden_opac) #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
 
+        self.hwmu_buffer = (h,w,mu) 
+        
         opacity = h * torch.exp(-(w**2)*((time_emb- mu)**2))
         
         # Change in color        
@@ -156,28 +165,29 @@ class Deformation(nn.Module):
         # opacity_np = opacity.cpu().numpy().flatten()
 
 
+        if False:
+            pass
+            # import matplotlib.pyplot as plt
 
-        # import matplotlib.pyplot as plt
+            # fig, axes = plt.subplots(2, 2, figsize=(12, 8))  # 2x2 grid of subplots
 
-        # fig, axes = plt.subplots(2, 2, figsize=(12, 8))  # 2x2 grid of subplots
+            # # Plot each histogram in its own axis
+            # axes[0, 0].hist(h_np, bins=30, color='blue', edgecolor='black')
+            # axes[0, 0].set_title('Histogram of h')
 
-        # # Plot each histogram in its own axis
-        # axes[0, 0].hist(h_np, bins=30, color='blue', edgecolor='black')
-        # axes[0, 0].set_title('Histogram of h')
+            # axes[0, 1].hist(w_np, bins=100, color='green', edgecolor='black')
+            # axes[0, 1].set_title('Histogram of w')
 
-        # axes[0, 1].hist(w_np, bins=100, color='green', edgecolor='black')
-        # axes[0, 1].set_title('Histogram of w')
+            # axes[1, 0].hist(mu_np, bins=30, color='red', edgecolor='black')
+            # axes[1, 0].set_title('Histogram of mu')
 
-        # axes[1, 0].hist(mu_np, bins=30, color='red', edgecolor='black')
-        # axes[1, 0].set_title('Histogram of mu')
+            # axes[1, 1].hist(opacity_np, bins=30, color='purple', edgecolor='black')
+            # axes[1, 1].set_title('Histogram of opacity')
 
-        # axes[1, 1].hist(opacity_np, bins=30, color='purple', edgecolor='black')
-        # axes[1, 1].set_title('Histogram of opacity')
-
-        # # Adjust layout
-        # plt.tight_layout()
-        # plt.show()
-        # exit()
+            # # Adjust layout
+            # plt.tight_layout()
+            # plt.show()
+            # exit()
 
         return pts, scales, rotations, opacity, shs, None
     
