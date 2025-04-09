@@ -31,7 +31,7 @@ import cv2
 
 from utils.scene_utils import render_training_image
 import copy
-from gaussian_renderer import render, render_no_train, deform_gs
+from gaussian_renderer import render, render_no_train
 import json
 from scene.condense_dataset import DilationTransform
 

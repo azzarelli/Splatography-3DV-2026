@@ -43,6 +43,6 @@ else
   echo "---- Unknown ----"
   exit 1
 fi
-python render.py --model_path "output/dynerf/$SAVEDIR/$EXP_NAME" --skip_train --configs arguments/dynerf/default.py
+#python render.py --model_path "output/dynerf/$SAVEDIR/$EXP_NAME" --skip_train --configs arguments/dynerf/default.py
 
-# python gui.py -s /media/barry/56EA40DEEA40BBCD/DATA/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000
+ python gui.py -s /data/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000

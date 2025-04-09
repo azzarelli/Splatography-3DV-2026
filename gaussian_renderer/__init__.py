@@ -14,8 +14,6 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
-from time import time as get_time
-
 
 def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0, override_color=None,
            stage="fine", cam_type=None):
@@ -72,16 +70,15 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         scales = pc._scaling
         rotations = pc._rotation
 
-    stfeats = None
-    if "coarse" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
-    elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final, stfeats = pc._deformation(means3D, scales,
+    # stfeats = None
+    # if "coarse" in stage:
+    #     means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
+    # elif "fine" in stage:
+
+    means3D_final, scales_final, rotations_final, opacity, shs_final, stfeats = pc._deformation(means3D, scales,
                                                                                                  rotations,
                                                                                                  shs,
                                                                                                  time, pc._opacity)
-    else:
-        raise NotImplementedError
 
     # time2 = get_time()
     # print("asset value:",time2-time1)
@@ -137,8 +134,6 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
     Render the scene outside of training GS representation of camera modesl
 
     """
-
-    # TODO: add dimensions for screenspace_points for additional gaussian representation
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
 
@@ -276,42 +271,3 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
             "visibility_filter": radii > 0,
             "radii": radii,
             "depth": depth}
-
-
-def deform_gs(time, pc: GaussianModel, stage="fine"):
-    """
-    Render the scene.
-
-    Background tensor (bg_color) must be on GPU!
-    """
-
-    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
-    try:
-        screenspace_points.retain_grad()
-    except:
-        pass
-
-    # Set up rasterization configuration
-    means3D = pc.get_xyz
-
-    time = torch.tensor(time).to(means3D.device).repeat(means3D.shape[0], 1)
-
-    means2D = screenspace_points
-    opacity = pc._opacity
-    shs = pc.get_features
-
-    scales = pc._scaling
-    rotations = pc._rotation
-
-    if "coarse" in stage:
-        means3D_final, scales_final, rotations_final, opacity_final, shs_final = means3D, scales, rotations, opacity, shs
-    elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity_final, shs_final = pc._deformation(means3D, scales,
-                                                                                                 rotations, opacity,
-                                                                                                 shs,
-                                                                                                 time,  pc._opacity)
-    else:
-        raise NotImplementedError
-
-    return means3D_final

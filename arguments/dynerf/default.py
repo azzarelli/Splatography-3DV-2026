@@ -33,7 +33,7 @@ OptimizationParams = dict(
     coarse_iterations=3000,
     
     densify_from_iter=3000, #best at 3001
-    # densification_interval=1,
+    densification_interval=1000,
     densify_until_iter = 10_000,
     
     opacity_reset_interval = 60000,

@@ -30,7 +30,7 @@ import cv2
 
 from utils.scene_utils import render_training_image
 import copy
-from gaussian_renderer import render, render_no_train, deform_gs
+from gaussian_renderer import render, render_no_train
 import json
 from scene.condense_dataset import DilationTransform
 
@@ -867,7 +867,7 @@ class GUI:
 
       
         # Handle Data Loading:
-        if self.opt.dataloader and not self.load_in_memory: # and self.stage == 'fine':
+        if self.opt.dataloader and not self.load_in_memory and self.stage == 'fine':
             try:
                 viewpoint_cams = next(self.loader)
             except StopIteration:
@@ -883,9 +883,13 @@ class GUI:
                     self.viewpoint_stack = self.scene.getTrainCameras().copy()
             
             zero_idxs = self.scene.train_camera.zero_idxs
-            
+
+            coarse_step = (self.iteration % 3)*25 # 0 25, 50
+            if coarse_step > 49: coarse_step = 49
+
             index = random.randrange(len(zero_idxs))  # get random index
-            item = self.viewpoint_stack[zero_idxs[index]]
+
+            item = self.viewpoint_stack[zero_idxs[index]+coarse_step]
             viewpoint_cams.append(item)
 
             while len(viewpoint_cams) < self.opt.batch_size :
@@ -932,7 +936,6 @@ class GUI:
         viewspace_point_tensor_list = []
 
         L1 = 0.
-
         for viewpoint_cam in viewpoint_cams:
             try: # If we have seperate depth
                 viewpoint_cam, pcd_path = viewpoint_cam
