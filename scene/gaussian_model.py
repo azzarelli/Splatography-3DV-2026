@@ -131,8 +131,12 @@ class GaussianModel:
         """
         return self._deformation.deformation_net.foward_opac(self._xyz, self._opacity)
 
+    @property
+    def opacity_integral(self):
+        return gaussian_integral(self._deformation.deformation_net.hwmu_buffer[0], self._deformation.deformation_net.hwmu_buffer[1], self._deformation.deformation_net.hwmu_buffer[2])
+
     def get_dynamic_point_prob(self):
-        return 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+        return self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
 
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -629,16 +633,16 @@ def gaussian_integral(h, w, mu):
     """Returns high weight (0 to 1) for solid materials
     
         Notes on optimization:
-            We evaluate the function return 1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
-            However, as this tends to 0 when out point is solid, we will do:
-            return 1- (1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)) = (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+            We evaluate the function return h - h*(SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+            This tends to 0 when out point is solid and can be simplified into 
+            1. - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
  
-            Note, we may want to remove transparent materials and this can be done by 
-            h*(SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2), which returns a low weight for transparent materiasl
     """
     erf_term_1 = torch.erf(w * mu)
     erf_term_2 = torch.erf(w * (mu - 1))
-    return ((SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)).squeeze(-1)
+    EPS = 1e-8
+    fact = (SQRT_PI / ((2. * w) + EPS))
+    return 1. - (fact * (erf_term_1 - erf_term_2).squeeze(-1))
 
 import random
 def get_sorted_random_pair():

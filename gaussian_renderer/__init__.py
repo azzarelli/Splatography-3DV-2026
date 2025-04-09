@@ -132,7 +132,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
 
 
 def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
-                    stage="fine", cam_type=None, cams_pc=None, show_radius=2.):
+                    stage="fine", cam_type=None, cams_pc=None, show_radius=2., show_dynamic=0., show_opacity=0.):
     """
     Render the scene outside of training GS representation of camera modesl
 
@@ -210,6 +210,11 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
     distances = torch.norm(means3D_final, dim=1)
     # Create a mask for the bounding box
     mask =  (distances < show_radius)
+    
+    # if stage == 'fine':
+        # mask = mask * (show_dynamic < pc.get_dynamic_point_prob().squeeze(-1))
+
+        # mask = mask * (show_opacity < pc.opacity_integral)
 
     means3D_final = means3D_final[mask]
     means2D = means2D[mask]

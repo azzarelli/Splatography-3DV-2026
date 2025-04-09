@@ -146,6 +146,7 @@ class Deformation(nn.Module):
             else:
                 rotations = rotations_emb[:,:4] + dr
         
+        
         # Change in opacity
         w = self.opacity_w(hidden_opac)
         h = torch.sigmoid(self.opacity_h(hidden_opac)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1

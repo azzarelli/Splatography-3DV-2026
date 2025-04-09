@@ -38,6 +38,8 @@ import open3d as o3d
 
 import psutil
 
+from DAV2.depth_anything_v2.dpt import DepthAnythingV2
+
 to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
 
 try:
@@ -440,7 +442,12 @@ class GUI:
         dataset.model_path = args.model_path
 
         self.timer = Timer()
-        self.scene = Scene(dataset, self.gaussians)
+        if ckpt_start is not None:
+            self.scene = Scene(dataset, self.gaussians , load_iteration=-1)
+        else:
+            self.scene = Scene(dataset, self.gaussians)
+            
+            
         self.timer.start()
 
         self.stage = 'coarse'
@@ -468,6 +475,8 @@ class GUI:
         self.show_depth = False
         self.show_cameras = True
         self.show_test = False
+        self.show_dynamic = 0.
+        self.show_opacity = 0.
 
         self.results_dir = os.path.join(self.args.model_path, 'active_results')
         if os.path.exists(self.results_dir):
@@ -476,8 +485,17 @@ class GUI:
         os.mkdir(self.results_dir)
         self.training_cams_pc = GaussianCameraModel(self.scene.getTrainCameras(), self.W, self.H)
 
-        # For evaluating masked images with psnr
-        # self.dilation_transform = DilationTransform() # For image assessment involving masks
+        model_configs = {
+            'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+            'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+            'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+            'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
+        }
+
+        encoder = 'vits' # or 'vits', 'vitb', 'vitg'
+        # self.depth_model = DepthAnythingV2(**model_configs[encoder])
+        # self.depth_model.load_state_dict(torch.load(f'DAV2/checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
+        # self.depth_model = self.depth_model.cuda().eval()            
 
         if self.gui:
             print('DPG loading ...')
@@ -575,11 +593,15 @@ class GUI:
                 dpg.add_text("no data", tag="_log_infer_time")
 
             with dpg.group():
-                dpg.add_text("Training info: ")
-                dpg.add_text("no data", tag="_log_iter")
-                dpg.add_text("no data", tag="_log_loss")
-                dpg.add_text("no data", tag="_log_depth")
-                dpg.add_text("no data", tag="_log_points")
+                if self.checkpoint is None:
+                    dpg.add_text("Training info:")
+                    dpg.add_text("no data", tag="_log_iter")
+                    dpg.add_text("no data", tag="_log_loss")
+                    dpg.add_text("no data", tag="_log_depth")
+                    dpg.add_text("no data", tag="_log_points")
+                else:
+                    dpg.add_text("Training info: (Not training)")
+
 
             with dpg.collapsing_header(label="Testing info:", default_open=True):
                 dpg.add_text("no data", tag="_log_psnr_test")
@@ -594,6 +616,20 @@ class GUI:
                     
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="Depth", callback=callback_toggle_show_depth)
+                
+                def callback_toggle_show_scene(sender):
+                    self.show_scene = not self.show_scene
+
+                def callback_toggle_show_cameras(sender):
+                    self.show_cameras = not self.show_cameras
+                    
+                def callback_toggle_show_tes(sender):
+                    self.show_test = not self.show_test
+
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Show/Hide Scene", callback=callback_toggle_show_scene)
+                    dpg.add_button(label="Show/Hide Cameras", callback=callback_toggle_show_cameras)
+                    dpg.add_button(label="Show/Hide Test", callback=callback_toggle_show_tes)
                     
                 def callback_show_max_radius(sender):
                     self.show_radius = dpg.get_value(sender)
@@ -618,20 +654,31 @@ class GUI:
                     min_value=0.,
                     callback=callback_speed_control,
                 )
-
-                def callback_toggle_show_scene(sender):
-                    self.show_scene = not self.show_scene
-
-                def callback_toggle_show_cameras(sender):
-                    self.show_cameras = not self.show_cameras
+                
+                def callback_toggle_view_dynamic(sender):
+                    self.show_dynamic = dpg.get_value(sender)
+                    self.need_update = True      
                     
-                def callback_toggle_show_tes(sender):
-                    self.show_test = not self.show_test
+                dpg.add_slider_float(
+                    label="Dynamic View Thresh",
+                    default_value=1.,
+                    max_value=1.,
+                    min_value=0.,
+                    callback=callback_toggle_view_dynamic,
+                )
+                def callback_toggle_view_opacity(sender):
+                    self.show_opacity = dpg.get_value(sender)
+                    self.need_update = True   
+                    
+                dpg.add_slider_float(
+                    label="Dynamic Opacity",
+                    default_value=1.,
+                    max_value=1.,
+                    min_value=0.,
+                    callback=callback_toggle_view_opacity,
+                )
 
-                with dpg.group(horizontal=True):
-                    dpg.add_button(label="Show/Hide Scene", callback=callback_toggle_show_scene)
-                    dpg.add_button(label="Show/Hide Cameras", callback=callback_toggle_show_cameras)
-                    dpg.add_button(label="Show/Hide Test", callback=callback_toggle_show_tes)
+                
 
 
 
@@ -735,18 +782,19 @@ class GUI:
                     self.stage = 'fine'
                     self.init_taining()
 
-                if self.iteration <= self.final_iter:
-                    self.train_step()
-                    self.iteration += 1
+                if self.checkpoint is None:
+                    if self.iteration <= self.final_iter:
+                        self.train_step()
+                        self.iteration += 1
 
 
-                if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                    if self.stage == 'fine':
-                        self.test_step()
+                    if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
+                        if self.stage == 'fine':
+                            self.test_step()
 
-                if self.iteration > self.final_iter and self.stage == 'fine':
-                    self.stage = 'done'
-                    exit()
+                    if self.iteration > self.final_iter and self.stage == 'fine':
+                        self.stage = 'done'
+                        exit()
 
                 with torch.no_grad():
                     self.viewer_step()
@@ -794,8 +842,6 @@ class GUI:
         else:
             tag = 'depth'
         
-        
-            
         buffer_image = render_no_train(camera, 
                                     self.gaussians, 
                                     self.pipe, 
@@ -807,9 +853,11 @@ class GUI:
                                         "qs":self.training_cams_pc.qs,
                                         "scale":self.training_cams_pc.scale,
                                         "show_scene":self.show_scene,
-                                        "show_cameras":self.show_cameras
+                                        "show_cameras":self.show_cameras,
                                     },
-                                    show_radius=self.show_radius
+                                    show_radius=self.show_radius,
+                                    show_dynamic=self.show_dynamic,
+                                    show_opacity=self.show_opacity
                                     )[tag]
            
         if not self.show_depth:
@@ -932,19 +980,12 @@ class GUI:
         viewspace_point_tensor_list = []
 
         L1 = 0.
-
+        depth_loss = 0.
         for viewpoint_cam in viewpoint_cams:
             try: # If we have seperate depth
                 viewpoint_cam, pcd_path = viewpoint_cam
             except:
                 pcd_path = None
-
-            if pcd_path is not None:
-                # self.track_cpu_gpu_usage(viewpoint_cam.time)
-
-                # depth_loss += self.train_depth_step(pcd_path, viewpoint_cam.time)
-                # self.track_cpu_gpu_usage(viewpoint_cam.time)
-                pass
 
             render_pkg = render(viewpoint_cam, self.gaussians, self.pipe, self.background, stage=self.stage, cam_type=self.scene.dataset_type)
             image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -956,7 +997,7 @@ class GUI:
 
             # train the gaussians inside the mask
             L1 += l1_loss(image, gt_image, viewpoint_cam.mask)
-
+        
             
             # gt_images.append(gt_image.unsqueeze(0))
             images.append(image.unsqueeze(0))
@@ -964,6 +1005,37 @@ class GUI:
             radii_list.append(radii.unsqueeze(0))
             visibility_filter_list.append(visibility_filter.unsqueeze(0))
             viewspace_point_tensor_list.append(viewspace_point_tensor)
+            
+            # Depth loss
+            # depth = self.depth_model.infer_image(gt_image)
+            # depth_pred = 1. - ((depth - depth.min())/ depth.max() - depth.min())
+
+            # depth = render_pkg['depth'].squeeze(0)
+            # depth_gs = ((depth - depth.min())/ depth.max() - depth.min())
+             
+            # depth_loss += ((depth_gs - depth_pred)**2).mean()
+            
+            # import matplotlib.pyplot as plt
+            # # Plot side-by-side
+            # fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+
+            # # Original depth (unnormalized)
+            # im1 = axs[0].imshow(depth, cmap='gray')
+            # axs[0].set_title('Original Depth')
+            # plt.colorbar(im1, ax=axs[0])
+
+            # # Normalized depth
+            # im2 = axs[1].imshow(depth_normalized, cmap='gray')
+            # axs[1].set_title('Normalized Depth')
+            # plt.colorbar(im2, ax=axs[1])
+
+            # plt.tight_layout()
+            # plt.show()
+
+            # print(render_pkg['depth'].shape)
+            # print(depth_normalized.shape)
+            # exit()
+            
             
         radii = torch.cat(radii_list, 0).max(dim=0).values
         visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
@@ -982,11 +1054,13 @@ class GUI:
                 self.hyperparams.plane_tv_weight,
                 )
             
-            w_, h_, mu_ = self.gaussians.get_opacity
+            # w_, h_, mu_ = self.gaussians.get_opacity
             
             # if self.iteration > 3000:
-            loss += ((1 - h_)).mean()
-            
+            opacloss = ((self.gaussians.opacity_integral)).mean()
+            print(opacloss)
+            loss += opacloss
+            # loss += 0.01* depth_loss/self.opt.batch_size
             # if render_pkg['stfeats'] is not None:
             #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
 
@@ -1038,7 +1112,7 @@ class GUI:
 
         # Error if loss becomes nan
         if torch.isnan(loss).any():
-            print("loss is nan,end training, reexecv program now.")
+            print("loss is nan, end training, reexecv program now.")
             os.execv(sys.executable, [sys.executable] + sys.argv)
         
         viewspace_point_tensor_grad = torch.zeros_like(viewspace_point_tensor)
@@ -1337,7 +1411,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", type=int, default=1000)
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 14000, 20000, 30_000, 45000, 60000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 10000, 20000, 30_000, 45000, 60000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
@@ -1358,13 +1432,10 @@ if __name__ == "__main__":
 
     # Start GUI server, configure and run training
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-
     gui = GUI(args=args, hyperparams=hp.extract(args), dataset=lp.extract(args), opt=op.extract(args), pipe=pp.extract(args),testing_iterations=args.test_iterations, saving_iterations=args.save_iterations,
             ckpt_it=args.checkpoint_iterations, ckpt_start=args.start_checkpoint, debug_from=args.debug_from, expname=args.expname)
 
     
     gui.render()
-    # training( args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.expname)
 
-    # All done
     print("\nTraining complete.")

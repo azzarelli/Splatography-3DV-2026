@@ -5,8 +5,10 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'cook_spinach/'
 
-focal_word = '4dgs_densify'  #Hthresh1_PruneHW_l10005_redo
-bench_marks = ['prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']
+focal_word = '4dgs_corrected_mindynprob' 
+bench_marks = ['4dgs_corrected','4dgs_densify','prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']
+
+
 # Sparse View
 # bench_marks = ['prob_neug_dynweight_25timeres','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens','prob_neug_rigid','prob_neug_pg5','sparsetest','prob_6k_w9_pg','prob_6k_w9_neug_nodssim', 'prob_3k_w9_pg_nodssim','prob_6k_w9_hemb_nos', 'prob_6k_w9_coarse','prob_6k_w9_gradthresh','prob_6k','prob_6k_w9_hemb', 'normal','test_full', 'test', 'Sparse_IsolatedMotionTriPlane', "Sparse_IsolatedMotionTriPlane_01"] # ['l10005TuningNoActivPruneHW','reg_h1','reg_h1_median', 'reg_h01', 'cleanrun', 'PruneHW_l10005_redo', 'W3PruneHW_l10005_WaveLvl']
    
@@ -19,7 +21,6 @@ l10005TuningNoActivPruneHW:
     Tested l1 weight with 0.00005
     Pruning using the HW method with threshold 0.005
     No opacity embedding or activation
-    
 """
 non_words = ['tv', 'HW', 'Shared','NoCos','4-D','OpacEm', 'Bez','Seq',  'Fix','ts','sep', 'tv' 'Feat', 
              'temb', 'Test', 'test','reset', 'Sep', 'Activation', 'd0', 'rotation', 'LR', 'Reg', '12k']
