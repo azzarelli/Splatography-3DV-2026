@@ -597,7 +597,8 @@ class GUI:
                     dpg.add_text("Training info:")
                     dpg.add_text("no data", tag="_log_iter")
                     dpg.add_text("no data", tag="_log_loss")
-                    dpg.add_text("no data", tag="_log_depth")
+                    dpg.add_text("no data", tag="_log_planes")
+                    dpg.add_text("no data", tag="_log_opacs")
                     dpg.add_text("no data", tag="_log_points")
                 else:
                     dpg.add_text("Training info: (Not training)")
@@ -1058,12 +1059,12 @@ class GUI:
             
             # if self.iteration > 3000:
             opacloss = ((self.gaussians.opacity_integral)).mean()
-            print(opacloss)
             loss += opacloss
             # loss += 0.01* depth_loss/self.opt.batch_size
             # if render_pkg['stfeats'] is not None:
             #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
-
+        else:
+            opacloss = 0.
             
 
         if self.opt.lambda_dssim != 0:
@@ -1125,13 +1126,14 @@ class GUI:
         # Log and save
         with torch.no_grad():
             self.timer.pause() # log and save
+           
+            # Update the GUI loggers
             if self.gui:
                 dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                 dpg.set_value("_log_loss", f"Loss: {loss.item()} ")
-
-            if (self.iteration % 2) == 0 and self.gui:
-                total_point = self.gaussians._xyz.shape[0]
-                dpg.set_value("_log_points", f"{total_point} total points")
+                dpg.set_value("_log_opacs", f"Opac loss: {opacloss} ")
+                if (self.iteration % 2) == 0:
+                    dpg.set_value("_log_points", f"Points: {self.gaussians._xyz.shape[0]}")
 
             torch.cuda.synchronize()
 
