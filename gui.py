@@ -30,7 +30,7 @@ import cv2
 
 from utils.scene_utils import render_training_image
 import copy
-from gaussian_renderer import render, render_no_train, deform_gs
+from gaussian_renderer import render, render_no_train
 import json
 from scene.condense_dataset import DilationTransform
 
@@ -472,17 +472,19 @@ class GUI:
         self.time = 0.
         self.show_radius = 30.
         self.show_scene = True
-        self.show_depth = False
+        self.show_depth = 'render'
         self.show_cameras = True
         self.show_test = False
         self.show_dynamic = 0.
         self.show_opacity = 10.
 
         self.results_dir = os.path.join(self.args.model_path, 'active_results')
-        if os.path.exists(self.results_dir):
-            print(f'[Removing old results] : {self.results_dir}')
-            shutil.rmtree(self.results_dir)
-        os.mkdir(self.results_dir)
+        if ckpt_start is None:
+            if os.path.exists(self.results_dir):
+                print(f'[Removing old results] : {self.results_dir}')
+                shutil.rmtree(self.results_dir)
+            os.mkdir(self.results_dir)
+            
         self.training_cams_pc = GaussianCameraModel(self.scene.getTrainCameras(), self.W, self.H)
 
         model_configs = {
@@ -492,9 +494,9 @@ class GUI:
             'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
         }
 
-        encoder = 'vits' # or 'vits', 'vitb', 'vitg'
-        self.depth_model = DepthAnythingV2(**model_configs[encoder])
-        self.depth_model.load_state_dict(torch.load(f'DAV2/checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
+        encoder = 'vitb' # or 'vits', 'vitb', 'vitg'
+        self.depth_model = DepthAnythingV2(**{**model_configs[encoder], 'max_depth': 1.})
+        self.depth_model.load_state_dict(torch.load(f'DAV2/checkpoints/depth_anything_v2_metric_hypersim_{encoder}.pth', map_location='cpu'))
         self.depth_model = self.depth_model.cuda().eval()            
 
         if self.gui:
@@ -536,7 +538,6 @@ class GUI:
                                                 num_workers=16, collate_fn=list))
 
         self.load_in_memory = False
-
 
     def __del__(self):
         dpg.destroy_context()
@@ -597,7 +598,7 @@ class GUI:
                     dpg.add_text("Training info:")
                     dpg.add_text("no data", tag="_log_iter")
                     dpg.add_text("no data", tag="_log_loss")
-                    dpg.add_text("no data", tag="_log_planes")
+                    dpg.add_text("no data", tag="_log_depth")
                     dpg.add_text("no data", tag="_log_opacs")
                     dpg.add_text("no data", tag="_log_points")
                 else:
@@ -612,11 +613,20 @@ class GUI:
             # rendering options
             with dpg.collapsing_header(label="Rendering", default_open=True):
                 
+                def callback_toggle_show_rgb(sender):
+                    self.show_depth = 'render'
                 def callback_toggle_show_depth(sender):
-                    self.show_depth = not self.show_depth
+                    self.show_depth = 'depth'
+                def callback_toggle_show_alpha(sender):
+                    self.show_depth = 'alpha'
+                def callback_toggle_show_norms(sender):
+                    self.show_depth = 'norms'
                     
                 with dpg.group(horizontal=True):
+                    dpg.add_button(label="RGB", callback=callback_toggle_show_rgb)
                     dpg.add_button(label="Depth", callback=callback_toggle_show_depth)
+                    dpg.add_button(label="Alpha", callback=callback_toggle_show_alpha)
+                    dpg.add_button(label="Normls", callback=callback_toggle_show_norms)
                 
                 def callback_toggle_show_scene(sender):
                     self.show_scene = not self.show_scene
@@ -770,7 +780,6 @@ class GUI:
         print(
             f'[{self.stage} {self.iteration}] Time: {time:.2f} | Allocated Memory: {allocated:.2f} MB, Reserved Memory: {reserved:.2f} MB | CPU Memory Usage: {memory_mb:.2f} MB')
 
-
     def render(self):
 
         if self.gui:
@@ -823,6 +832,53 @@ class GUI:
         if self.show_test:
             camera =copy.deepcopy(self.scene.getTestCameras()[0])
             camera.time = self.time
+            
+            show_depth = False
+            if show_depth:
+                depth =  self.depth_model.infer_image(camera.original_image.permute(1,2,0).numpy()).cpu()
+                # depth = (depth - depth.min()) / (depth.max() - depth.min())
+                # depth = 1. - depth
+                
+                import matplotlib.pyplot as plt
+                # Plot side-by-side
+                fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+
+                
+                
+                depth_pred = render_no_train(camera, 
+                    self.gaussians, 
+                    self.pipe, 
+                    self.background, 
+                    stage='fine', 
+                    cam_type=self.scene.dataset_type,
+                    cams_pc = {
+                        "xyzs": self.training_cams_pc.xyzs,
+                        "qs":self.training_cams_pc.qs,
+                        "scale":self.training_cams_pc.scale,
+                        "show_scene":self.show_scene,
+                        "show_cameras":self.show_cameras,
+                    },
+                    show_radius=self.show_radius,
+                    show_dynamic=self.show_dynamic,
+                    show_opacity=self.show_opacity
+                )['depth'].cpu().permute(1,2,0)
+                
+                depth = (depth - depth.min()) / (depth.max() - depth.min()) 
+                depth_pred = ((depth_pred - depth_pred.min())/ (depth_pred.max() - depth_pred.min()))
+                
+                # Original depth (unnormalized)
+                im1 = axs[0].imshow(depth, cmap='gray')
+                axs[0].set_title('Original Depth')
+                plt.colorbar(im1, ax=axs[0])
+                im2 = axs[1].imshow(depth_pred, cmap='gray')
+                axs[1].set_title('Normalized Depth')
+                plt.colorbar(im2, ax=axs[1])
+
+                plt.tight_layout()
+                plt.show()
+                exit()
+            
+            
         else:
             camera = MiniCam(
                 self.cam.pose,
@@ -834,17 +890,14 @@ class GUI:
                 self.cam.far, 
                 time=self.time)
         
-        if not self.show_depth:
-            tag = 'render'
-        else:
-            tag = 'depth'
+        tag = self.show_depth
+        
+        
         
         buffer_image = render_no_train(camera, 
                                     self.gaussians, 
                                     self.pipe, 
                                     self.background, 
-                                    stage='fine', 
-                                    cam_type=self.scene.dataset_type,
                                     cams_pc = {
                                         "xyzs": self.training_cams_pc.xyzs,
                                         "qs":self.training_cams_pc.qs,
@@ -857,9 +910,7 @@ class GUI:
                                     show_opacity=self.show_opacity
                                     )[tag]
            
-        if not self.show_depth:
-            pass
-        else:
+        if self.show_depth in ['depth', 'alpha']:
 
             buffer_image = (buffer_image - buffer_image.min())/(buffer_image.max() - buffer_image.min())
             buffer_image = buffer_image.repeat(3,1,1)
@@ -938,32 +989,6 @@ class GUI:
                 if curr_idx != index:
                     item = self.viewpoint_stack[zero_idxs[index]]
                     viewpoint_cams.append(item)
-                    
-            # # Construct batch for current step
-            # while idx < self.opt.batch_size :
-            
-            #     if len(viewpoint_cams) > 0:
-            #         # Ensure we select a camera with a different view
-            #         nodiff = True
-            #         while nodiff:
-            #             # Select a random frame and check if the global position T appears already in the batch
-            #             idx = randint(0, len(self.viewpoint_stack) - 1)
-            #             temp_T = self.viewpoint_stack[idx].T
-            #             cnt = 0
-            #             for v in viewpoint_cams:
-            #                 if v.T == temp_T: cnt += 1
-            #             # if it doesn't appear add it to the stack and break from the loop
-            #             if cnt == 0:
-            #                 nodiff = False
-            #                 viewpoint_cam = self.viewpoint_stack.pop(idx)
-            #     else:
-            #         viewpoint_cam = random.choice(self.viewpoint_stack)
-                    
-            #     if viewpoint_cam.time == 0.0:
-            #         viewpoint_cams.append(viewpoint_cam)
-            #         idx +=1
-
-        
         
         # Render
         if (self.iteration - 1) == self.debug_from:
@@ -983,11 +1008,23 @@ class GUI:
                 viewpoint_cam, pcd_path = viewpoint_cam
             except:
                 pcd_path = None
-
-            render_pkg = render(viewpoint_cam, self.gaussians, self.pipe, self.background, stage=self.stage, cam_type=self.scene.dataset_type)
+            
+            render_pkg = render(
+                viewpoint_cam, 
+                self.gaussians, 
+                self.pipe, 
+                self.background, 
+                stage=self.stage
+            )
             image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
             if self.scene.dataset_type!="PanopticSports":
+                # if self.stage == 'fine':            
+                #     gt_depth =  self.depth_model.infer_image(viewpoint_cam.original_image.permute(1,2,0).numpy())
+                #     gt_depth = (gt_depth - gt_depth.min()) / (gt_depth.max() - gt_depth.min()) 
+                #     depth_pred = ((depth_pred - depth_pred.min())/ (depth_pred.max() - depth_pred.min()))
+                #     depth_loss += ((depth_pred - gt_depth)**2).mean()
+
                 gt_image = viewpoint_cam.original_image.cuda()
             else:
                 gt_image  = viewpoint_cam['image'].cuda()
@@ -1002,6 +1039,7 @@ class GUI:
             radii_list.append(radii.unsqueeze(0))
             visibility_filter_list.append(visibility_filter.unsqueeze(0))
             viewspace_point_tensor_list.append(viewspace_point_tensor)
+
             
             # Depth loss
             # depth = self.depth_model.infer_image(gt_image)
@@ -1053,10 +1091,10 @@ class GUI:
             
             w_, h_, mu_ = self.gaussians.get_opacity
             
-            # if self.iteration > 3000:
             opacloss = ((1- h_)**2).mean()
             loss += opacloss
-            # loss += 0.01* depth_loss/self.opt.batch_size
+            loss += depth_loss
+
             # if render_pkg['stfeats'] is not None:
             #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
             
@@ -1089,7 +1127,7 @@ class GUI:
             # ).mean()
         else:
             opacloss = 0.
-            
+            depth_loss = 0.
 
         if self.opt.lambda_dssim != 0:
             loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
@@ -1127,6 +1165,7 @@ class GUI:
                 dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                 dpg.set_value("_log_loss", f"Loss: {loss.item()} ")
                 dpg.set_value("_log_opacs", f"Opac loss: {opacloss} ")
+                dpg.set_value("_log_opacs", f"Depth loss: {depth_loss} ")
                 if (self.iteration % 2) == 0:
                     dpg.set_value("_log_points", f"Points: {self.gaussians._xyz.shape[0]}")
 
@@ -1141,6 +1180,7 @@ class GUI:
             
             # Densification
             if self.iteration < self.opt.densify_until_iter :
+                
                 # Keep track of max radii in image-space for pruning
                 self.gaussians.max_radii2D[visibility_filter] = torch.max(self.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
@@ -1205,15 +1245,12 @@ class GUI:
             else:
                 gt_image  = viewpoint_cam['image'].cuda()
 
-            # train the gaussians inside the mask        
-            
-            
             # Depth loss
-            # depth = self.depth_model.infer_image(gt_image)
-            # depth_pred = 1. - ((depth - depth.min())/ depth.max() - depth.min())
+            depth = self.depth_model.infer_image(gt_image)
+            depth_pred = 1. - ((depth - depth.min())/ depth.max() - depth.min())
 
-            # depth = render_pkg['depth'].squeeze(0)
-            # depth_gs = ((depth - depth.min())/ depth.max() - depth.min())
+            depth = render_pkg['depth'].squeeze(0)
+            depth_gs = ((depth - depth.min())/ depth.max() - depth.min())
              
             # depth_loss += ((depth_gs - depth_pred)**2).mean()
             
