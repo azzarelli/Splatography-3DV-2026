@@ -42,7 +42,6 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
         self.video_cameras = {}
-        print(args.source_path)
         
         scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, args.white_background, args.eval)
         dataset_type="dynerf"

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = '4dgs_opac_hreg_pg_512' 
+focal_word = '4dgs_opac_hreg_dloss' 
 bench_marks = ['4dgs_opac_hreg_pg_ngs','4dgs_opac_hreg_pg','4dgs_opac_w_reg','4dgs_corrected','4dgs_densify','prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']
 
 

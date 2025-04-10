@@ -1,6 +1,6 @@
 import torch.nn as nn
 import pywt
-import pytorch_wavelets_.dwt.lowlevel as lowlevel
+import submodules.pytorch_wavelets_.dwt.lowlevel as lowlevel
 import torch
 
 

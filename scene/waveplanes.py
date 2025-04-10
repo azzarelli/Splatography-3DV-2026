@@ -1,8 +1,7 @@
 import itertools
-import logging as log
 from typing import Optional, Union, List, Dict, Sequence, Iterable, Collection, Callable
 
-from pytorch_wavelets_.dwt.transform2d import DWTInverse, DWTForward
+from submodules.pytorch_wavelets_.dwt.transform2d import DWTInverse, DWTForward
 
 import torch
 import torch.nn as nn
