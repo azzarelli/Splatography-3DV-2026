@@ -212,9 +212,11 @@ def render_no_train(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.T
     mask =  (distances < show_radius)
     
     # if stage == 'fine':
-        # mask = mask * (show_dynamic < pc.get_dynamic_point_prob().squeeze(-1))
+    w, h, mu = pc.get_opacity
 
-        # mask = mask * (show_opacity < pc.opacity_integral)
+    # mask = mask * (show_dynamic < pc.get_dynamic_point_prob().squeeze(-1))
+
+    mask = mask * (show_opacity > w.abs().squeeze(-1))
 
     means3D_final = means3D_final[mask]
     means2D = means2D[mask]

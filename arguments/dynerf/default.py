@@ -3,7 +3,7 @@ ModelHiddenParams = dict(
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
-     'resolution': [264, 264, 264, 150],
+     'resolution': [264, 264, 264, 50],
      'wavelevel':2
     },
     multires = [1,2],

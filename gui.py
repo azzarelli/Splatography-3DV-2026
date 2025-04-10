@@ -476,7 +476,7 @@ class GUI:
         self.show_cameras = True
         self.show_test = False
         self.show_dynamic = 0.
-        self.show_opacity = 0.
+        self.show_opacity = 10.
 
         self.results_dir = os.path.join(self.args.model_path, 'active_results')
         if os.path.exists(self.results_dir):
@@ -493,9 +493,9 @@ class GUI:
         }
 
         encoder = 'vits' # or 'vits', 'vitb', 'vitg'
-        # self.depth_model = DepthAnythingV2(**model_configs[encoder])
-        # self.depth_model.load_state_dict(torch.load(f'DAV2/checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
-        # self.depth_model = self.depth_model.cuda().eval()            
+        self.depth_model = DepthAnythingV2(**model_configs[encoder])
+        self.depth_model.load_state_dict(torch.load(f'DAV2/checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
+        self.depth_model = self.depth_model.cuda().eval()            
 
         if self.gui:
             print('DPG loading ...')
@@ -674,14 +674,10 @@ class GUI:
                 dpg.add_slider_float(
                     label="Dynamic Opacity",
                     default_value=1.,
-                    max_value=1.,
+                    max_value=10.,
                     min_value=0.,
                     callback=callback_toggle_view_opacity,
                 )
-
-                
-
-
 
         
         def callback_set_mouse_loc(sender, app_data):
@@ -1055,14 +1051,42 @@ class GUI:
                 self.hyperparams.plane_tv_weight,
                 )
             
-            # w_, h_, mu_ = self.gaussians.get_opacity
+            w_, h_, mu_ = self.gaussians.get_opacity
             
             # if self.iteration > 3000:
-            opacloss = ((self.gaussians.opacity_integral)).mean()
+            opacloss = ((1- h_)**2).mean()
             loss += opacloss
             # loss += 0.01* depth_loss/self.opt.batch_size
             # if render_pkg['stfeats'] is not None:
             #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
+            
+            
+            # NeuSG flat Gaussian loss
+            max_gauss_ratio = 5
+            scale_exp = self.gaussians.get_scaling
+            
+            # if self.stage == 'fine':
+            #     w = 0.1 * self.gaussians.get_dynamic_point_prob()
+            # else:
+            w = 0.1
+            # loss += (w * torch.abs(scale_exp.amin(dim=-1))).mean()
+            
+            # Phys Gaussian Loss (as per nerfstudio implementaton)
+            # loss += (
+            #     torch.maximum(
+            #         scale_exp.amax(dim=-1) / scale_exp.amin(dim=-1),
+            #         torch.tensor(max_gauss_ratio),
+            #     )
+            #     - max_gauss_ratio
+            # ).mean()
+            # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
+            # loss += w*(
+            #     torch.maximum(
+            #         s_v[:, 0] / s_v[:, 1],
+            #         torch.tensor(max_gauss_ratio),
+            #     )
+            #     - max_gauss_ratio
+            # ).mean()
         else:
             opacloss = 0.
             
@@ -1073,35 +1097,6 @@ class GUI:
         else:
             loss += L1
         
-        # NeuSG flat Gaussian loss
-        max_gauss_ratio = 5
-        scale_exp = self.gaussians.get_scaling
-        
-        # if self.stage == 'fine':
-        #     w = 0.1 * self.gaussians.get_dynamic_point_prob()
-        # else:
-        w = 0.1
-        # loss += (w * torch.abs(scale_exp.amin(dim=-1))).mean()
-        
-        # Phys Gaussian Loss (as per nerfstudio implementaton)
-        # loss += 0.1*(
-        #     torch.maximum(
-        #         scale_exp.amax(dim=-1) / scale_exp.amin(dim=-1),
-        #         torch.tensor(max_gauss_ratio),
-        #     )
-        #     - max_gauss_ratio
-        # ).mean()
-        s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
-        loss += w*(
-            torch.maximum(
-                s_v[:, 0] / s_v[:, 1],
-                torch.tensor(max_gauss_ratio),
-            )
-            - max_gauss_ratio
-        ).mean()
-
-        
-
         # final regularizer - we want to model surface position differences for solid dynamic points (so occurs later in training)
         # if self.iteration > 1000 and self.stage == 'fine':
         #     loss += self.gaussians.compute_rigidity_loss()
@@ -1170,6 +1165,93 @@ class GUI:
             if (self.iteration in self.checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
                 torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
+    
+    def depth_train_step(self):
+
+        # Start recording step duration
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # self.iter_start.record()
+
+        if self.iteration < self.opt.iterations:
+            self.gaussians.optimizer.zero_grad(set_to_none=True)
+
+        # Get camera data
+        try:
+            viewpoint_cams = next(self.loader)
+        except StopIteration:
+            viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                num_workers=16, collate_fn=list)
+            self.random_loader = True
+            self.loader = iter(viewpoint_stack_loader)
+            viewpoint_cams = next(self.loader)
+
+        # Generate scene based on an input camera from our current batch (defined by viewpoint_cams)
+        images = []
+        gt_images = []
+
+        loss = 0.
+        for viewpoint_cam in viewpoint_cams:
+            try: # If we have seperate depth
+                viewpoint_cam, pcd_path = viewpoint_cam
+            except:
+                pcd_path = None
+
+            render_pkg = render(viewpoint_cam, self.gaussians, self.pipe, self.background, stage=self.stage, cam_type=self.scene.dataset_type)
+            image, depth= render_pkg["render"]
+
+            if self.scene.dataset_type!="PanopticSports":
+                gt_image = viewpoint_cam.original_image.cuda()
+            else:
+                gt_image  = viewpoint_cam['image'].cuda()
+
+            # train the gaussians inside the mask        
+            
+            
+            # Depth loss
+            # depth = self.depth_model.infer_image(gt_image)
+            # depth_pred = 1. - ((depth - depth.min())/ depth.max() - depth.min())
+
+            # depth = render_pkg['depth'].squeeze(0)
+            # depth_gs = ((depth - depth.min())/ depth.max() - depth.min())
+             
+            # depth_loss += ((depth_gs - depth_pred)**2).mean()
+            
+            # import matplotlib.pyplot as plt
+            # # Plot side-by-side
+            # fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+
+            # # Original depth (unnormalized)
+            # im1 = axs[0].imshow(depth, cmap='gray')
+            # axs[0].set_title('Original Depth')
+            # plt.colorbar(im1, ax=axs[0])
+
+            # # Normalized depth
+            # im2 = axs[1].imshow(depth_normalized, cmap='gray')
+            # axs[1].set_title('Normalized Depth')
+            # plt.colorbar(im2, ax=axs[1])
+
+            # plt.tight_layout()
+            # plt.show()
+
+            # print(render_pkg['depth'].shape)
+            # print(depth_normalized.shape)
+            # exit()
+            
+        
+        
+        # Backpass
+        loss.backward()
+
+        # Error if loss becomes nan
+        if torch.isnan(loss).any():
+            print("loss is nan, end training, reexecv program now.")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        
+        
+        # Record end of step
+        self.iter_end.record()
+
 
     @torch.no_grad()
     def test_step(self):

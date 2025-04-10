@@ -290,6 +290,7 @@ class Neural3D_NDC_Dataset(Dataset):
         poses_i_train = []
 
         poses_i_train = [1,10,11,20]
+
         self.poses = poses[poses_i_train]
         self.poses_all = poses #[[0]+poses_i_train]
         self.image_paths, self.image_poses, self.image_times, N_cam, N_time = self.load_images_path(videos, self.split)

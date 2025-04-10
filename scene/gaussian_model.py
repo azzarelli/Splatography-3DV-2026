@@ -642,7 +642,7 @@ def gaussian_integral(h, w, mu):
     erf_term_2 = torch.erf(w * (mu - 1))
     EPS = 1e-8
     fact = (SQRT_PI / ((2. * w) + EPS))
-    return 1. - (fact * (erf_term_1 - erf_term_2).squeeze(-1))
+    return 1. - (fact * (erf_term_1 - erf_term_2)).squeeze(-1)
 
 import random
 def get_sorted_random_pair():

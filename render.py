@@ -25,6 +25,10 @@ from gaussian_renderer import GaussianModel
 from time import time
 import threading
 import concurrent.futures
+
+from utils.image_utils import psnr
+from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss
+
 def multithread_write(image_list, path):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=None)
     def write_image(image, count, path):
@@ -52,6 +56,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     render_images = []
     gt_list = []
     render_list = []
+    PSNR = 0.
     print("point nums:",gaussians._xyz.shape[0])
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         if idx == 0:time1 = time()
@@ -65,7 +70,10 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             else:
                 gt  = view['image'].cuda()
             gt_list.append(gt)
+            
+            PSNR += psnr(rendering, gt.cuda())
 
+    print(PSNR/50.)
     time2=time()
     print("FPS:",(len(views)-1)/(time2-time1))
 
