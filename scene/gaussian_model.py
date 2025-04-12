@@ -62,6 +62,8 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
+        
+        self.cached_dx = None
         self.setup_functions()
 
     def capture(self):
@@ -129,14 +131,30 @@ class GaussianModel:
         Now:
             as the opacity embedding represents h we can use it directly
         """
-        return self._deformation.deformation_net.foward_opac(self._xyz, self._opacity)
+        return self._deformation.get_opacity_vars(self._xyz,)
 
+    @property
+    def get_cached_opacity(self):
+        """Instead of getting the initial opacity, lets get the h value from opacity
+        
+        Previously:
+            it was opacity_activation(self._opacity)
+            
+        Now:
+            as the opacity embedding represents h we can use it directly
+        """
+        
+        return  self._deformation.deformation_net.hwmu_buffer[1], self._deformation.deformation_net.hwmu_buffer[0], self._deformation.deformation_net.hwmu_buffer[2]
+    
     @property
     def opacity_integral(self):
         return gaussian_integral(self._deformation.deformation_net.hwmu_buffer[0], self._deformation.deformation_net.hwmu_buffer[1], self._deformation.deformation_net.hwmu_buffer[2])
-
-    def get_dynamic_point_prob(self):
-        return self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+    
+    @property
+    def dynamic_point_prob(self):
+        if self.cached_dx == None:
+            self.cached_dx = self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+        return self.cached_dx
 
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -155,14 +173,15 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
-        points_tensor = torch.from_numpy(np.asarray(pcd.points)).float().cuda().contiguous() 
+        # points_tensor = torch.from_numpy(np.asarray(pcd.points)).float().cuda().contiguous() 
         
-        _, dists = knn_chunked(points_tensor, k=4)
-        dist2 = torch.clamp_min(dists.mean(-1), 1e-6)
-        scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 3).cuda()
-        print("scales min:", scales.min().item(), "max:", scales.max().item(), "mean:", scales.mean().item())
-        # dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.000001)
-        # scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        # _, dists = knn_chunked(points_tensor, k=10)
+        # dist2 = torch.clamp_min(dists.mean(-1),0.00000001)
+        # scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 3).cuda()
+        # print("scales min:", scales.min().item(), "max:", scales.max().item(), "mean:", scales.mean().item())
+        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
+        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
         opacities = 1. * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
@@ -252,7 +271,7 @@ class GaussianModel:
         self._deformation.load_state_dict(weight_dict)
         self._deformation = self._deformation.to("cuda")
         
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        # self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         
     def save_deformation(self, path):
         torch.save(self._deformation.state_dict(),os.path.join(path, "deformation.pth"))
@@ -691,3 +710,10 @@ def knn_chunked(x, k, chunk_size=1024):
         knn_distances.append(topk_dists)
 
     return torch.cat(knn_indices, dim=0), torch.cat(knn_distances, dim=0)
+
+# from scipy.spatial import KDTree
+# def distCUDA2(points):
+#     points_np = points.detach().cpu().float().numpy()
+#     dists, inds = KDTree(points_np).query(points_np, k=4)
+#     meanDists = (dists[:, 1:] ** 2).mean(1)
+#     return torch.tensor(meanDists, dtype=points.dtype, device=points.device)

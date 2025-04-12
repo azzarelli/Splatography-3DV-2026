@@ -4,6 +4,7 @@ import os
 import copy
 import psutil
 import torch
+from gaussian_renderer import render
 
 class GUIBase:
     """This method servers to intialize the DPG visualization (keeping my code cleeeean!)
@@ -11,11 +12,12 @@ class GUIBase:
         Notes:
             none yet...
     """
-    def __init__(self, gui, scene, gaussians):
+    def __init__(self, gui, scene, gaussians, runname):
         
         self.gui = gui
         self.scene = scene
         self.gaussians = gaussians
+        self.runname = runname
         
         # Set the width and height of the expected image
         self.W, self.H = self.scene.getTestCameras()[0].image_width, self.scene.getTestCameras()[0].image_height
@@ -29,9 +31,11 @@ class GUIBase:
         self.show_radius = 30.
         self.vis_mode = 'render'
         self.show_dynamic = 0.
-        self.show_opacity = 10.
-        
+        self.w_thresh = 10.
+        self.h_thresh = 0.
         # Set-up the camera for visualization
+        
+        self.switch_off_viewer = False
 
         self.cam =copy.deepcopy(self.scene.getTestCameras()[0])
         
@@ -103,6 +107,8 @@ class GUIBase:
                     dpg.add_text("no data", tag="_log_loss")
                     dpg.add_text("no data", tag="_log_depth")
                     dpg.add_text("no data", tag="_log_opacs")
+                    dpg.add_text("no data", tag="_log_dynscales")
+
                     dpg.add_text("no data", tag="_log_points")
                 else:
                     dpg.add_text("Training info: (Not training)")
@@ -115,6 +121,10 @@ class GUIBase:
 
             # rendering options
             with dpg.collapsing_header(label="Rendering", default_open=True):
+                def callback_toggle_show_rgb(sender):
+                    self.switch_off_viewer = ~self.switch_off_viewer
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Switch off viewer", callback=callback_toggle_show_rgb)
                 
                 def callback_toggle_show_rgb(sender):
                     self.vis_mode = 'render'
@@ -157,25 +167,36 @@ class GUIBase:
                     self.show_dynamic = dpg.get_value(sender)
                     
                 dpg.add_slider_float(
-                    label="Dynamic View Thresh",
+                    label="dx > thresh",
                     default_value=1.,
                     max_value=1.,
                     min_value=0.,
                     callback=callback_toggle_view_dynamic,
                 )
-                def callback_toggle_view_opacity(sender):
-                    self.show_opacity = dpg.get_value(sender)
+                def callback_toggle_h_thresh(sender):
+                    self.h_thresh = dpg.get_value(sender)
                     
                 dpg.add_slider_float(
-                    label="Dynamic Opacity",
+                    label="h > theshold",
+                    default_value=0.,
+                    max_value=1.,
+                    min_value=0.,
+                    callback=callback_toggle_h_thresh,
+                )
+                
+                def callback_toggle_w_thresh(sender):
+                    self.w_thresh = dpg.get_value(sender)
+                    
+                dpg.add_slider_float(
+                    label="w > theshold",
                     default_value=1.,
                     max_value=10.,
                     min_value=0.,
-                    callback=callback_toggle_view_opacity,
+                    callback=callback_toggle_w_thresh,
                 )
 
         dpg.create_viewport(
-            title="WavePlanes",
+            title=f"{self.runname}",
             width=self.W + 400,
             height=self.H + (45 if os.name == "nt" else 0),
             resizable=False,
@@ -233,6 +254,7 @@ class GUIBase:
                         self.stage = 'done'
                         exit()
 
+            
                 with torch.no_grad():
                     self.viewer_step()
                     dpg.render_dearpygui_frame()
@@ -256,3 +278,57 @@ class GUIBase:
                 if self.iteration > self.final_iter and self.stage == 'fine':
                     self.stage = 'done'
                     exit()
+                    
+    @torch.no_grad()
+    def viewer_step(self):
+        
+        if self.switch_off_viewer == False:
+            
+            self.cam.time = self.time
+        
+            buffer_image = render(
+                    self.cam, 
+                    self.gaussians, 
+                    self.pipe, 
+                    self.background, 
+                    stage='fine',
+                    view_args={
+                        'dx_prob':self.show_dynamic,
+                        'w':self.w_thresh,
+                        'h':self.h_thresh,
+                        'show_radius':self.show_radius
+                    }
+            )
+            
+            try:
+                buffer_image = buffer_image[self.vis_mode]
+            except:
+                print(f'Mode "{self.vis_mode}" does not work')
+                buffer_image = buffer_image['render']
+                
+            if buffer_image.shape[0] == 1:
+                buffer_image = (buffer_image - buffer_image.min())/(buffer_image.max() - buffer_image.min())
+                buffer_image = buffer_image.repeat(3,1,1)
+            
+            buffer_image = torch.nn.functional.interpolate(
+                buffer_image.unsqueeze(0),
+                size=(self.H,self.W),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0)
+
+            self.buffer_image = (
+                buffer_image.permute(1, 2, 0)
+                .contiguous()
+                .clamp(0, 1)
+                .contiguous()
+                .detach()
+                .cpu()
+                .numpy()
+            )
+
+        buffer_image = self.buffer_image
+
+        dpg.set_value(
+            "_texture", buffer_image
+        )  # buffer must be contiguous, else seg fault!
