@@ -38,7 +38,7 @@ import open3d as o3d
 
 import psutil
 
-from DAV2.depth_anything_v2.dpt import DepthAnythingV2
+# from DAV2.depth_anything_v2.dpt import DepthAnythingV2
 
 to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
 
@@ -485,17 +485,17 @@ class GUI:
         os.mkdir(self.results_dir)
         self.training_cams_pc = GaussianCameraModel(self.scene.getTrainCameras(), self.W, self.H)
 
-        model_configs = {
-            'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
-            'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
-            'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
-            'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
-        }
+        # model_configs = {
+        #     'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+        #     'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+        #     'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+        #     'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
+        # }
 
-        encoder = 'vits' # or 'vits', 'vitb', 'vitg'
-        self.depth_model = DepthAnythingV2(**model_configs[encoder])
-        self.depth_model.load_state_dict(torch.load(f'DAV2/checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
-        self.depth_model = self.depth_model.cuda().eval()            
+        # encoder = 'vits' # or 'vits', 'vitb', 'vitg'
+        # self.depth_model = DepthAnythingV2(**model_configs[encoder])
+        # self.depth_model.load_state_dict(torch.load(f'DAV2/checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
+        # self.depth_model = self.depth_model.cuda().eval()            
 
         if self.gui:
             print('DPG loading ...')
@@ -794,7 +794,7 @@ class GUI:
                         exit()
 
                 with torch.no_grad():
-                    self.viewer_step()
+                    # self.viewer_step()
                     dpg.render_dearpygui_frame()
         else:
             while self.stage != 'done':
