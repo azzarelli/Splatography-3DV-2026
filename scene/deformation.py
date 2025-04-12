@@ -105,17 +105,20 @@ class Deformation(nn.Module):
         dx = self.static_mlp(grid_feature)
         return rays_pts_emb[:, :3] + dx
     
-    def foward_opac(self, xyz, opac_emb):
+    def get_opacity_vars(self, rays_pts_emb, opac_emb, cached=False):
         feature =  self.opacity_featu_out(
-            self.grid.get_opacity_vars(xyz)
+            self.grid.get_opacity_vars(rays_pts_emb[:,:3])
         )
         return self.opacity_w(feature), torch.sigmoid(self.opacity_h(feature)), torch.sigmoid(self.opacity_mu(feature))
-
+    
     def forward_pos(self, xyz, t):
         st, sp = self.grid(xyz, (torch.ones_like(xyz[:, 0])*t).cuda().unsqueeze(-1), None)
         return xyz + self.pos_deform(self.feature_out(
             st * sp # Multiply space and space-time features for general param deformations
         ))
+    
+    def get_scales(self, scales_emb):
+        return scales_emb[:,:3]
     
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration, h_emb):
         
@@ -241,6 +244,7 @@ class deform_network(nn.Module):
     def forward_static(self, points):
         points = self.deformation_net(points)
         return points
+    
     def forward_dynamic(self, point, scales=None, rotations=None,shs=None, times_sel=None, iterations=None,p=None):
         # times_emb = poc_fre(times_sel, self.time_poc)
         point_emb = poc_fre(point,self.pos_poc)
@@ -255,6 +259,13 @@ class deform_network(nn.Module):
                                                 None,
                                                 times_sel, iterations, p)
         return means3D, scales, rotations, opacity, shs, f
+    
+    def get_scales(self,scales):
+        return self.deformation_net.get_scales(scales)
+    
+    def get_opacity_vars(self, xyz):
+        return self.deformation_net.get_opacity_vars(poc_fre(xyz,self.pos_poc), None)
+
     def get_mlp_parameters(self):
         return self.deformation_net.get_mlp_parameters() + list(self.timenet.parameters())
     def get_grid_parameters(self):

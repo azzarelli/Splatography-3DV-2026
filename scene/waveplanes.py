@@ -1,8 +1,7 @@
 import itertools
-import logging as log
 from typing import Optional, Union, List, Dict, Sequence, Iterable, Collection, Callable
 
-from pytorch_wavelets_.dwt.transform2d import DWTInverse, DWTForward
+from submodules.pytorch_wavelets_.dwt.transform2d import DWTInverse, DWTForward
 
 import torch
 import torch.nn as nn
@@ -139,6 +138,7 @@ def get_feature_probability(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacit
     for i in range(6):
         if r == 3:
             vectorplane = kplanes[i].signal[0] # Get the feature plane
+            # First get the mean along the temporal planes then get the mean across features
             vectorplane = vectorplane.mean(-1).unsqueeze(-1).mean(1).unsqueeze(0)
             # print(kplanes[i].signal[0].median(-1)[0].shape) 
             feature = (
@@ -159,7 +159,7 @@ def get_feature_probability(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacit
     # Now determine the probabilites
     # \exp\left(-w^{2}\ \cdot\ \left(1-x\right)^{2}\right)
     # w was 49 previously
-    return 1. - torch.exp(-400 * (1-interp)**2)
+    return 1. - torch.exp(-9 * (1-interp)**2)
 
 import matplotlib.pyplot as plt
 
