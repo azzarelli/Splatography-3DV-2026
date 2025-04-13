@@ -115,7 +115,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     #     scales=scales_final,
     #     rotations=rotations_final,
     #     cov3Ds_precomp=cov3D_precomp)
-    
+
     rendered_image, radii, rendered_depth = rasterizer(
         means3D=means3D_final,
         means2D=means2D,

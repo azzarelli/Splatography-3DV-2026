@@ -266,10 +266,10 @@ class GUI(GUIBase):
         # Loss
         loss = .0
         
-        if self.iteration % 1000 == 0:
+        if self.iteration % 2000 == 0:
             self.track_cpu_gpu_usage(viewpoint_cam.time)
 
-        if self.hyperparams.time_smoothness_weight != 0 and self.stage == 'fine':
+        if self.stage == 'fine':
             loss += self.gaussians.compute_regulation(
                 self.hyperparams.time_smoothness_weight, 
                 self.hyperparams.l1_time_planes, 
@@ -278,9 +278,12 @@ class GUI(GUIBase):
             
             w_, h_, mu_ = self.gaussians.get_opacity
             
-            opacloss = ((1.0 - h_)**2).mean() + ((w_).abs()).mean()
+            opacloss = 0.1*((1.0 - h_)**2).mean() + ((w_).abs()).mean()
 
             loss += opacloss
+            
+            # Minimize smallest axis of points for points with highly static opacity behaviour
+            
             # loss += depth_loss
 
             # if render_pkg['stfeats'] is not None:
@@ -295,6 +298,21 @@ class GUI(GUIBase):
             #     - max_gauss_ratio
             # ).mean()
 
+        scale_exp = self.gaussians.get_scaling
+        # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
+        pg_loss = (torch.abs(scale_exp.amin(dim=-1))).mean()
+        
+        # max_gauss_ratio = 10
+        # pg_loss = (
+        #     torch.maximum(
+        #         scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
+        #         torch.tensor(max_gauss_ratio),
+        #     )
+        #     - max_gauss_ratio
+        # ).mean()
+
+        loss += pg_loss
+        
 
         if self.opt.lambda_dssim != 0:
             loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
@@ -304,15 +322,15 @@ class GUI(GUIBase):
         
         
 
-        if self.stage == 'fine':
+        # if self.stage == 'fine':
             # NeuSG flat Gaussian loss
-            max_gauss_ratio = 5
+            # max_gauss_ratio = 5
             # scale_exp = self.gaussians._scaling
             
             # if self.stage == 'fine':
             #     w = 0.1 * self.gaussians.get_dynamic_point_prob()
             # else:
-            w = 0.1
+            # w = 0.1
             # pg_loss += (torch.abs(scale_exp.amin(dim=-1))).mean()
             
             # Phys Gaussian Loss (as per nerfstudio implementaton)
@@ -327,11 +345,6 @@ class GUI(GUIBase):
             
             # loss += pg_loss
             
-            # scale_exp = self.gaussians.get_scaling
-            # pg_loss = (torch.abs(scale_exp.amin(dim=-1))).mean()
-            # loss += pg_loss
-            
-            
             # print(p.is_leaf)
             # minimise the scale of dynamic points i,e, w.r.t the weight of the dynamic motion 
             # N.b. we may want to make the weights frozen so we dont backprop directly yo gaussian planes
@@ -342,21 +355,16 @@ class GUI(GUIBase):
             #         p = self.gaussians.dynamic_point_prob   
             #     dyn_scale_loss = (p.squeeze(-1) * max_s).mean()
             #     loss += dyn_scale_loss
-        # final regularizer - we want to model surface position differences for solid dynamic points (so occurs later in training)
-        # if self.iteration > 1000 and self.stage == 'fine':
-        #     loss += self.gaussians.compute_rigidity_loss()
 
-        # Include depth loss:
-        # loss = loss # + (depth_loss / len(viewpoint_cams))
-        
+
         if self.gui:
             with torch.no_grad():
                     
                 dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                 dpg.set_value("_log_loss", f"Loss: {loss.item()} ")
                 dpg.set_value("_log_opacs", f"Opac loss: {opacloss} ")
-                dpg.set_value("_log_depth", f"PG loss: {depth_loss} ")
-                dpg.set_value("_log_depth", f"DynScales loss: {dyn_scale_loss} ")
+                dpg.set_value("_log_depth", f"PG loss: {pg_loss} ")
+                # dpg.set_value("_log_depth", f"DynScales loss: {dyn_scale_loss} ")
                 if (self.iteration % 2) == 0:
                     dpg.set_value("_log_points", f"Points: {self.gaussians._xyz.shape[0]}")
                 
@@ -365,10 +373,10 @@ class GUI(GUIBase):
 
         # Error if loss becomes nan
         if torch.isnan(loss).any():
-            # if torch.isnan(pg_loss):
-            #     print("PG is nan!")
-            # if torch.isnan(opacloss):
-            #     print("H loss is nan!")
+            if torch.isnan(pg_loss):
+                print("PG is nan!")
+            if torch.isnan(opacloss):
+                print("H loss is nan!")
             # if torch.isnan(dyn_scale_loss):
             #     print("Dyn Scale is nan!")
                 

@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = 'w_minimize' 
-bench_marks = ['4dgs_test','4dgs_noscales','4dgs_opac_hreg_dloss','4dgs_noscales','4dgs_opac_hreg_pg_ngs','4dgs_opac_hreg_pg','4dgs_opac_w_reg','4dgs_corrected','4dgs_densify','prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']
+focal_word = 'h_ns_coarse' 
+bench_marks = ['h_pgns_coarse','h_pgloss','h_abs','w_relu','w_minsq','w_sloth','w_minimize','4dgs_noscales','4dgs_opac_hreg_dloss','4dgs_noscales','4dgs_opac_hreg_pg_ngs','4dgs_opac_hreg_pg','4dgs_opac_w_reg','4dgs_corrected','4dgs_densify','prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']
 
 
 # Sparse View

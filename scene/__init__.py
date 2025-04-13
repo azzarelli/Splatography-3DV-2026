@@ -101,6 +101,7 @@ class Scene:
                                                     "iteration_" + str(self.loaded_iter),
                                                 ))
         else:
+            print('Creating init from point cloud ...')
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent, self.maxtime)
 
 

@@ -133,22 +133,8 @@ class GaussianModel:
         """
         return self._deformation.get_opacity_vars(self.get_xyz,)
 
-    @property
-    def get_cached_opacity(self):
-        """Instead of getting the initial opacity, lets get the h value from opacity
-        
-        Previously:
-            it was opacity_activation(self._opacity)
-            
-        Now:
-            as the opacity embedding represents h we can use it directly
-        """
-        
-        return  self._deformation.deformation_net.hwmu_buffer[1], self._deformation.deformation_net.hwmu_buffer[0], self._deformation.deformation_net.hwmu_buffer[2]
-    
-    @property
-    def opacity_integral(self):
-        return gaussian_integral(self._deformation.deformation_net.hwmu_buffer[0], self._deformation.deformation_net.hwmu_buffer[1], self._deformation.deformation_net.hwmu_buffer[2])
+    def opacity_integral(self, w,h,mu):
+        return gaussian_integral(w,h,mu)
     
     @property
     def dynamic_point_prob(self):
@@ -173,12 +159,6 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
-        # points_tensor = torch.from_numpy(np.asarray(pcd.points)).float().cuda().contiguous() 
-        
-        # _, dists = knn_chunked(points_tensor, k=10)
-        # dist2 = torch.clamp_min(dists.mean(-1),0.00000001)
-        # scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 3).cuda()
-        # print("scales min:", scales.min().item(), "max:", scales.max().item(), "mean:", scales.mean().item())
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
 
@@ -652,20 +632,23 @@ class GaussianModel:
         return 0
             
 SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
-def gaussian_integral(h, w, mu):
+def gaussian_integral(w,h, mu):
     """Returns high weight (0 to 1) for solid materials
     
         Notes on optimization:
             We evaluate the function return h - h*(SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
             This tends to 0 when out point is solid and can be simplified into 
-            1. - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+            (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
+            
+            The below function is the unit area minus the area under the curve within the bounded area without (h)
+            As this value tends to 1 the gaussian is static in opactiy temporal domain
  
     """
     erf_term_1 = torch.erf(w * mu)
     erf_term_2 = torch.erf(w * (mu - 1))
     EPS = 1e-8
     fact = (SQRT_PI / ((2. * w) + EPS))
-    return 1. - (fact * (erf_term_1 - erf_term_2)).squeeze(-1)
+    return (fact * (erf_term_1 - erf_term_2)).squeeze(-1)
 
 import random
 def get_sorted_random_pair():
