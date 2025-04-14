@@ -185,7 +185,7 @@ class GUI(GUIBase):
             self.gaussians.oneupSHdegree()
 
         # Handle Data Loading:
-        if self.opt.dataloader and not self.load_in_memory: # and self.stage == 'fine':
+        if self.opt.dataloader and not self.load_in_memory and (self.stage == 'fine' or self.iteration < 500):
             try:
                 viewpoint_cams = next(self.loader)
             except StopIteration:
@@ -198,11 +198,13 @@ class GUI(GUIBase):
             viewpoint_cams = []            
             
             if not self.viewpoint_stack:
-                    self.viewpoint_stack = self.scene.getTrainCameras().copy()
+                    self.viewpoint_stack = self.scene.getTrainCameras()
             
             zero_idxs = self.scene.train_camera.zero_idxs
             
             index = random.randrange(len(zero_idxs))  # get random index
+            # print(zero_idxs, len(self.viewpoint_stack))
+            # exit()
             item = self.viewpoint_stack[zero_idxs[index]]
             viewpoint_cams.append(item)
 
@@ -211,6 +213,10 @@ class GUI(GUIBase):
                 if curr_idx != index:
                     item = self.viewpoint_stack[zero_idxs[index]]
                     viewpoint_cams.append(item)
+        
+        
+            # print(gt_image.shape)
+        # dyn_mask = (dyn_mask> len(zero_cams))
         
         # Render
         if (self.iteration - 1) == self.debug_from:
@@ -235,7 +241,7 @@ class GUI(GUIBase):
                 self.gaussians, 
                 self.pipe, 
                 self.background, 
-                stage=self.stage
+                stage=self.stage,
             )
             image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
@@ -277,8 +283,9 @@ class GUI(GUIBase):
                 )
             
             w_, h_, mu_ = self.gaussians.get_opacity
-            
-            opacloss = 0.1*((1.0 - h_)**2).mean() + ((w_).abs()).mean()
+            dyn_scale_loss += self.gaussians.compute_rigidity_loss()
+
+            opacloss = 0.1*((1.0 - h_)**2).mean() # + ((w_).abs()).mean()
 
             loss += opacloss
             
@@ -311,7 +318,7 @@ class GUI(GUIBase):
         #     - max_gauss_ratio
         # ).mean()
 
-        loss += pg_loss
+        loss += pg_loss + dyn_scale_loss
         
 
         if self.opt.lambda_dssim != 0:
@@ -364,7 +371,7 @@ class GUI(GUIBase):
                 dpg.set_value("_log_loss", f"Loss: {loss.item()} ")
                 dpg.set_value("_log_opacs", f"Opac loss: {opacloss} ")
                 dpg.set_value("_log_depth", f"PG loss: {pg_loss} ")
-                # dpg.set_value("_log_depth", f"DynScales loss: {dyn_scale_loss} ")
+                dpg.set_value("_log_dynscales", f"DynScales loss: {dyn_scale_loss} ")
                 if (self.iteration % 2) == 0:
                     dpg.set_value("_log_points", f"Points: {self.gaussians._xyz.shape[0]}")
                 
@@ -374,9 +381,12 @@ class GUI(GUIBase):
         # Error if loss becomes nan
         if torch.isnan(loss).any():
             if torch.isnan(pg_loss):
-                print("PG is nan!")
+                print("PG loss is nan!")
             if torch.isnan(opacloss):
-                print("H loss is nan!")
+                print("Opac loss is nan!")
+            if torch.isnan(dyn_scale_loss):
+                print("Dyn loss is nan!")
+                
             # if torch.isnan(dyn_scale_loss):
             #     print("Dyn Scale is nan!")
                 
@@ -416,10 +426,7 @@ class GUI(GUIBase):
                 self.gaussians.max_radii2D[visibility_filter] = torch.max(self.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
 
-                if self.stage == "coarse":
-                    densify_threshold = self.opt.densify_grad_threshold_coarse
-                else:
-                    densify_threshold = self.opt.densify_grad_threshold_fine_init - self.iteration*(self.opt.densify_grad_threshold_fine_init - self.opt.densify_grad_threshold_after)/(self.opt.densify_until_iter)
+                densify_threshold = self.opt.densify_grad_threshold_fine_init
 
                 if  self.iteration > self.opt.densify_from_iter and self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
@@ -644,7 +651,6 @@ def gaussian_integral(h, w, mu):
     erf_term_1 = torch.erf(w * mu)
     erf_term_2 = torch.erf(w * (mu - 1))
     return ((SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)).squeeze(-1)
-
 
 if __name__ == "__main__":
     # Set up command line argument parser

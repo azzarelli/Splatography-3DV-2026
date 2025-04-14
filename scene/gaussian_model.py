@@ -24,6 +24,9 @@ from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 from scene.deformation import deform_network
 from scene.regulation import compute_plane_smoothness
+
+from torch_cluster import knn_graph
+
 class GaussianModel:
 
     def setup_functions(self):
@@ -123,15 +126,11 @@ class GaussianModel:
 
     @property
     def get_opacity(self):
-        """Instead of getting the initial opacity, lets get the h value from opacity
-        
-        Previously:
-            it was opacity_activation(self._opacity)
-            
-        Now:
-            as the opacity embedding represents h we can use it directly
-        """
         return self._deformation.get_opacity_vars(self.get_xyz,)
+    
+    @property
+    def get_dyn_coefs(self):
+        return self._deformation.get_dyn_coefs(self.get_xyz,)
 
     def opacity_integral(self, w,h,mu):
         return gaussian_integral(w,h,mu)
@@ -597,39 +596,14 @@ class GaussianModel:
             time_smoothness_weight * self._time_regulation() + \
                 l1_time_planes_weight * self._l1_regulation() 
 
-    def compute_rigidity_loss(self):
-        if self._deformation.deformation_net.hwmu_buffer is not None:
-            # As w_o tends to 1 the static opacity property tends to indefinately solid
-            w_o = gaussian_integral(self._deformation.deformation_net.hwmu_buffer[0], self._deformation.deformation_net.hwmu_buffer[1], self._deformation.deformation_net.hwmu_buffer[2])
-            
-            # as w_x tends to 1 the scale of motion throughout the scene also incerease
-            w_x = 1. - self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
-            
-            # Combine the two to have a weighting and generate a mask based of a 0 to 1 threshold
-            thresh = 0.5
-            # When the likelihood of points being solid and dynamic we want to regularize their distances between frames
-            v = w_o * w_x 
-            points = self._xyz[v> 0.5]
-            # Instantiate after dubgging
-            if points.shape[0] < 100:
-                return 0.
-            else:
-                # Get the t1 and t2 positions of each point (same indexing)
-                t1, t2 = get_sorted_random_pair()
-                x_1 = self._deformation.deformation_net.forward_pos(points, t1)
-                x_2 = self._deformation.deformation_net.forward_pos(points, t2)
-                
-                # Get the K nearest point w.r.t t1
-                k, dist = knn_chunked(x_1, 4)
-
-                # Calculate the distances between all points and generate a mean()
-                x1_diff = dist
-                x2_diff = torch.norm(x_2[k] - x_2.unsqueeze(1), dim=2)
-                
-                # k is shared and x_1 and x_2 use the same indexing so the we can compare the distances between points to ensure a consistent distance
-                return ((x1_diff - x2_diff)**2).mean()
-                        
-        return 0
+    def compute_rigidity_loss(self):        
+        edge_index = knn_graph(self._xyz, k=3, batch=None, loop=False)
+        row, col = edge_index
+        
+        distance_mask = 0.1 > torch.norm(self._xyz[row] - self._xyz[col], dim=1)  # (E,)
+        dx_coefs = self.get_dyn_coefs
+        diff = ((distance_mask*(((dx_coefs[row] - dx_coefs[col])**2).mean(-1)))).mean()
+        return diff
             
 SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
 def gaussian_integral(w,h, mu):
@@ -657,42 +631,6 @@ def get_sorted_random_pair():
     num1 = random.random()
     num2 = random.random()
     return num1, num2
-
-def knn_chunked(x, k, chunk_size=1024):
-    """
-    Efficient kNN using chunked pairwise distance calculation.
-    
-    Args:
-        x (Tensor): (N, 3) input point cloud (on CUDA)
-        k (int): number of neighbors
-        chunk_size (int): chunk size for memory efficiency
-
-    Returns:
-        knn_indices (Tensor): (N, k)
-        knn_distances (Tensor): (N, k)
-    """
-    N = x.size(0)
-    knn_indices = []
-    knn_distances = []
-
-    for start in range(0, N, chunk_size):
-        end = min(start + chunk_size, N)
-        chunk = x[start:end]  # (C, 3)
-
-        # Compute pairwise distances (C, N)
-        dists = torch.cdist(chunk, x, p=2)
-
-        # Avoid self-matching (only matters if chunk overlaps x[start:end])
-        mask = torch.arange(start, end, device=x.device)
-        dists[torch.arange(end - start), mask] = float('inf')
-
-        # Top-k distances and indices
-        topk_dists, topk_indices = torch.topk(dists, k, largest=False)
-
-        knn_indices.append(topk_indices)
-        knn_distances.append(topk_dists)
-
-    return torch.cat(knn_indices, dim=0), torch.cat(knn_distances, dim=0)
 
 # from scipy.spatial import KDTree
 # def distCUDA2(points):

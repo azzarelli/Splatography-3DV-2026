@@ -283,7 +283,15 @@ class GUIBase:
     def viewer_step(self):
         
         if self.switch_off_viewer == False:
-            
+            self.viewpoint_stack = self.scene.getTrainCameras()
+
+            zero_cams = [self.viewpoint_stack[idx] for idx in self.scene.train_camera.zero_idxs]
+        
+            dyn_mask = torch.zeros_like(self.gaussians.get_xyz[:,0],dtype=torch.long, device=self.gaussians.get_xyz.device).cuda()
+            for cam in zero_cams:
+                            
+                dyn_mask += get_in_view_dyn_mask(cam, self.gaussians.get_xyz).long()
+
             self.cam.time = self.time
         
             buffer_image = render(
@@ -293,10 +301,7 @@ class GUIBase:
                     self.background, 
                     stage='fine',
                     view_args={
-                        'dx_prob':self.show_dynamic,
-                        'w':self.w_thresh,
-                        'h':self.h_thresh,
-                        'show_radius':self.show_radius
+                        'mask':dyn_mask
                     }
             )
             
@@ -332,3 +337,51 @@ class GUIBase:
         dpg.set_value(
             "_texture", buffer_image
         )  # buffer must be contiguous, else seg fault!
+
+
+
+def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
+    device = xyz.device
+    N = xyz.shape[0]
+
+    # Convert to homogeneous coordinates
+    xyz_h = torch.cat([xyz, torch.ones((N, 1), device=device)], dim=-1)  # (N, 4)
+
+    # Apply full projection (world → clip space)
+    proj_xyz = xyz_h @ camera.full_proj_transform.to(device)  # (N, 4)
+
+    # Homogeneous divide to get NDC coordinates
+    ndc = proj_xyz[:, :3] / proj_xyz[:, 3:4]  # (N, 3)
+
+    # Visibility check
+    in_front = proj_xyz[:, 2] > 0
+    in_ndc_bounds = (ndc[:, 0].abs() <= 1) & (ndc[:, 1].abs() <= 1) & (ndc[:, 2].abs() <= 1)
+    visible_mask = in_ndc_bounds & in_front
+    
+    # Compute pixel coordinates
+    px = (((ndc[:, 0] + 1) / 2) * camera.image_width).long()
+    py = (((ndc[:, 1] + 1) / 2) * camera.image_height).long()    # Init mask values
+    mask_values = torch.zeros(N, dtype=torch.bool, device=device)
+
+    # Only sample pixels for visible points
+    valid_idx = visible_mask.nonzero(as_tuple=True)[0]
+
+    if valid_idx.numel() > 0:
+        px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
+        py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
+        mask = camera.mask.to(device)
+        sampled_mask = mask[py_valid, px_valid]  # shape: [#valid]
+        mask_values[valid_idx] = sampled_mask.bool()
+    # import matplotlib.pyplot as plt
+
+    # # Assuming tensor is named `tensor_wh` with shape [W, H]
+    # # Convert to [H, W] for display (matplotlib expects H first)
+    # mask[py_valid, px_valid] = 0.5
+    # print(py_valid.shape)
+
+    # tensor_hw = mask.cpu()  # If it's on GPU
+    # plt.imshow(tensor_hw, cmap='gray')
+    # plt.axis('off')
+    # plt.show()
+    # exit()
+    return mask_values.long()

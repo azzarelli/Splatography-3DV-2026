@@ -369,10 +369,18 @@ class Neural3D_NDC_Dataset(Dataset):
         return len(self.image_paths)
     def __getitem__(self,index):
         img = Image.open(self.image_paths[index])
-        # img = img.resize(self.img_wh, Image.LANCZOS)
-
+        
         img = self.transform(img)
-        return img, self.image_poses[index], self.image_times[index]
+        if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
+            camid = os.path.join(f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/static_masks',self.image_paths[index].split('/')[-3])
+            camid = f'{camid}.png'
+            mask = Image.open(camid)
+            mask = mask.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
+
+            mask = self.transform(mask)[-1]
+        else:
+            mask = None
+        return img, self.image_poses[index], self.image_times[index], mask
     def load_pose(self,index):
         return self.image_poses[index]
 

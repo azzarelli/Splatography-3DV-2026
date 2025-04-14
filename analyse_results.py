@@ -5,9 +5,11 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = 'h_ns_coarse' 
-bench_marks = ['h_pgns_coarse','h_pgloss','h_abs','w_relu','w_minsq','w_sloth','w_minimize','4dgs_noscales','4dgs_opac_hreg_dloss','4dgs_noscales','4dgs_opac_hreg_pg_ngs','4dgs_opac_hreg_pg','4dgs_opac_w_reg','4dgs_corrected','4dgs_densify','prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']
-
+focal_word = 'bez_knnsq_h' 
+bench_marks = ['bez_knnsq','bez_highthres','bez','h_ns_coarse','h_pgns_coarse','h_pgloss','h_abs','w_relu','w_minsq','w_sloth','w_minimize']
+#
+# Corrections needed here
+# '4dgs_noscales','4dgs_opac_hreg_dloss','4dgs_noscales','4dgs_opac_hreg_pg_ngs','4dgs_opac_hreg_pg','4dgs_opac_w_reg','4dgs_corrected','4dgs_densify','prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']
 
 # Sparse View
 # bench_marks = ['prob_neug_dynweight_25timeres','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens','prob_neug_rigid','prob_neug_pg5','sparsetest','prob_6k_w9_pg','prob_6k_w9_neug_nodssim', 'prob_3k_w9_pg_nodssim','prob_6k_w9_hemb_nos', 'prob_6k_w9_coarse','prob_6k_w9_gradthresh','prob_6k','prob_6k_w9_hemb', 'normal','test_full', 'test', 'Sparse_IsolatedMotionTriPlane', "Sparse_IsolatedMotionTriPlane_01"] # ['l10005TuningNoActivPruneHW','reg_h1','reg_h1_median', 'reg_h01', 'cleanrun', 'PruneHW_l10005_redo', 'W3PruneHW_l10005_WaveLvl']

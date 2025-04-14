@@ -21,16 +21,15 @@ class FourDGSdataset(Dataset):
         self.dataset_type=dataset_type
         
         print('Getting zero indexs for 4 cameras')
-        self.zero_idxs = [i*300 for i in range(4)]
+        self.zero_idxs = [i*50 for i in range(4)]
         
     def __getitem__(self, index):
         if self.dataset_type != "PanopticSports":
             try:
-                image, w2c, time = self.dataset[index]
+                image, w2c, time, mask = self.dataset[index]
                 R, T = w2c
                 FovX = focal2fov(self.dataset.focal[0], image.shape[2])
                 FovY = focal2fov(self.dataset.focal[0], image.shape[1])
-                mask = None
             except:
                 caminfo = self.dataset[index]
                 image = caminfo.image
@@ -41,9 +40,9 @@ class FourDGSdataset(Dataset):
                 time = caminfo.time
 
                 mask = caminfo.mask
-
-            return Camera(colmap_id=index, R=R, T=T, FoVx=FovX, FoVy=FovY, image=image, gt_alpha_mask=mask,
-                          image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time
+            # exit
+            return Camera(colmap_id=index, R=R, T=T, FoVx=FovX, FoVy=FovY, image=image, gt_alpha_mask=None,
+                          image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time, mask=mask
                       )
         else:
             return self.dataset[index]

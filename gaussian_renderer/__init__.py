@@ -63,6 +63,9 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         scales = pc._scaling
         rotations = pc._rotation
 
+
+    # rasterizer.markVisibleMasked(viewpoint_camera.original_image.cuda(),means3D)
+    # exit()
     stfeats = None
     if "coarse" in stage:
         means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
@@ -81,17 +84,19 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     rotations_final = pc.rotation_activation(rotations_final)
 
     if view_args is not None:
-        show_radius = view_args['show_radius']
-        dx_thresh = view_args['dx_prob']
-        w_thresh = view_args['w']
-        h_thresh = view_args['h']
+        # show_radius = view_args['show_radius']
+        # dx_thresh = view_args['dx_prob']
+        # w_thresh = view_args['w']
+        # h_thresh = view_args['h']
         
         
         
-        distances = torch.norm(means3D_final, dim=1)
+        # distances = torch.norm(means3D_final, dim=1)
         # Create a mask for the bounding box
-        mask =  (distances < show_radius)
-        
+        # print(view_args['mask'].max())
+        mask = view_args['mask'] > 3 #(distances < show_radius)
+        # print(mask.max())
+        # exit()
         # if stage == 'fine':
         #     w,h,_ = pc.get_cached_opacity
         #     mask = mask * (h.squeeze(-1) > h_thresh) * (w.squeeze(-1).abs()  < w_thresh)
@@ -125,7 +130,9 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         scales=scales_final,
         rotations=rotations_final,
         cov3D_precomp=cov3D_precomp)
-    
+    torch.cuda.synchronize()
+
+    # exit()
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
 

@@ -58,7 +58,8 @@ class Deformation(nn.Module):
         insize = self.grid.feat_dim 
         self.feature_out = nn.Sequential(nn.Linear(insize,net_size))
 
-        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        # self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.pos_deform1 = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 9))
         
         # self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
@@ -111,6 +112,12 @@ class Deformation(nn.Module):
         )
         return self.opacity_w(feature), torch.sigmoid(self.opacity_h(feature)), torch.sigmoid(self.opacity_mu(feature))
     
+    def get_dyn_coefs(self, rays_pts_emb, opac_emb, cached=False):
+        feature =  self.opacity_featu_out(
+            self.grid.get_opacity_vars(rays_pts_emb[:,:3])
+        )
+        return self.pos_deform1(feature)
+    
     def forward_pos(self, xyz, t):
         st, sp = self.grid(xyz, (torch.ones_like(xyz[:, 0])*t).cuda().unsqueeze(-1), None)
         return xyz + self.pos_deform(self.feature_out(
@@ -122,11 +129,16 @@ class Deformation(nn.Module):
     
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration, h_emb):
         
-        hidden, hidden_opac = self.query_time(rays_pts_emb, time_emb, iteration)
+        hidden, hidden_static = self.query_time(rays_pts_emb, time_emb, iteration)
         # hidden, hidden_opac, stfeats, spfeats = self.query_time(rays_pts_emb, time_emb, iteration)
-        pts = rays_pts_emb[:,:3] + self.pos_deform(
-            hidden
-        )
+        
+        # Apply bezier function w.r.t polynomial space centered at the initial point
+        # We want this to be independant of time so we use the static feature
+        dx = self.pos_deform1(hidden_static).view(-1, 3, 3) # N, 3, 3 
+        
+        mint = 1. - time_emb
+        tsq = time_emb**2
+        pts = rays_pts_emb[:,:3] + 3*(mint**2)*time_emb*dx[:,0] + 3.*mint*tsq*dx[:,1]  + (time_emb**2 )*dx[:,2]
 
         # Change in scale
         # scales = scales_emb[:,:3]
@@ -151,9 +163,9 @@ class Deformation(nn.Module):
         
         
         # Change in opacity
-        w = self.opacity_w(hidden_opac)
-        h = torch.sigmoid(self.opacity_h(hidden_opac)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
-        mu = torch.sigmoid(self.opacity_mu(hidden_opac)) #opacity_emb #self.opacity_mu(hidden_opac) #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
+        w = self.opacity_w(hidden_static)
+        h = torch.sigmoid(self.opacity_h(hidden_static)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
+        mu = torch.sigmoid(self.opacity_mu(hidden_static)) #opacity_emb #self.opacity_mu(hidden_opac) #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
 
         self.hwmu_buffer = (h,w,mu) 
         
@@ -163,35 +175,36 @@ class Deformation(nn.Module):
         dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
         shs = shs_emb + dshs
         
-        # w_np = w.cpu().numpy().flatten()
-        # h_np = h.cpu().numpy().flatten()
-        # mu_np = mu.cpu().numpy().flatten()
-        # opacity_np = opacity.cpu().numpy().flatten()
-
+        
 
         if False:
-            pass
-            # import matplotlib.pyplot as plt
+            w_np = w.cpu().numpy().flatten()
+            h_np = h.cpu().numpy().flatten()
+            mu_np = mu.cpu().numpy().flatten()
+            opacity_np = opacity.cpu().numpy().flatten()
 
-            # fig, axes = plt.subplots(2, 2, figsize=(12, 8))  # 2x2 grid of subplots
+            # pass
+            import matplotlib.pyplot as plt
 
-            # # Plot each histogram in its own axis
-            # axes[0, 0].hist(h_np, bins=30, color='blue', edgecolor='black')
-            # axes[0, 0].set_title('Histogram of h')
+            fig, axes = plt.subplots(2, 2, figsize=(12, 8))  # 2x2 grid of subplots
 
-            # axes[0, 1].hist(w_np, bins=100, color='green', edgecolor='black')
-            # axes[0, 1].set_title('Histogram of w')
+            # Plot each histogram in its own axis
+            axes[0, 0].hist(h_np, bins=30, color='blue', edgecolor='black')
+            axes[0, 0].set_title('Histogram of h')
 
-            # axes[1, 0].hist(mu_np, bins=30, color='red', edgecolor='black')
-            # axes[1, 0].set_title('Histogram of mu')
+            axes[0, 1].hist(w_np, bins=100, color='green', edgecolor='black')
+            axes[0, 1].set_title('Histogram of w')
 
-            # axes[1, 1].hist(opacity_np, bins=30, color='purple', edgecolor='black')
-            # axes[1, 1].set_title('Histogram of opacity')
+            axes[1, 0].hist(mu_np, bins=30, color='red', edgecolor='black')
+            axes[1, 0].set_title('Histogram of mu')
 
-            # # Adjust layout
-            # plt.tight_layout()
-            # plt.show()
-            # exit()
+            axes[1, 1].hist(opacity_np, bins=30, color='purple', edgecolor='black')
+            axes[1, 1].set_title('Histogram of opacity')
+
+            # Adjust layout
+            plt.tight_layout()
+            plt.show()
+            exit()
 
         return pts, scales, rotations, opacity, shs, None
     
@@ -265,6 +278,9 @@ class deform_network(nn.Module):
     
     def get_opacity_vars(self, xyz):
         return self.deformation_net.get_opacity_vars(poc_fre(xyz,self.pos_poc), None)
+
+    def get_dyn_coefs(self, xyz):
+        return self.deformation_net.get_dyn_coefs(poc_fre(xyz,self.pos_poc), None)
 
     def get_mlp_parameters(self):
         return self.deformation_net.get_mlp_parameters() + list(self.timenet.parameters())
