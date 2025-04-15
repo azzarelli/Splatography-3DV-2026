@@ -254,7 +254,7 @@ class Neural3D_NDC_Dataset(Dataset):
         self.get_mask = False
 
         self.load_meta()
-        print(f"meta data loaded, total image:{len(self)}")
+        # print(f"meta data loaded, total image:{len(self)}")
 
     def load_meta(self):
         """
@@ -371,7 +371,7 @@ class Neural3D_NDC_Dataset(Dataset):
         return len(self.image_paths)
     def __getitem__(self,index):
         img = Image.open(self.image_paths[index])
-        
+
         img = self.transform(img)
         if self.get_mask:
             if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:

@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = 'bez_post16k' 
-bench_marks = ['bez_knnsq','bez_highthres','bez','h_ns_coarse','h_pgns_coarse','h_pgloss','h_abs','w_relu','w_minsq','w_sloth','w_minimize']
+focal_word = 'rigid_dyn_loss' 
+bench_marks = ['bez_post16k','bez_knnsq','bez_highthres','bez','h_ns_coarse','h_pgns_coarse','h_pgloss','h_abs','w_relu','w_minsq','w_sloth','w_minimize']
 #
 # Corrections needed here
 # '4dgs_noscales','4dgs_opac_hreg_dloss','4dgs_noscales','4dgs_opac_hreg_pg_ngs','4dgs_opac_hreg_pg','4dgs_opac_w_reg','4dgs_corrected','4dgs_densify','prob_6k_w9_neug_nodssim','prob_neug_dynweight','prob_neug_wowx_densification','prob_neug_pgtit','prob_neug_linDens']

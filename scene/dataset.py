@@ -21,8 +21,6 @@ class FourDGSdataset(Dataset):
         self.dataset_type=dataset_type
         
         self.zero_idxs = [i*50 for i in range(4)]
-        if dataset_type == 'train':
-            print(f'Zero Indexs are: {self.zero_idxs}')
         
     def __getitem__(self, index):
         if self.dataset_type != "PanopticSports":

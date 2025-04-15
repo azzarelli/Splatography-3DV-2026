@@ -42,12 +42,13 @@ class Deformation(nn.Module):
         self.ratio=0
         self.create_net()
         
-        self.hwmu_buffer = None
+        self.dx_buffer = None
+        self.hwm_buffer = None
+
     @property
     def get_aabb(self):
         return self.grid.get_aabb
     def set_aabb(self, xyz_max, xyz_min):
-        print("Deformation Net Set aabb",xyz_max, xyz_min)
         self.grid.set_aabb(xyz_max, xyz_min)
         if self.args.empty_voxel:
             self.empty_voxel.set_aabb(xyz_max, xyz_min)
@@ -94,12 +95,12 @@ class Deformation(nn.Module):
     @property
     def get_empty_ratio(self):
         return self.ratio
-    def forward(self, rays_pts_emb, scales_emb=None, rotations_emb=None,shs_emb=None, time_feature=None, time_emb=None, iterations=None, p=None):
+    def forward(self, rays_pts_emb, scales_emb=None, rotations_emb=None,shs_emb=None, time_feature=None, time_emb=None, iterations=None):
         if time_emb is None:
             return self.forward_static(rays_pts_emb[:,:3])
         else:
 
-            return self.forward_dynamic(rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iterations, p)
+            return self.forward_dynamic(rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iterations)
 
     def forward_static(self, rays_pts_emb):
         grid_feature = self.grid(rays_pts_emb[:,:3])
@@ -127,18 +128,17 @@ class Deformation(nn.Module):
     def get_scales(self, scales_emb):
         return scales_emb[:,:3]
     
-    def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration, h_emb):
+    def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration):
         
         hidden, hidden_static = self.query_time(rays_pts_emb, time_emb, iteration)
         # hidden, hidden_opac, stfeats, spfeats = self.query_time(rays_pts_emb, time_emb, iteration)
         
         # Apply bezier function w.r.t polynomial space centered at the initial point
         # We want this to be independant of time so we use the static feature
-        dx = self.pos_deform1(hidden_static).view(-1, 3, 3) # N, 3, 3 
-        
-        mint = 1. - time_emb
-        tsq = time_emb**2
-        pts = rays_pts_emb[:,:3] + 3*(mint**2)*time_emb*dx[:,0] + 3.*mint*tsq*dx[:,1]  + (time_emb**2 )*dx[:,2]
+        self.dx_buffer = self.pos_deform1(hidden_static)
+        dx = self.dx_buffer.view(-1, 3, 3)# N, 3, 3         
+        dx_buff = 3.*((1. - time_emb)**2)*time_emb*dx[:,0] + 3.*(1. - time_emb)*(time_emb**2)*dx[:,1]  + (time_emb**2)*dx[:,2]
+        pts = rays_pts_emb[:,:3] + dx_buff
 
         # Change in scale
         # scales = scales_emb[:,:3]
@@ -161,7 +161,11 @@ class Deformation(nn.Module):
             else:
                 rotations = rotations_emb[:,:4] + dr
         
-        opacity = torch.sigmoid(self.opacity_h(hidden_static)) * torch.exp(-(self.opacity_w(hidden_static)**2)*((time_emb- torch.sigmoid(self.opacity_mu(hidden_static)))**2))
+        w = (self.opacity_w(hidden_static))
+        h = torch.sigmoid(self.opacity_h(hidden_static))
+        mu = torch.sigmoid(self.opacity_mu(hidden_static))
+        self.hwm_buffer = (h,w,mu)
+        opacity = h * torch.exp(-(w**2)*((time_emb- mu)**2))
         
         # Change in color        
         dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
@@ -236,8 +240,8 @@ class deform_network(nn.Module):
         self.apply(initialize_weights)
         # print(self)
 
-    def forward(self, point, scales=None, rotations=None, shs=None, times_sel=None, p=None, iterations=None):
-        return self.forward_dynamic(point, scales, rotations, shs, times_sel, iterations, p)
+    def forward(self, point, scales=None, rotations=None, shs=None, times_sel=None, iterations=None):
+        return self.forward_dynamic(point, scales, rotations, shs, times_sel, iterations)
     @property
     def get_aabb(self):
         
@@ -245,12 +249,20 @@ class deform_network(nn.Module):
     @property
     def get_empty_ratio(self):
         return self.deformation_net.get_empty_ratio
-        
+    
+    @property
+    def get_dx_buffer(self):
+        return self.deformation_net.dx_buffer
+    
+    @property
+    def get_opacity_buffer(self):
+        return self.deformation_net.hwm_buffer
+    
     def forward_static(self, points):
         points = self.deformation_net(points)
         return points
     
-    def forward_dynamic(self, point, scales=None, rotations=None,shs=None, times_sel=None, iterations=None,p=None):
+    def forward_dynamic(self, point, scales=None, rotations=None,shs=None, times_sel=None, iterations=None):
         # times_emb = poc_fre(times_sel, self.time_poc)
         point_emb = poc_fre(point,self.pos_poc)
         scales_emb = poc_fre(scales,self.rotation_scaling_poc)
@@ -262,7 +274,7 @@ class deform_network(nn.Module):
                                                 rotations_emb,
                                                 shs,
                                                 None,
-                                                times_sel, iterations, p)
+                                                times_sel, iterations)
         return means3D, scales, rotations, opacity, shs, f
     
     def get_scales(self,scales):

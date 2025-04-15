@@ -26,7 +26,6 @@ from gaussian_renderer import render
 import json
 import open3d as o3d
 from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
-from gui_utils.base import get_in_view_dyn_mask
 
 to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
 
@@ -105,6 +104,8 @@ class GUI(GUIBase):
             self.iteration = 1
         if ckpt_start: self.iteration = int(self.scene.loaded_iter) + 1
 
+        self.fine_init_end = 6000
+
         # Initialize RGB to Depth model (DepthAnything v2)
         # model_configs = {
         #     'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
@@ -150,34 +151,42 @@ class GUI(GUIBase):
         self.iter_end = torch.cuda.Event(enable_timing=True)
 
         if self.view_test == False:
-            self.viewpoint_stack = self.scene.getTrainCameras()
             self.test_viewpoint_stack = self.scene.getTestCameras()
 
-            self.random_loader  = True
-            self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
-                                                num_workers=16, collate_fn=list))
+            if self.stage == 'fine':
+                print('Loading Fine (t = any) dataset')
+                self.viewpoint_stack = self.scene.getTrainCameras()
 
+                self.random_loader  = True
+                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                    num_workers=16, collate_fn=list))
+            elif self.stage == 'coarse': 
+                print('Loading Coarse (t=0) dataset')
+                zero_cams = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+                
+                self.viewpoint_stack = zero_cams * 100
+                
+                self.random_loader  = True
+                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                    num_workers=16, collate_fn=list))
+                
         self.load_in_memory = False
 
-    def get_target_mask(self):
-        """Generate the target mask w.r.t the initial gaussian positions and the masks at t = 0
-        """
-        zero_cams = [self.viewpoint_stack[idx] for idx in self.scene.train_camera.zero_idxs]
-    
-        dyn_mask = torch.zeros_like(self.gaussians.get_xyz[:,0],dtype=torch.long, device=self.gaussians.get_xyz.device).cuda()
-        for cam in zero_cams:                 
-            dyn_mask += get_in_view_dyn_mask(cam, self.gaussians.get_xyz).long()
-            
-        return dyn_mask > (len(zero_cams)-1)
-   
+    def update_target_mask(self):
+        """Update our knowledge of the target dynamic points using the initial masks"""
+        with torch.no_grad():
+            self.scene.getTrainCameras().dataset.get_mask = True
+            zero_cams = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+            self.gaussians.update_target_mask(zero_cams, self.iteration, self.stage)
+            self.scene.getTrainCameras().dataset.get_mask = False
+
+
     def train_step(self):
 
-        # Start recording step duration
+        # Step starters
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
         self.iter_start.record()
-        
-        self.gaussians.cached_dx = None
 
         if self.iteration < self.opt.iterations:
             self.gaussians.optimizer.zero_grad(set_to_none=True)
@@ -185,42 +194,23 @@ class GUI(GUIBase):
         self.gaussians.update_learning_rate(self.iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if self.iteration % 100 == 0:
+        if self.iteration % 1000 == 0:
             self.gaussians.oneupSHdegree()
-
-        # Handle Data Loading:
-        if self.opt.dataloader and not self.load_in_memory and (self.stage == 'fine' or self.iteration < 500):
-            try:
-                viewpoint_cams = next(self.loader)
-            except StopIteration:
-                viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
-                                                    num_workers=16, collate_fn=list)
-                self.random_loader = True
-                self.loader = iter(viewpoint_stack_loader)
-                viewpoint_cams = next(self.loader)
-        else:
-            viewpoint_cams = []            
             
-            if not self.viewpoint_stack:
-                    self.viewpoint_stack = self.scene.getTrainCameras()
-            
-            zero_idxs = self.scene.train_camera.zero_idxs
-            
-            index = random.randrange(len(zero_idxs))  # get random index
+        if self.iteration % 500 == 0 or self.iteration == 1:
+            self.update_target_mask()
 
-            item = self.viewpoint_stack[zero_idxs[index]]
-            viewpoint_cams.append(item)
+        # Handle Data Loading:            
+        try:
+            viewpoint_cams = next(self.loader)
+        except StopIteration:
+            viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                num_workers=16, collate_fn=list)
+            self.random_loader = True
+            self.loader = iter(viewpoint_stack_loader)
+            viewpoint_cams = next(self.loader)
+    
 
-            while len(viewpoint_cams) < self.opt.batch_size :
-                curr_idx = random.randrange(len(zero_idxs))
-                if curr_idx != index:
-                    item = self.viewpoint_stack[zero_idxs[index]]
-                    viewpoint_cams.append(item)
-        
-        
-
-        # exit()
-        # Render
         if (self.iteration - 1) == self.debug_from:
             self.pipe.debug = True
 
@@ -231,7 +221,9 @@ class GUI(GUIBase):
         visibility_filter_list = []
         viewspace_point_tensor_list = []
 
+        loss = 0.
         L1 = 0.
+
         depth_loss = 0.
         dyn_scale_loss = 0.
         opacloss = 0.
@@ -271,12 +263,13 @@ class GUI(GUIBase):
         radii = torch.cat(radii_list, 0).max(dim=0).values
         visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
 
-        # Loss
-        loss = .0
+        # Panop loss or DSSIM combo Loss (deafult is panoptic-only)
+        if self.opt.lambda_dssim != 0:
+            loss += L1 * (1. - self.opt.lambda_dssim ) + self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
+        else:
+            loss += L1
         
-        if self.iteration % 2000 == 0:
-            self.track_cpu_gpu_usage(viewpoint_cam.time)
-
+        # Regularization for Fine stage
         if self.stage == 'fine':
             loss += self.gaussians.compute_regulation(
                 self.hyperparams.time_smoothness_weight, 
@@ -284,28 +277,28 @@ class GUI(GUIBase):
                 self.hyperparams.plane_tv_weight,
                 )
             
-            w_, h_, mu_ = self.gaussians.get_opacity
-            # dyn_scale_loss += self.gaussians.compute_rigidity_loss()
-
-            opacloss = 0.1*((1.0 - h_)**2).mean() # + ((w_).abs()).mean()
+            h_, w_, _ = self.gaussians.get_opacity_buffer
+            opacloss = ((1.0 - h_)**2).mean() + ((w_).abs()).mean()
             
+            # dyn_scale_loss = 10.* self.gaussians.compute_focused_rigidity()
             # Minimize smallest axis of points for points with highly static opacity behaviour
             
             # loss += depth_loss
 
             # if render_pkg['stfeats'] is not None:
             #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
-            
-            # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
-            # loss += w*(
-            #     torch.maximum(
-            #         s_v[:, 0] / s_v[:, 1],
-            #         torch.tensor(max_gauss_ratio),
-            #     )
-            #     - max_gauss_ratio
-            # ).mean()
+        
+        # Make more flat and round
+        # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
+        # loss += w*(
+        #     torch.maximum(
+        #         s_v[:, 0] / s_v[:, 1],
+        #         torch.tensor(max_gauss_ratio),
+        #     )
+        #     - max_gauss_ratio
+        # ).mean()
 
-        scale_exp = self.gaussians.get_scaling
+        # scale_exp = self.gaussians.get_scaling
         # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
         # pg_loss = (torch.abs(scale_exp.amin(dim=-1))).mean()
         
@@ -318,53 +311,11 @@ class GUI(GUIBase):
         #     - max_gauss_ratio
         # ).mean()
 
+        
         loss += pg_loss + dyn_scale_loss + opacloss
-        
-
-        if self.opt.lambda_dssim != 0:
-            loss += self.opt.lambda_dssim * (1.0- ssim(torch.cat(images, 0),torch.cat(gt_images, 0)))
-            loss += L1 # (1. - self.opt.lambda_dssim ) * L1 
-        else:
-            loss += L1
-        
-        # if self.stage == 'fine':
-            # NeuSG flat Gaussian loss
-            # max_gauss_ratio = 5
-            # scale_exp = self.gaussians._scaling
-            
-            # if self.stage == 'fine':
-            #     w = 0.1 * self.gaussians.get_dynamic_point_prob()
-            # else:
-            # w = 0.1
-            # pg_loss += (torch.abs(scale_exp.amin(dim=-1))).mean()
-            
-            # Phys Gaussian Loss (as per nerfstudio implementaton)
-            # max_s = scale_exp.amax(dim=-1) 
-            # pg_loss = (
-            #     torch.maximum(
-            #         max_s / scale_exp.amin(dim=-1),
-            #         torch.tensor(max_gauss_ratio),
-            #     )
-            #     - max_gauss_ratio
-            # ).mean()
-            
-            # loss += pg_loss
-            
-            # print(p.is_leaf)
-            # minimise the scale of dynamic points i,e, w.r.t the weight of the dynamic motion 
-            # N.b. we may want to make the weights frozen so we dont backprop directly yo gaussian planes
-            # but not sure. We may want to freeze to reduce the impact and focus solely on scales gradients
-            # we regularize based on the max scale axis
-            # if self.iteration > 122000:  
-            #     with torch.no_grad():
-            #         p = self.gaussians.dynamic_point_prob   
-            #     dyn_scale_loss = (p.squeeze(-1) * max_s).mean()
-            #     loss += dyn_scale_loss
-
 
         if self.gui:
             with torch.no_grad():
-                    
                 dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                 dpg.set_value("_log_loss", f"Loss: {loss.item()} ")
                 dpg.set_value("_log_opacs", f"Opac loss: {opacloss} ")
@@ -375,15 +326,21 @@ class GUI(GUIBase):
                 
         # Backpass
         loss.backward()
+        
+        if self.iteration % 3000 == 0:
+            self.track_cpu_gpu_usage(viewpoint_cam.time)
 
         # Error if loss becomes nan
         if torch.isnan(loss).any():
-            if torch.isnan(pg_loss):
-                print("PG loss is nan!")
-            if torch.isnan(opacloss):
-                print("Opac loss is nan!")
-            if torch.isnan(dyn_scale_loss):
-                print("Dyn loss is nan!")
+            if pg_loss != 0.:
+                if torch.isnan(pg_loss):
+                    print("PG loss is nan!")
+            if opacloss != 0.:
+                if torch.isnan(opacloss):
+                    print("Opac loss is nan!")
+            if dyn_scale_loss != 0:
+                if torch.isnan(dyn_scale_loss):
+                    print("Dyn loss is nan!")
                 
             # if torch.isnan(dyn_scale_loss):
             #     print("Dyn Scale is nan!")
@@ -416,9 +373,7 @@ class GUI(GUIBase):
             
             # Densification
             if self.iteration < self.opt.densify_until_iter :
-                
-                self.gaussians.cached_dx = None
-
+            
 
                 # Keep track of max radii in image-space for pruning
                 self.gaussians.max_radii2D[visibility_filter] = torch.max(self.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
@@ -426,18 +381,26 @@ class GUI(GUIBase):
 
                 densify_threshold = self.opt.densify_grad_threshold_fine_init
 
-                if  self.stage == 'fine' and self.iteration > self.opt.densify_from_iter and self.iteration < 10000:
+                check = 0
+                
+                if  self.stage == 'fine' and self.iteration > self.opt.densify_from_iter and self.iteration < 6000:
                     if self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
                         size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                         self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
-                elif self.stage == 'fine' and self.iteration % 1000 == 0 and self.iteration > 9999:
-                    self.scene.getTrainCameras().dataset.get_mask = True
-                    self.gaussians.densify_target(densify_threshold,self.scene.cameras_extent, self.get_target_mask())
-                    self.scene.getTrainCameras().dataset.get_mask = False
+                        self.update_target_mask() # Need to update this w,r,t newly cloned gaussians
 
-                if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
+                elif self.stage == 'fine' and self.iteration % self.opt.densification_interval == 0 and self.iteration > 6000:
+                    self.gaussians.clone_target(densify_threshold, self.scene.cameras_extent)
+                    self.update_target_mask() # Need to update this w,r,t newly cloned gaussians
+                    self.gaussians.split_target(densify_threshold, self.scene.cameras_extent)
+                    self.update_target_mask() # Need to update this w,r,t newly cloned gaussians
+                    
+                if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>100000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                     self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold, self.iteration % self.opt.opacity_reset_interval == 0)
+                    self.update_target_mask() # Need to update this w,r,t newly cloned gaussians
+                
+
             # Optimizer step
             if self.iteration < self.opt.iterations:
                 self.gaussians.optimizer.step()
