@@ -26,6 +26,7 @@ from gaussian_renderer import render
 import json
 import open3d as o3d
 from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
+from gui_utils.base import get_in_view_dyn_mask
 
 to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
 
@@ -39,11 +40,11 @@ class GUI(GUIBase):
                  pipe, 
                  testing_iterations, 
                  saving_iterations,
-                 ckpt_it,
                  ckpt_start,
                  debug_from,
                  expname,
-                 skip_coarse
+                 skip_coarse,
+                 view_test
                  ):
 
         if skip_coarse is not None:
@@ -67,11 +68,9 @@ class GUI(GUIBase):
         self.args.model_path = expname
         use_gui = True
         self.saving_iterations = saving_iterations
-        self.checkpoint_iterations = ckpt_it
         self.checkpoint = ckpt_start
         self.debug_from = debug_from
-        
-        
+
         self.results_dir = os.path.join(self.args.model_path, 'active_results')
         if ckpt_start is None:
             if not os.path.exists(self.args.model_path):os.mkdir(self.args.model_path)   
@@ -82,26 +81,20 @@ class GUI(GUIBase):
             os.mkdir(self.results_dir)    
             
         # Set the background color
-        if self.dataset.white_background:
-            bg_color = [1, 1, 1]
-        else:
-            bg_color = [0,0,0]
-        bg_color = [0, 0, 0]
+        bg_color = [1, 1, 1] if self.dataset.white_background else [0, 0, 0]
         self.background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
+        
         # Set the gaussian mdel and scene
         gaussians = GaussianModel(dataset.sh_degree, hyperparams)
         if ckpt_start is not None:
-            scene = Scene(dataset, gaussians , load_iteration=-1)
+            scene = Scene(dataset, gaussians , load_iteration=ckpt_start)
             self.stage = 'fine'
-
         else:
             if skip_coarse:
                 gaussians.active_sh_degree = dataset.sh_degree
             scene = Scene(dataset, gaussians, skip_coarse=self.skip_coarse)
-        
         # Initialize DPG      
-        super().__init__(use_gui, scene, gaussians, self.expname)
+        super().__init__(use_gui, scene, gaussians, self.expname, view_test)
 
         # Initialize training
         self.timer = Timer()
@@ -110,6 +103,7 @@ class GUI(GUIBase):
         
         if skip_coarse:
             self.iteration = 1
+        if ckpt_start: self.iteration = int(self.scene.loaded_iter) + 1
 
         # Initialize RGB to Depth model (DepthAnything v2)
         # model_configs = {
@@ -137,9 +131,9 @@ class GUI(GUIBase):
         # Set up gaussian training
         self.gaussians.training_setup(self.opt)
         # Load from fine model if it exists
-        if self.checkpoint:
+        if self.checkpoint and self.view_test == False:
             if 'fine' in self.checkpoint:
-                (model_params, first_iter) = torch.load(self.checkpoint)
+                (model_params, first_iter) = torch.load(f'{self.expname}/chkpnt_fine_{self.checkpoint}.pth')
                 self.gaussians.restore(model_params, self.opt)
                 
         if self.skip_coarse:
@@ -155,7 +149,7 @@ class GUI(GUIBase):
         self.iter_start = torch.cuda.Event(enable_timing=True)
         self.iter_end = torch.cuda.Event(enable_timing=True)
 
-        if self.stage == 'coarse' or self.skip_coarse:
+        if self.view_test == False:
             self.viewpoint_stack = self.scene.getTrainCameras()
             self.test_viewpoint_stack = self.scene.getTestCameras()
 
@@ -165,6 +159,16 @@ class GUI(GUIBase):
 
         self.load_in_memory = False
 
+    def get_target_mask(self):
+        """Generate the target mask w.r.t the initial gaussian positions and the masks at t = 0
+        """
+        zero_cams = [self.viewpoint_stack[idx] for idx in self.scene.train_camera.zero_idxs]
+    
+        dyn_mask = torch.zeros_like(self.gaussians.get_xyz[:,0],dtype=torch.long, device=self.gaussians.get_xyz.device).cuda()
+        for cam in zero_cams:                 
+            dyn_mask += get_in_view_dyn_mask(cam, self.gaussians.get_xyz).long()
+            
+        return dyn_mask > (len(zero_cams)-1)
    
     def train_step(self):
 
@@ -203,8 +207,7 @@ class GUI(GUIBase):
             zero_idxs = self.scene.train_camera.zero_idxs
             
             index = random.randrange(len(zero_idxs))  # get random index
-            # print(zero_idxs, len(self.viewpoint_stack))
-            # exit()
+
             item = self.viewpoint_stack[zero_idxs[index]]
             viewpoint_cams.append(item)
 
@@ -215,9 +218,8 @@ class GUI(GUIBase):
                     viewpoint_cams.append(item)
         
         
-            # print(gt_image.shape)
-        # dyn_mask = (dyn_mask> len(zero_cams))
-        
+
+        # exit()
         # Render
         if (self.iteration - 1) == self.debug_from:
             self.pipe.debug = True
@@ -283,11 +285,9 @@ class GUI(GUIBase):
                 )
             
             w_, h_, mu_ = self.gaussians.get_opacity
-            dyn_scale_loss += self.gaussians.compute_rigidity_loss()
+            # dyn_scale_loss += self.gaussians.compute_rigidity_loss()
 
             opacloss = 0.1*((1.0 - h_)**2).mean() # + ((w_).abs()).mean()
-
-            loss += opacloss
             
             # Minimize smallest axis of points for points with highly static opacity behaviour
             
@@ -307,7 +307,7 @@ class GUI(GUIBase):
 
         scale_exp = self.gaussians.get_scaling
         # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
-        pg_loss = (torch.abs(scale_exp.amin(dim=-1))).mean()
+        # pg_loss = (torch.abs(scale_exp.amin(dim=-1))).mean()
         
         # max_gauss_ratio = 10
         # pg_loss = (
@@ -318,7 +318,7 @@ class GUI(GUIBase):
         #     - max_gauss_ratio
         # ).mean()
 
-        loss += pg_loss + dyn_scale_loss
+        loss += pg_loss + dyn_scale_loss + opacloss
         
 
         if self.opt.lambda_dssim != 0:
@@ -327,8 +327,6 @@ class GUI(GUIBase):
         else:
             loss += L1
         
-        
-
         # if self.stage == 'fine':
             # NeuSG flat Gaussian loss
             # max_gauss_ratio = 5
@@ -428,14 +426,18 @@ class GUI(GUIBase):
 
                 densify_threshold = self.opt.densify_grad_threshold_fine_init
 
-                if  self.iteration > self.opt.densify_from_iter and self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
-                    size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-                    self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
-                
+                if  self.stage == 'fine' and self.iteration > self.opt.densify_from_iter and self.iteration < 10000:
+                    if self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
+                        size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
+                        self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
+                elif self.stage == 'fine' and self.iteration % 1000 == 0 and self.iteration > 9999:
+                    self.scene.getTrainCameras().dataset.get_mask = True
+                    self.gaussians.densify_target(densify_threshold,self.scene.cameras_extent, self.get_target_mask())
+                    self.scene.getTrainCameras().dataset.get_mask = False
+
                 if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                     self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold, self.iteration % self.opt.opacity_reset_interval == 0)
-
             # Optimizer step
             if self.iteration < self.opt.iterations:
                 self.gaussians.optimizer.step()
@@ -528,9 +530,6 @@ class GUI(GUIBase):
             else:
                 dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
                 dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
-
-
-
 
 def setup_seed(seed):
      torch.manual_seed(seed)
@@ -665,13 +664,13 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", type=int, default=1000)
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 10000, 20000, 30_000, 45000, 60000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 9999, 20000, 30_000, 45000, 60000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--expname", type=str, default = "")
     parser.add_argument("--configs", type=str, default = "")
     parser.add_argument('--skip-coarse', type=str, default = None)
+    parser.add_argument('--view-test', action='store_true', default=False)
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
@@ -695,11 +694,11 @@ if __name__ == "__main__":
         pipe=pp.extract(args),
         testing_iterations=args.test_iterations, 
         saving_iterations=args.save_iterations,
-        ckpt_it=args.checkpoint_iterations, 
         ckpt_start=args.start_checkpoint, 
         debug_from=args.debug_from, 
         expname=args.expname,
-        skip_coarse=args.skip_coarse
+        skip_coarse=args.skip_coarse,
+        view_test=args.view_test
     )
 
     

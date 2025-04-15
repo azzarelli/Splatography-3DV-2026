@@ -250,6 +250,8 @@ class Neural3D_NDC_Dataset(Dataset):
         self.white_bg = False
         self.ndc_ray = True
         self.depth_data = False
+        
+        self.get_mask = False
 
         self.load_meta()
         print(f"meta data loaded, total image:{len(self)}")
@@ -371,13 +373,14 @@ class Neural3D_NDC_Dataset(Dataset):
         img = Image.open(self.image_paths[index])
         
         img = self.transform(img)
-        if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
-            camid = os.path.join(f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/static_masks',self.image_paths[index].split('/')[-3])
-            camid = f'{camid}.png'
-            mask = Image.open(camid)
-            mask = mask.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
+        if self.get_mask:
+            if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
+                camid = os.path.join(f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/static_masks',self.image_paths[index].split('/')[-3])
+                camid = f'{camid}.png'
+                mask = Image.open(camid)
+                mask = mask.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
 
-            mask = self.transform(mask)[-1]
+                mask = self.transform(mask)[-1]
         else:
             mask = None
         return img, self.image_poses[index], self.image_times[index], mask

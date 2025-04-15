@@ -161,15 +161,7 @@ class Deformation(nn.Module):
             else:
                 rotations = rotations_emb[:,:4] + dr
         
-        
-        # Change in opacity
-        w = self.opacity_w(hidden_static)
-        h = torch.sigmoid(self.opacity_h(hidden_static)) #(torch.cos(self.opacity_h(hidden_opac))+1.)/2. # between 0 and 1
-        mu = torch.sigmoid(self.opacity_mu(hidden_static)) #opacity_emb #self.opacity_mu(hidden_opac) #(torch.cos(self.opacity_mu(hidden_opac))+1.)/2.# between 0 and 1 (torch.cos(opacity_emb)+1.)/2. # 
-
-        self.hwmu_buffer = (h,w,mu) 
-        
-        opacity = h * torch.exp(-(w**2)*((time_emb- mu)**2))
+        opacity = torch.sigmoid(self.opacity_h(hidden_static)) * torch.exp(-(self.opacity_w(hidden_static)**2)*((time_emb- torch.sigmoid(self.opacity_mu(hidden_static)))**2))
         
         # Change in color        
         dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])

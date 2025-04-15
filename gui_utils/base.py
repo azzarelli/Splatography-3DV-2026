@@ -12,12 +12,13 @@ class GUIBase:
         Notes:
             none yet...
     """
-    def __init__(self, gui, scene, gaussians, runname):
+    def __init__(self, gui, scene, gaussians, runname, view_test):
         
         self.gui = gui
         self.scene = scene
         self.gaussians = gaussians
         self.runname = runname
+        self.view_test = view_test
         
         # Set the width and height of the expected image
         self.W, self.H = self.scene.getTestCameras()[0].image_width, self.scene.getTestCameras()[0].image_height
@@ -101,7 +102,7 @@ class GUIBase:
                 dpg.add_text("no data", tag="_log_infer_time")
 
             with dpg.group():
-                if self.checkpoint is None:
+                if self.view_test is False:
                     dpg.add_text("Training info:")
                     dpg.add_text("no data", tag="_log_iter")
                     dpg.add_text("no data", tag="_log_loss")
@@ -240,7 +241,7 @@ class GUIBase:
                     self.stage = 'fine'
                     self.init_taining()
 
-                if self.checkpoint is None:
+                if self.view_test == False:
                     if self.iteration <= self.final_iter:
                         self.train_step()
                         self.iteration += 1
@@ -283,14 +284,11 @@ class GUIBase:
     def viewer_step(self):
         
         if self.switch_off_viewer == False:
-            self.viewpoint_stack = self.scene.getTrainCameras()
-
-            zero_cams = [self.viewpoint_stack[idx] for idx in self.scene.train_camera.zero_idxs]
-        
-            dyn_mask = torch.zeros_like(self.gaussians.get_xyz[:,0],dtype=torch.long, device=self.gaussians.get_xyz.device).cuda()
-            for cam in zero_cams:
-                            
-                dyn_mask += get_in_view_dyn_mask(cam, self.gaussians.get_xyz).long()
+            # self.viewpoint_stack = self.scene.getTrainCameras()
+            
+            # self.scene.getTrainCameras().dataset.get_mask = True
+            # dyn_mask =  self.get_target_mask()
+            # self.scene.getTrainCameras().dataset.get_mask = False
 
             self.cam.time = self.time
         
@@ -300,9 +298,9 @@ class GUIBase:
                     self.pipe, 
                     self.background, 
                     stage='fine',
-                    view_args={
-                        'mask':dyn_mask
-                    }
+                    # view_args={
+                    #     'mask':dyn_mask
+                    # }
             )
             
             try:

@@ -92,6 +92,8 @@ class Scene:
             self.gaussians.load_ply(os.path.join(skip_coarse,"point_cloud.ply"))
             self.gaussians.load_model(skip_coarse)
         elif self.loaded_iter:
+            print(f'Starting from iter {self.loaded_iter}')
+
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                         "point_cloud",
                                                         "iteration_" + str(self.loaded_iter),

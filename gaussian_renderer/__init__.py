@@ -68,7 +68,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     # exit()
     stfeats = None
     if "coarse" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
+        _,h,_ = pc.get_opacity
+        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, h, shs
 
         # means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
@@ -94,7 +95,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         # distances = torch.norm(means3D_final, dim=1)
         # Create a mask for the bounding box
         # print(view_args['mask'].max())
-        mask = view_args['mask'] > 3 #(distances < show_radius)
+        mask = view_args['mask'] 
         # print(mask.max())
         # exit()
         # if stage == 'fine':
@@ -108,6 +109,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         opacity = opacity[mask]
         scales_final = scales_final[mask]
         rotations_final = rotations_final[mask]
+        # print(means3D_final.shape)
+        # pass
         
     
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
@@ -130,7 +133,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         scales=scales_final,
         rotations=rotations_final,
         cov3D_precomp=cov3D_precomp)
-    torch.cuda.synchronize()
 
     # exit()
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
