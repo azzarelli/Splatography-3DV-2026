@@ -153,22 +153,22 @@ class GUI(GUIBase):
         if self.view_test == False:
             self.test_viewpoint_stack = self.scene.getTestCameras()
 
-            if self.stage == 'fine':
-                print('Loading Fine (t = any) dataset')
-                self.viewpoint_stack = self.scene.getTrainCameras()
+            # if self.stage == 'fine':
+            print('Loading Fine (t = any) dataset')
+            self.viewpoint_stack = self.scene.getTrainCameras()
 
-                self.random_loader  = True
-                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
-                                                    num_workers=16, collate_fn=list))
-            elif self.stage == 'coarse': 
-                print('Loading Coarse (t=0) dataset')
-                zero_cams = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+            self.random_loader  = True
+            self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                num_workers=16, collate_fn=list))
+            # elif self.stage == 'coarse': 
+            #     print('Loading Coarse (t=0) dataset')
+            #     zero_cams = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
                 
-                self.viewpoint_stack = zero_cams * 100
+            #     self.viewpoint_stack = zero_cams * 100
                 
-                self.random_loader  = True
-                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
-                                                    num_workers=16, collate_fn=list))
+            #     self.random_loader  = True
+            #     self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+            #                                         num_workers=16, collate_fn=list))
                 
         self.load_in_memory = False
 
@@ -178,6 +178,7 @@ class GUI(GUIBase):
             self.scene.getTrainCameras().dataset.get_mask = True
             zero_cams = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
             self.gaussians.update_target_mask(zero_cams, self.iteration, self.stage)
+
             self.scene.getTrainCameras().dataset.get_mask = False
 
 
@@ -282,6 +283,7 @@ class GUI(GUIBase):
             h_, w_, _ = self.gaussians.get_opacity_buffer
             opacloss = ((1.0 - h_)**2).mean() + ((w_).abs()).mean()
             
+            dyn_scale_loss += self.gaussians.min_dx_nontarget()
             # dyn_scale_loss = 10.* self.gaussians.compute_focused_rigidity()
             # Minimize smallest axis of points for points with highly static opacity behaviour
             

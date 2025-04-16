@@ -356,7 +356,7 @@ class Neural3D_NDC_Dataset(Dataset):
                     R = -R
                     R[:,0] = -R[:,0]
                     T = -pose[:3,3].dot(R)
-                    image_times.append(idx/countss)
+                    image_times.append(idx/(countss-1))
                     image_poses.append((R,T))
                     # if self.downsample != 1.0:
                     #     img = video_frame.resize(self.img_wh, Image.LANCZOS)
@@ -373,6 +373,7 @@ class Neural3D_NDC_Dataset(Dataset):
         img = Image.open(self.image_paths[index])
 
         img = self.transform(img)
+        mask = None
         if self.get_mask:
             if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
                 camid = os.path.join(f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/static_masks',self.image_paths[index].split('/')[-3])
@@ -381,10 +382,7 @@ class Neural3D_NDC_Dataset(Dataset):
                 mask = mask.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
 
                 mask = self.transform(mask)[-1]
-            else:
-                mask = None
-        else:
-            mask = None
+            
         return img, self.image_poses[index], self.image_times[index], mask
     def load_pose(self,index):
         return self.image_poses[index]

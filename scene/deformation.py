@@ -26,7 +26,6 @@ class Deformation(nn.Module):
         self.input_ch = input_ch
         self.input_ch_time = input_ch_time
         self.skips = skips
-        self.no_grid = args.no_grid
 
         self.grid = WavePlaneField(args.bounds, args.kplanes_config, args.multires, use_rotation=args.plane_rotation_correction)
         # self.motion_grid = WavePlaneField(args.bounds, args.kplanes_config, args.multires, use_rotation=args.plane_rotation_correction, dynamic_triplane=True)
@@ -43,6 +42,8 @@ class Deformation(nn.Module):
         
         self.dx_buffer = None
         self.hwm_buffer = None
+        
+        self.training_flag = False
 
     @property
     def get_aabb(self):
@@ -59,20 +60,20 @@ class Deformation(nn.Module):
         self.feature_out = nn.Sequential(nn.Linear(insize,net_size))
 
         # self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
-        self.pos_deform1 = nn.Sequential(nn.ReLU(),nn.Linear(insize,net_size),nn.ReLU(),nn.Linear(net_size, 9))
+        self.pos_deform1 = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         
         # self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
-        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(insize,net_size),nn.ReLU(),nn.Linear(net_size, 3))
-        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(insize,net_size),nn.ReLU(),nn.Linear(net_size, 4))
-        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(insize,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
+        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
+        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
 
         # Same for opacity grid
         self.opacity_featu_out = nn.Sequential(nn.Linear(insize, net_size))
       
         # self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
-        self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(insize,net_size),nn.ReLU(),nn.Linear(net_size, 1))
-        self.opacity_w = nn.Sequential(nn.ReLU(),nn.Linear(insize, net_size),nn.ReLU(),nn.Linear(net_size, 1))
-        self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(insize,net_size),nn.ReLU(),nn.Linear(net_size, 1))
+        self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
+        self.opacity_w = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
+        self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
 
 
     def query_time(self, rays_pts_emb, time_emb, iterations):
@@ -129,21 +130,16 @@ class Deformation(nn.Module):
     
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_feature, time_emb, iteration):
         hidden, hidden_static = self.query_time(rays_pts_emb, time_emb, iteration)
-        # hidden, hidden_opac, stfeats, spfeats = self.query_time(rays_pts_emb, time_emb, iteration)
-        # time_emb = time_emb[0, 0].item()
-        # minus1 = (1. - time_emb)
-        # Apply bezier function w.r.t polynomial space centered at the initial point
-        # We want this to be independant of time so we use the static feature
+
+
         # self.dx_buffer = self.pos_deform1(hidden)
-        # dx = self.dx_buffer.view(-1, 3, 3)# N, 3, 3         
-        self.dx_buffer = self.pos_deform1(hidden_static)
-        dx = self.dx_buffer.view(-1, 3, 3)# N, 3, 3         
-        dx_buff = 3.*((1. - time_emb)**2)*time_emb*dx[:,0] + 3.*(1. - time_emb)*(time_emb**2)*dx[:,1]  + (time_emb**2)*dx[:,2]
-        pts = rays_pts_emb[:,:3] + dx_buff
+        dx = self.pos_deform1(hidden) # .view(-1, 3, 3)   
+        # dx = 3.*((1. - time_emb)**2)*time_emb*dx[:,0] + 3.*(1. - time_emb)*(time_emb**2)*dx[:,1]  + (time_emb**2)*dx[:,2]
+        pts = rays_pts_emb[:,:3] + dx
 
         # Change in scale
-        ds = self.scales_deform(hidden) #.view(-1, 2, 3)
-        scales = scales_emb[:,:3] + ds # 2.*minus1*time_emb *ds[:,0] + (time_emb**2)*dx[:,1]
+        # ds = self.scales_deform(hidden) #.view(-1, 2, 3)
+        # scales = scales_emb[:,:3] + ds # 2.*minus1*time_emb *ds[:,0] + (time_emb**2)*dx[:,1]
 
         # Change in rotation
         dr = self.rotations_deform(hidden)#.view(-1, 2, 4)
@@ -188,7 +184,7 @@ class Deformation(nn.Module):
             plt.show()
             exit()
 
-        return pts, scales, rotations, opacity, shs, None
+        return pts, None, rotations, opacity, shs, None
     
     def get_mlp_parameters(self):
         parameter_list = []
@@ -262,6 +258,9 @@ class deform_network(nn.Module):
                                                 None,
                                                 times_sel, iterations)
         return means3D, scales, rotations, opacity, shs, f
+    
+    def get_dynamic_probabilities(self,point):
+        return self.deformation_net.grid.get_dynamic_probabilities(poc_fre(point,self.pos_poc)[:,:3])
     
     def get_scales(self,scales):
         return self.deformation_net.get_scales(scales)

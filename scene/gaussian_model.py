@@ -146,7 +146,7 @@ class GaussianModel:
     
     @property
     def dynamic_point_prob(self):
-        return self._deformation.deformation_net.grid.get_dynamic_probabilities(self._xyz)
+        return self._deformation.get_dynamic_probabilities(self._xyz)
 
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -642,10 +642,13 @@ class GaussianModel:
             time_smoothness_weight * self._time_regulation() + \
                 l1_time_planes_weight * self._l1_regulation() 
     
+    def min_dx_nontarget(self,):
+        # minmize the mean dynamic feature values (that have been -1. )
+        return (self.dynamic_point_prob[self.target_mask == 0].abs()).mean()
     
     def update_target_mask(self, cam_list, iteration, stage):    
         dyn_mask = torch.zeros_like(self.get_xyz[:,0],dtype=torch.long, device=self.get_xyz.device)
-        for cam in cam_list:                 
+        for cam in cam_list:             
             dyn_mask += get_in_view_dyn_mask(cam, self.get_xyz).long()
         
         mask = dyn_mask > (len(cam_list)-1)

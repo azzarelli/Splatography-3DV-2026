@@ -51,7 +51,7 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self._resolution = -1
-        self._white_background = True
+        self._white_background = False
         self.data_device = "cuda"
         self.eval = True
         self.render_process=False
@@ -89,13 +89,6 @@ class ModelHiddenParams(ParamGroup):
                              'resolution': [64, 64, 64, 25]  # [64,64,64]: resolution of spatial grid. 25: resolution of temporal grid, better to be half length of dynamic frames
                             }
         self.multires = [1, 2, 4, 8] # multi resolution of voxel grid
-        self.no_dx=False # cancel the deformation of Gaussians' position
-        self.no_grid=False # cancel the spatial-temporal hexplane.
-        self.no_ds=False # cancel the deformation of Gaussians' scaling
-        self.no_dr=False # cancel the deformation of Gaussians' rotations
-        self.no_do=True # cancel the deformation of Gaussians' opacity
-        self.no_dshs=True # cancel the deformation of SH colors.
-
 
         self.posebase_pe = 10 # useless
         self.timebase_pe = 4 # useless
@@ -145,9 +138,9 @@ class OptimizationParams(ParamGroup):
         self.densification_interval = 100
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
-        self.densify_grad_threshold_coarse = 0.0001
-        self.densify_grad_threshold_fine_init = 0.0001
-        self.densify_grad_threshold_after = 0.0001
+        self.densify_grad_threshold_coarse = 0.0002
+        self.densify_grad_threshold_fine_init = 0.0002
+        self.densify_grad_threshold_after = 0.0002
         self.pruning_from_iter = 500
         self.pruning_interval = 100
         self.batch_size=1

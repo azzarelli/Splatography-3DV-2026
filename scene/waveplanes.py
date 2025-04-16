@@ -122,13 +122,9 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
         return interp_1, sp_interp
 
 
-def get_feature_probability(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
+def get_feature_probability(pts: torch.Tensor, kplanes):
     """Generate features for each point
     """
-    if ro_grid is not None:
-        rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
-        pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
-
     pts = torch.concatenate([pts, torch.zeros_like(pts[:, 0].unsqueeze(-1), device=pts.device)], dim=-1)
     
     # time m feature
@@ -137,7 +133,7 @@ def get_feature_probability(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacit
     q, r = 0, 1
     for i in range(6):
         if r == 3:
-            vectorplane = kplanes[i].signal[0] # Get the feature plane
+            vectorplane = kplanes[i].signal[0] - 1. # Get the feature plane and undo the +1 so that zero values features are static
             # First get the mean along the temporal planes then get the mean across features
             vectorplane = vectorplane.mean(-1).unsqueeze(-1).mean(1).unsqueeze(0)
             # print(kplanes[i].signal[0].median(-1)[0].shape) 
@@ -159,7 +155,7 @@ def get_feature_probability(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacit
     # Now determine the probabilites
     # \exp\left(-w^{2}\ \cdot\ \left(1-x\right)^{2}\right)
     # w was 49 previously
-    return 1. - torch.exp(-9 * (1-interp)**2)
+    return interp #1. - torch.exp(-9 * (1-interp)**2)
 
 import matplotlib.pyplot as plt
 
@@ -563,7 +559,7 @@ class WavePlaneField(nn.Module):
         pts = normalize_aabb(pts, self.aabb)
         pts = pts.reshape(-1, pts.shape[-1])
         return get_feature_probability(
-            pts, self.grids, self.idwt, self.reorient_grid, True
+            pts, self.grids
         )
 
 

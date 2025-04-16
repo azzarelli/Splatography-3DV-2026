@@ -60,19 +60,19 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     if pipe.compute_cov3D_python:
         cov3D_precomp = pc.get_covariance(scaling_modifier) 
     else:
-        scales = pc._scaling
+        scales_final = pc.get_scaling
         rotations = pc._rotation
 
 
     # rasterizer.markVisibleMasked(viewpoint_camera.original_image.cuda(),means3D)
     # exit()
-    internalloss = None
+    extras = None
     if "coarse" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[:,0], device=means3D.device), shs
+        means3D_final, rotations_final, opacity, shs_final = means3D, rotations, torch.ones_like(means3D[:,0], device=means3D.device), shs
 
         # means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final, internalloss = pc._deformation(means3D, scales,
+        means3D_final, _, rotations_final, opacity, shs_final, extras = pc._deformation(means3D, scales_final,
                                                                                                  rotations,
                                                                                                  shs,
                                                                                                  time)
@@ -80,7 +80,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         raise NotImplementedError
 
     # Do the scaling and rotation activation after deformation
-    scales_final = pc.scaling_activation(scales_final)
+    # scales_final = pc.scaling_activation(scales)
     rotations_final = pc.rotation_activation(rotations_final)
 
     if view_args is not None:
@@ -144,5 +144,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         "radii": radii,
         "depth": rendered_depth,
         'norms':rendered_image, 'alpha':rendered_depth,
+        "extras":extras
         # 'norms':rendered_norm, 'alpha':rendered_alpha
         }

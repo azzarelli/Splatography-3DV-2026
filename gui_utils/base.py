@@ -284,10 +284,6 @@ class GUIBase:
         
         if self.switch_off_viewer == False:
             # self.viewpoint_stack = self.scene.getTrainCameras()
-            
-            # self.scene.getTrainCameras().dataset.get_mask = True
-            # dyn_mask =  self.get_target_mask()
-            # self.scene.getTrainCameras().dataset.get_mask = False
 
             self.cam.time = self.time
         
