@@ -381,6 +381,8 @@ class Neural3D_NDC_Dataset(Dataset):
                 mask = mask.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
 
                 mask = self.transform(mask)[-1]
+            else:
+                mask = None
         else:
             mask = None
         return img, self.image_poses[index], self.image_times[index], mask

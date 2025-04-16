@@ -464,7 +464,7 @@ class GaussianModel:
         dynmask = torch.where(torch.norm(grads, dim=-1) >= max_grad, True, False)
 
         if selected_pts_mask.shape[0] > 0:
-            selected_pts_mask = torch.logical_and(dynmask,selected_pts_mask)
+            # selected_pts_mask = torch.logical_and(dynmask,selected_pts_mask)
             
             selected_pts_mask = torch.logical_and(selected_pts_mask,
             torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
@@ -484,15 +484,15 @@ class GaussianModel:
         self.split_target_(extent, self.target_mask, max_grad,grads)
         torch.cuda.empty_cache()
         
-    def split_target_(self, scene_extent, target,  max_grad, grads):
+    def split_target_(self, scene_extent, selected_pts_mask,  max_grad, grads):
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
-        padded_grad = torch.zeros((n_init_points), device="cuda")
-        padded_grad[:grads.shape[0]] = grads.squeeze()
-        selected_pts_mask = torch.where(padded_grad >= max_grad, True, False)
+        # padded_grad = torch.zeros((n_init_points), device="cuda")
+        # padded_grad[:grads.shape[0]] = grads.squeeze()
+        # selected_pts_mask = torch.where(padded_grad >= max_grad, True, False)
         
         N = 2
-        selected_pts_mask = torch.logical_and(selected_pts_mask,target)
+        # selected_pts_mask = torch.logical_and(selected_pts_mask,target)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
         if selected_pts_mask.shape[0] > 0:
@@ -658,13 +658,13 @@ class GaussianModel:
         
         self.target_mask = mask
         
-        # We only care about modelling the neighbours during the fine stage
-        if stage == 'fine':
-            K=3
-            points = self.get_xyz[mask]
-            row, col = knn_graph(points, k=K, batch=None, loop=False)
-            self.neighbours = col
-            self.tenants = row
+        # # We only care about modelling the neighbours during the fine stage
+        # if stage == 'fine':
+        #     K=3
+        #     points = self.get_xyz[mask]
+        #     row, col = knn_graph(points, k=K, batch=None, loop=False)
+        #     self.neighbours = col
+        #     self.tenants = row
 
 
     def compute_focused_rigidity(self):

@@ -296,7 +296,7 @@ class GUIBase:
                     self.gaussians, 
                     self.pipe, 
                     self.background, 
-                    stage='fine',
+                    stage=self.stage,
                     # view_args={
                     #     'mask':dyn_mask
                     # }

@@ -18,7 +18,7 @@ from scene.gaussian_model import GaussianModel
 
 
 def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
-           stage="fine", view_args=None):
+           stage="fine", view_args=None, ):
     """
     Render the scene.
     """
@@ -66,14 +66,13 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
 
     # rasterizer.markVisibleMasked(viewpoint_camera.original_image.cuda(),means3D)
     # exit()
-    stfeats = None
+    internalloss = None
     if "coarse" in stage:
-        _,h,_ = pc.get_opacity
-        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, h, shs
+        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[:,0], device=means3D.device), shs
 
         # means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final, stfeats = pc._deformation(means3D, scales,
+        means3D_final, scales_final, rotations_final, opacity, shs_final, internalloss = pc._deformation(means3D, scales,
                                                                                                  rotations,
                                                                                                  shs,
                                                                                                  time)
@@ -144,6 +143,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         "visibility_filter": radii > 0,
         "radii": radii,
         "depth": rendered_depth,
-        'norms':rendered_image, 'alpha':rendered_depth
+        'norms':rendered_image, 'alpha':rendered_depth,
+        'intloss':internalloss
         # 'norms':rendered_norm, 'alpha':rendered_alpha
         }
