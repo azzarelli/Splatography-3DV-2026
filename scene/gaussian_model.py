@@ -116,7 +116,7 @@ class GaussianModel:
         return self.rotation_activation(self._rotation)
 
     @property
-    def get_xyz(self):
+    def get_xyz(self): 
         return self._xyz
 
     @property
@@ -658,13 +658,13 @@ class GaussianModel:
         
         self.target_mask = mask
         
-        # We only care about modelling the neighbours during the fine stage
-        if stage == 'fine':
-            K=3
-            points = self.get_xyz[mask]
-            row, col = knn_graph(points, k=K, batch=None, loop=False)
-            self.neighbours = col
-            self.tenants = row
+        # # We only care about modelling the neighbours during the fine stage
+        # if stage == 'fine':
+        #     K=3
+        #     points = self.get_xyz[mask]
+        #     row, col = knn_graph(points, k=K, batch=None, loop=False)
+        #     self.neighbours = col
+        #     self.tenants = row
 
 
     def compute_focused_rigidity(self):

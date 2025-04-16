@@ -239,6 +239,8 @@ class GUI(GUIBase):
             )
             image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
+            # if render_pkg['intloss'] is not None:
+            #     opacloss += render_pkg['intloss']
             # if self.stage == 'fine':
             #     depth_pred = render_pkg['depth']         
             #     gt_depth =  self.depth_model.infer_image(viewpoint_cam.original_image.permute(1,2,0).numpy())
@@ -288,21 +290,22 @@ class GUI(GUIBase):
             # if render_pkg['stfeats'] is not None:
             #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
         
-        # Make more flat and round
+        # scale_exp = self.gaussians.get_scaling
+        # max_gauss_ratio = 5
+        # # Make more flat and round
         # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
-        # loss += w*(
+        # pg_loss += (
         #     torch.maximum(
         #         s_v[:, 0] / s_v[:, 1],
         #         torch.tensor(max_gauss_ratio),
         #     )
         #     - max_gauss_ratio
         # ).mean()
+        # pg_loss += (torch.abs(scale_exp.amin(dim=-1))).mean()
 
-        # scale_exp = self.gaussians.get_scaling
         # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
         # pg_loss = (torch.abs(scale_exp.amin(dim=-1))).mean()
         
-        # max_gauss_ratio = 10
         # pg_loss = (
         #     torch.maximum(
         #         scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
@@ -380,8 +383,6 @@ class GUI(GUIBase):
                 self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
 
                 densify_threshold = self.opt.densify_grad_threshold_fine_init
-
-                check = 0
                 
                 if  self.stage == 'fine' and self.iteration > self.opt.densify_from_iter and self.iteration < 6000:
                     if self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
@@ -501,45 +502,6 @@ def setup_seed(seed):
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
 
-
-def pairwise_distances_func(gt, pred):
-    # Shapes: gt -> (N, 3), pred -> (M, 3)
-    gt_norm = torch.sum(gt**2, dim=1).unsqueeze(1)  # Shape: (N, 1)
-    pred_norm = torch.sum(pred**2, dim=1).unsqueeze(0)  # Shape: (1, M)
-    cross_term = torch.matmul(gt, pred.T)  # Shape: (N, M)
-    distances = torch.sqrt(gt_norm - 2 * cross_term + pred_norm)  # Shape: (N, M)
-    return distances
-
-def custom_pcd_loss(gt, pred, k= 4, threshold=0.01):
-    gt = torch.tensor(o3d.io.read_point_cloud(gt).points).float().cuda()
-    stability = 0.0000001
-    # print(pred.dtype, gt.dtype)
-    if gt.shape[0] < 5000:
-        # TODO: Decide on point-based regularisation
-        diff = gt[:, None, :] - pred[None, :, :]  # Shape: (N, M, 3)
-        pairwise_distances = torch.norm(diff, dim=2)  # Shape: (N, M)
-        distances, indices = torch.topk(pairwise_distances, k, dim=1, largest=False, sorted=True)
-        return F.relu(distances.mean(-1) - threshold).mean()
-
-    return None
-
-def nns(knn_indices, features):
-    # Gather neighbor features without for-loop
-    safe_indices = knn_indices.clone()
-    safe_indices[safe_indices == -1] = 0  # avoid indexing error
-    neighbor_features = features[safe_indices]  # (N, k, F)
-
-    # Mask out invalid neighbors
-    valid_mask = (knn_indices != -1).unsqueeze(-1)  # (N, k, 1)
-    neighbor_features = neighbor_features * valid_mask
-
-    # Mean of valid neighbor features
-    neighbor_sum = neighbor_features.sum(dim=1)
-    neighbor_count = valid_mask.sum(dim=1).clamp(min=1)
-    neighbor_mean = neighbor_sum / neighbor_count
-    
-    return neighbor_mean
-
 # from pytorch3d.ops import ball_query, knn_gather
 
 # def KNN_motion_features(positions, features):
@@ -627,7 +589,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", type=int, default=1000)
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 9999, 20000, 30_000, 45000, 60000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 10000, 16000, 20000, 30_000, 45000, 60000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--expname", type=str, default = "")

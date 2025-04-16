@@ -59,7 +59,7 @@ elif [ "$3" == "ext" ]; then
 elif [ "$3" == "skip-coarse" ]; then
   echo "Skip Coarse..."
 
-  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /media/barry/56EA40DEEA40BBCD/DATA/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000 --skip-coarse mask
+  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /media/barry/56EA40DEEA40BBCD/DATA/dynerf/$SAVEDIR/ --expname "dynerf/$SAVEDIR/$EXP_NAME" --configs arguments/dynerf/default.py --test_iterations 1000 --skip-coarse $4
 else
   echo "Training starting..."
 
