@@ -209,10 +209,7 @@ class GUI(GUIBase):
             self.random_loader = True
             self.loader = iter(viewpoint_stack_loader)
             viewpoint_cams = next(self.loader)
-        
-        
 
-        # exit()
         # Render
         if (self.iteration - 1) == self.debug_from:
             self.pipe.debug = True
@@ -277,10 +274,7 @@ class GUI(GUIBase):
                 self.hyperparams.plane_tv_weight,
                 )
             
-            w_, h_, mu_ = self.gaussians.get_opacity
-            # dyn_scale_loss += self.gaussians.compute_rigidity_loss()
-
-            opacloss = 0.1*((1.0 - h_)**2).mean() # + ((w_).abs()).mean()
+            opacloss = 0.1*((1.0 - self.gaussians.get_h_opacity)**2).mean()
             
             # Minimize smallest axis of points for points with highly static opacity behaviour
             # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)

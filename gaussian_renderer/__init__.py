@@ -63,20 +63,23 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         scales = pc._scaling
         rotations = pc._rotation
 
+    h_opacity = pc.get_h_opacity
 
-    # rasterizer.markVisibleMasked(viewpoint_camera.original_image.cuda(),means3D)
     # exit()
-    stfeats = None
     if "coarse" in stage:
-        _,h,_ = pc.get_opacity
-        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, h, shs
+        means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, h_opacity, shs
 
         # means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
-        means3D_final, scales_final, rotations_final, opacity, shs_final, stfeats = pc._deformation(means3D, scales,
-                                                                                                 rotations,
-                                                                                                 shs,
-                                                                                                 time, pc._opacity)
+        means3D_final, scales_final, rotations_final, opacity, shs_final, extras = pc._deformation(
+            means3D, 
+            scales,
+            rotations,
+            shs,
+            time, 
+            h_opacity,
+            pc.target_mask
+        )
     else:
         raise NotImplementedError
 

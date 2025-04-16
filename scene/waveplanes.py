@@ -75,13 +75,9 @@ def init_grid_param(
 
     return grid_coefs
 
-def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
+def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, is_opacity_grid):
     """Generate features for each point
     """
-    # if ro_grid is not None:
-    #     rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
-    #     pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
-
     # time m feature
     interp_1 = 1.
     sp_interp = 1.
@@ -122,13 +118,9 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opaci
         return interp_1, sp_interp
 
 
-def get_feature_probability(pts: torch.Tensor, kplanes, idwt, ro_grid, is_opacity_grid):
+def get_feature_probability(pts: torch.Tensor, kplanes):
     """Generate features for each point
     """
-    if ro_grid is not None:
-        rot_pts = torch.matmul(pts[..., :3], ro_grid) # spatial rotation
-        pts = torch.cat([rot_pts, pts[..., -1].unsqueeze(-1)], dim=-1) # keep time values
-
     pts = torch.concatenate([pts, torch.zeros_like(pts[:, 0].unsqueeze(-1), device=pts.device)], dim=-1)
     
     # time m feature
@@ -431,45 +423,41 @@ class WavePlaneField(nn.Module):
             self,
             bounds,
             planeconfig,
-            multires,
-            use_rotation=False,
-            is_opacity_grid=False,
     ):
         super().__init__()
         aabb = torch.tensor([[bounds, bounds, bounds],
                              [-bounds, -bounds, -bounds]])
         self.aabb = nn.Parameter(aabb, requires_grad=False)
-        self.multiscale_res_multipliers = multires
         self.concat_features = True
-        self.is_opacity_grid = is_opacity_grid
-        self.grid_config = [planeconfig]
+        self.grid_config = planeconfig
+        self.feat_dim = self.grid_config["output_coordinate_dim"]
 
         # 1. Init planes
         self.grids = nn.ModuleList()
 
+        # Define the DWT functon
         self.idwt = DWTInverse(wave='coif4', mode='periodization').cuda().float()
 
         self.cacheplanes = True
         self.is_waveplanes = True
-        
         
         j, k = 0, 1
         for i in range(6):
             # We only need a grid for the space-time features
             if k == 3: 
                 what = 'spacetime'
-                res = [self.grid_config[0]['resolution'][j], self.grid_config[0]['resolution'][3]]
+                res = [self.grid_config['resolution'][j], self.grid_config['resolution'][3]]
             else:
                 what = 'space'
-                res = [self.grid_config[0]['resolution'][j],
-                    self.grid_config[0]['resolution'][k]]
+                res = [self.grid_config['resolution'][j],
+                    self.grid_config['resolution'][k]]
             
             gridset = GridSet(
                 what=what,
                 resolution=res,
-                J=self.grid_config[0]['wavelevel'],
+                J=self.grid_config['wavelevel'],
                 config={
-                    'feature_size': self.grid_config[0]["output_coordinate_dim"],
+                    'feature_size': self.grid_config["output_coordinate_dim"],
                     'a': 0.1,
                     'b': 0.5,
                     'wave': 'coif4',
@@ -484,15 +472,6 @@ class WavePlaneField(nn.Module):
                 j += 1
                 k = j + 1
                 
-        self.feat_dim = self.grid_config[0]["output_coordinate_dim"]
-
-        init_plane = torch.empty([3, 3]).cuda()
-        nn.init.uniform_(init_plane, a=-0.1, b=.1)
-
-        if use_rotation:
-            self.reorient_grid = nn.Parameter(init_plane, requires_grad=True)
-        else:
-            self.reorient_grid = None
 
     def compact_save(self, fp):
         import lzma
@@ -563,10 +542,16 @@ class WavePlaneField(nn.Module):
         pts = normalize_aabb(pts, self.aabb)
         pts = pts.reshape(-1, pts.shape[-1])
         return get_feature_probability(
-            pts, self.grids, self.idwt, self.reorient_grid, True
+            pts, self.grids
         )
-
-
+        
+    def get_opacity_vars(self, pts):
+        pts = normalize_aabb(pts, self.aabb)
+        pts = pts.reshape(-1, pts.shape[-1])
+        return interpolate_features_MUL(
+            pts, self.grids, self.idwt, True
+        )
+        
     def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
         """Computes and returns the densities."""
         # breakpoint()
@@ -578,14 +563,7 @@ class WavePlaneField(nn.Module):
         pts = pts.reshape(-1, pts.shape[-1])
 
         return interpolate_features_MUL(
-            pts, self.grids, self.idwt, self.reorient_grid, False
-        )
-
-    def get_opacity_vars(self, pts):
-        pts = normalize_aabb(pts, self.aabb)
-        pts = pts.reshape(-1, pts.shape[-1])
-        return interpolate_features_MUL(
-            pts, self.grids, self.idwt, self.reorient_grid, True
+            pts, self.grids, self.idwt, False
         )
 
     def forward(self,

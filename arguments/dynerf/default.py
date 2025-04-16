@@ -1,14 +1,21 @@
 ModelHiddenParams = dict(
-    kplanes_config = {
+    scene_config = {
+     'grid_dimensions': 2,
+     'input_coordinate_dim': 4,
+     'output_coordinate_dim': 16,
+     'resolution': [264, 264, 264, 10],
+     'wavelevel':2
+    },
+    target_config = {
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
      'resolution': [264, 264, 264, 50],
      'wavelevel':2
     },
-    multires = [1,2],
-    defor_depth = 0,
+    
     net_width = 128,
+    
     plane_tv_weight = 0.0002,
     time_smoothness_weight = 0.001,
     l1_time_planes =  0.0005,
@@ -30,7 +37,7 @@ OptimizationParams = dict(
     dataloader=True,
     iterations=16000,
     batch_size=2, # Was 4
-    coarse_iterations=3000,
+    coarse_iterations=3,
     
     densify_from_iter=3000, #best at 3001
     # densification_interval=1,

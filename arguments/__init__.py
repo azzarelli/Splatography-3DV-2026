@@ -82,20 +82,20 @@ class ModelHiddenParams(ParamGroup):
         self.l1_time_planes = 0.0001  # TV loss of temporal grid
         self.opacity_lambda = 0.01  # TV loss of temporal grid
 
-        self.kplanes_config = {
+        self.scene_config = {
                              'grid_dimensions': 2,
                              'input_coordinate_dim': 4,
                              'output_coordinate_dim': 32,
-                             'resolution': [64, 64, 64, 25]  # [64,64,64]: resolution of spatial grid. 25: resolution of temporal grid, better to be half length of dynamic frames
+                             'resolution': [64, 64, 64, 25] , # [64,64,64]: resolution of spatial grid. 25: resolution of temporal grid, better to be half length of dynamic frames                            
+                             'wavelevel':2
+}
+        self.target_config = {
+                             'grid_dimensions': 2,
+                             'input_coordinate_dim': 4,
+                             'output_coordinate_dim': 32,
+                             'resolution': [64, 64, 64, 25],  # [64,64,64]: resolution of spatial grid. 25: resolution of temporal grid, better to be half length of dynamic frames
+                            'wavelevel':2
                             }
-        self.multires = [1, 2, 4, 8] # multi resolution of voxel grid
-        self.no_dx=False # cancel the deformation of Gaussians' position
-        self.no_grid=False # cancel the spatial-temporal hexplane.
-        self.no_ds=False # cancel the deformation of Gaussians' scaling
-        self.no_dr=False # cancel the deformation of Gaussians' rotations
-        self.no_do=True # cancel the deformation of Gaussians' opacity
-        self.no_dshs=True # cancel the deformation of SH colors.
-
 
         self.posebase_pe = 10 # useless
         self.timebase_pe = 4 # useless

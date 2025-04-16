@@ -41,8 +41,7 @@ class GaussianModel:
 
         self.covariance_activation = build_covariance_from_scaling_rotation
 
-        # self.opacity_activation = torch.sigmoid
-        # self.inverse_opacity_activation = inverse_sigmoid
+        self.opacity_activation = torch.sigmoid
 
         self.rotation_activation = torch.nn.functional.normalize
 
@@ -127,8 +126,12 @@ class GaussianModel:
         return torch.cat((features_dc, features_rest), dim=1)
 
     @property
-    def get_opacity(self):
-        return self._deformation.get_opacity_vars(self.get_xyz,)
+    def get_h_opacity(self):
+        return self.opacity_activation(self._opacity)
+
+    @property
+    def get_w_mu_opacity(self):
+        return self._deformation.get_opacity_vars(self.get_xyz)
     
     @property
     def get_dyn_coefs(self):
