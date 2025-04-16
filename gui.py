@@ -171,16 +171,14 @@ class GUI(GUIBase):
 
         self.load_in_memory = False
 
-    def get_target_mask(self):
-        """Generate the target mask w.r.t the initial gaussian positions and the masks at t = 0
-        """
-        zero_cams = [self.viewpoint_stack[idx] for idx in self.scene.train_camera.zero_idxs]
-    
-        dyn_mask = torch.zeros_like(self.gaussians.get_xyz[:,0],dtype=torch.long, device=self.gaussians.get_xyz.device).cuda()
-        for cam in zero_cams:                 
-            dyn_mask += get_in_view_dyn_mask(cam, self.gaussians.get_xyz).long()
-            
-        return dyn_mask > (len(zero_cams)-1)
+    def update_target_mask(self):
+        """Update our knowledge of the target dynamic points using the initial masks"""
+        with torch.no_grad():
+            self.scene.getTrainCameras().dataset.get_mask = True
+            zero_cams = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+            self.gaussians.update_target_mask(zero_cams, self.iteration, self.stage)
+            self.scene.getTrainCameras().dataset.get_mask = False
+
    
     def train_step(self):
 
@@ -199,6 +197,9 @@ class GUI(GUIBase):
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if self.iteration % 100 == 0:
             self.gaussians.oneupSHdegree()
+            
+        if self.iteration % 500 == 0 or self.iteration == 1:
+            self.update_target_mask()
 
         # Handle Data Loading:
         try:
@@ -376,14 +377,18 @@ class GUI(GUIBase):
                     if self.iteration % self.opt.densification_interval == 0 and self.gaussians.get_xyz.shape[0]<360000:
                         size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                         self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
-                elif self.stage == 'fine' and self.iteration % 1000 == 0 and self.iteration > 9999:
-                    self.scene.getTrainCameras().dataset.get_mask = True
-                    self.gaussians.densify_target(densify_threshold,self.scene.cameras_extent, self.get_target_mask())
-                    self.scene.getTrainCameras().dataset.get_mask = False
+                        self.update_target_mask()
+
+                # elif self.stage == 'fine' and self.iteration % 1000 == 0 and self.iteration > 9999:
+                #     self.scene.getTrainCameras().dataset.get_mask = True
+                #     self.gaussians.densify_target(densify_threshold,self.scene.cameras_extent)
+                #     self.scene.getTrainCameras().dataset.get_mask = False
 
                 if  self.iteration > self.opt.pruning_from_iter and self.iteration % self.opt.pruning_interval == 0 and self.gaussians.get_xyz.shape[0]>200000:
                     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                     self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold, self.iteration % self.opt.opacity_reset_interval == 0)
+                    self.update_target_mask()
+
             # Optimizer step
             if self.iteration < self.opt.iterations:
                 self.gaussians.optimizer.step()

@@ -106,7 +106,6 @@ class ModelHiddenParams(ParamGroup):
         self.empty_voxel=False # useless
         self.grid_pe=0 # useless, I was trying to add positional encoding to hexplane's features
         self.static_mlp=False # useless
-        self.apply_rotation=False # useless
 
 
         self.use_waveplanes=False # Use waveplanes instead of hexplanes

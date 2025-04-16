@@ -561,14 +561,14 @@ class GaussianModel:
                     We can then asses the absolute distance between t_neg and t_pos and remove spikes that apear smaller than our temporal
                     grid resolution (basically temporal pruning)
         """
-        w, h, mu = self.get_opacity
-
+        w, mu = self.get_w_mu_opacity
+        h = self.get_h_opacity
         # Hyper params
-        width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
+        # width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
         # Calulcate min width
-        width = self.compute_topac_width(w, h, 0.025)
-        prune_mask = (width < width_threshold).squeeze()
-        prune_mask = torch.logical_or((h < 0.1).squeeze(), prune_mask)
+        # width = self.compute_topac_width(w, h, 0.025)
+        # prune_mask = #(width < width_threshold).squeeze()
+        prune_mask = (h < 0.1).squeeze() #torch.logical_or((h < 0.1).squeeze(), prune_mask)
         
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
@@ -624,11 +624,14 @@ class GaussianModel:
     
 
     def _plane_regulation(self):
-        multi_res_grids = self._deformation.deformation_net.grid.grids_()
-
         total = 0
         # model.grids is 6 x [1, rank * F_dim, reso, reso]
-        for grids in multi_res_grids:
+        for grids in self._deformation.deformation_net.grid.grids_():
+            time_grids =  [0,1,3]
+            for grid_id in time_grids:
+                total += compute_plane_smoothness(grids[grid_id])
+    
+        for grids in self._deformation.deformation_net.target_grid.grids_():
             time_grids =  [0,1,3]
             for grid_id in time_grids:
                 total += compute_plane_smoothness(grids[grid_id])
@@ -643,9 +646,10 @@ class GaussianModel:
             for grid_id in time_grids:
                 total += compute_plane_smoothness(grids[grid_id])
                 
-        # for grids in self._deformation.deformation_net.motion_grid.grids_():
-        #     for grid in grids:
-        #         total += compute_plane_smoothness(grid)
+        for grids in self._deformation.deformation_net.target_grid.grids_():
+            time_grids = [2, 4, 5]
+            for grid_id in time_grids:
+                total += compute_plane_smoothness(grids[grid_id])
         return total
     
     def _l1_regulation(self):
@@ -655,9 +659,10 @@ class GaussianModel:
             for grid_id in spatiotemporal_grids:
                 total += torch.abs(1 - grids[grid_id]).mean()
                 
-        # for grids in self._deformation.deformation_net.motion_grid.grids_():
-        #     for grid in grids:
-        #         total += torch.abs(1 - grid).mean()
+        for grids in self._deformation.deformation_net.target_grid.grids_():
+            spatiotemporal_grids = [2, 4, 5]
+            for grid_id in spatiotemporal_grids:
+                total += torch.abs(1 - grids[grid_id]).mean()
         return total
     
     def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight ):
@@ -665,6 +670,19 @@ class GaussianModel:
             time_smoothness_weight * self._time_regulation() + \
                 l1_time_planes_weight * self._l1_regulation() 
 
+    def update_target_mask(self, cam_list, iteration, stage):    
+        dyn_mask = torch.zeros_like(self.get_xyz[:,0],dtype=torch.long, device=self.get_xyz.device)
+        for cam in cam_list:             
+            dyn_mask += get_in_view_dyn_mask(cam, self.get_xyz).long()
+        
+        self.target_mask  = dyn_mask > (len(cam_list)-1)
+        
+        if self._deformation.deformation_net.target_grid.aabb == None:
+            points = self._xyz[self.target_mask]
+            xyz_min = torch.min(points, dim=0).values
+            xyz_max = torch.max(points, dim=0).values
+            print(xyz_max)
+            self._deformation.deformation_net.target_grid.set_aabb(xyz_max, xyz_min)
     def compute_rigidity_loss(self):        
         edge_index = knn_graph(self._xyz, k=3, batch=None, loop=False)
         row, col = edge_index
@@ -673,7 +691,54 @@ class GaussianModel:
         dx_coefs = self.get_dyn_coefs
         diff = ((distance_mask*(((dx_coefs[row] - dx_coefs[col])**2).mean(-1)))).mean()
         return diff
-            
+         
+         
+def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
+    device = xyz.device
+    N = xyz.shape[0]
+
+    # Convert to homogeneous coordinates
+    xyz_h = torch.cat([xyz, torch.ones((N, 1), device=device)], dim=-1)  # (N, 4)
+
+    # Apply full projection (world → clip space)
+    proj_xyz = xyz_h @ camera.full_proj_transform.to(device)  # (N, 4)
+
+    # Homogeneous divide to get NDC coordinates
+    ndc = proj_xyz[:, :3] / proj_xyz[:, 3:4]  # (N, 3)
+
+    # Visibility check
+    in_front = proj_xyz[:, 2] > 0
+    in_ndc_bounds = (ndc[:, 0].abs() <= 1) & (ndc[:, 1].abs() <= 1) & (ndc[:, 2].abs() <= 1)
+    visible_mask = in_ndc_bounds & in_front
+    
+    # Compute pixel coordinates
+    px = (((ndc[:, 0] + 1) / 2) * camera.image_width).long()
+    py = (((ndc[:, 1] + 1) / 2) * camera.image_height).long()    # Init mask values
+    mask_values = torch.zeros(N, dtype=torch.bool, device=device)
+
+    # Only sample pixels for visible points
+    valid_idx = visible_mask.nonzero(as_tuple=True)[0]
+
+    if valid_idx.numel() > 0:
+        px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
+        py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
+        mask = camera.mask.to(device)
+        sampled_mask = mask[py_valid, px_valid]  # shape: [#valid]
+        mask_values[valid_idx] = sampled_mask.bool()
+    # import matplotlib.pyplot as plt
+
+    # # Assuming tensor is named `tensor_wh` with shape [W, H]
+    # # Convert to [H, W] for display (matplotlib expects H first)
+    # mask[py_valid, px_valid] = 0.5
+    # print(py_valid.shape)
+
+    # tensor_hw = mask.cpu()  # If it's on GPU
+    # plt.imshow(tensor_hw, cmap='gray')
+    # plt.axis('off')
+    # plt.show()
+    # exit()
+    return mask_values.long()
+   
 SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
 def gaussian_integral(w,h, mu):
     """Returns high weight (0 to 1) for solid materials

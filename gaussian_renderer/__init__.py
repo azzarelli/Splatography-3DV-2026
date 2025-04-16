@@ -72,13 +72,13 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         # means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
     elif "fine" in stage:
         means3D_final, scales_final, rotations_final, opacity, shs_final, extras = pc._deformation(
-            means3D, 
-            scales,
-            rotations,
-            shs,
-            time, 
-            h_opacity,
-            pc.target_mask
+            point=means3D, 
+            scales=scales,
+            rotations=rotations,
+            shs=shs,
+            times_sel=time, 
+            h_emb=h_opacity,
+            target_mask=pc.target_mask
         )
     else:
         raise NotImplementedError

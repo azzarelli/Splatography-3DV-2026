@@ -30,6 +30,7 @@ class Deformation(nn.Module):
         self.grid = WavePlaneField(args.bounds, args.scene_config)
         self.target_grid = WavePlaneField(args.bounds, args.target_config)
 
+        self.target_grid.aabb = None
         # breakpoint()
         self.args = args
         # self.args.empty_voxel=True
@@ -56,11 +57,11 @@ class Deformation(nn.Module):
         net_size = self.W
         insize = self.grid.feat_dim 
         self.feature_out = nn.Sequential(nn.Linear(insize,net_size))
+        self.feature_out_scene = nn.Sequential(nn.Linear(insize,net_size))
 
-        # self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.pos_deform1 = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 9))
         
-        # self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
@@ -75,8 +76,16 @@ class Deformation(nn.Module):
 
 
     def query_time(self, rays_pts_emb, time_emb, iterations, mask=None):
+        # define scene and target points:
+        scene_pts = rays_pts_emb[~mask]
+        target_pts = rays_pts_emb[mask]
         
-        st, sp = self.grid(rays_pts_emb[:,:3], time_emb[:,:1], iterations)
+        # sample full features from the scene points
+        out_scene = self.grid(scene_pts[:,:3], time_emb[~mask,:1])
+        
+        features_scene = self.feature_out_scene(out_scene)
+        
+        st, sp = self.target_grid(target_pts[:,:3], time_emb[mask,:1],sep=True)
         # Querying the feature grids
         st_features = self.feature_out(
             st * sp # Multiply space and space-time features for general param deformations
@@ -88,7 +97,7 @@ class Deformation(nn.Module):
         
         # st_2 = self.motion_grid(rays_pts_emb[:,:3], time_emb[:,:1], iterations)
         
-        return st_features, sp_features# st_2, sp
+        return features_scene, st_features, sp_features# st_2, sp
 
 
     def get_opacity_vars(self, rays_pts_emb, opac_emb, cached=False):
@@ -109,43 +118,50 @@ class Deformation(nn.Module):
             st * sp # Multiply space and space-time features for general param deformations
         ))
     
-    def get_scales(self, scales_emb):
-        return scales_emb[:,:3]
-    
     def forward(self,rays_pts_emb, scales_emb, rotations_emb, shs_emb, time_emb, iteration, h_emb, target_mask):
         
-        hidden, hidden_static = self.query_time(rays_pts_emb, time_emb, iteration)
-        # hidden, hidden_opac, stfeats, spfeats = self.query_time(rays_pts_emb, time_emb, iteration)
+        hidden_scene, hidden, hidden_static = self.query_time(rays_pts_emb, time_emb, iteration,target_mask)
         
-        # Apply bezier function w.r.t polynomial space centered at the initial point
-        # We want this to be independant of time so we use the static feature
+        # initialize points for deformation
+        pts = rays_pts_emb[:,:3]
+        scales = scales_emb[:,:3]
+        shs = shs_emb
+        rotations = rotations_emb[:,:4]
+        opacity = h_emb
+
+        # process scene and target seperately
+        # First do position deform for scene points
+        pts[~target_mask] += self.pos_deform(hidden_scene)
+
+
+        # Now target change in position via Bezier function
         dx = self.pos_deform1(hidden_static).view(-1, 3, 3) # N, 3, 3 
-        
-        mint = 1. - time_emb
-        tsq = time_emb**2
-        pts = rays_pts_emb[:,:3] + 3*(mint**2)*time_emb*dx[:,0] + 3.*mint*tsq*dx[:,1]  + (time_emb**3)*dx[:,2]
+        t = time_emb[target_mask, :1]
+        mint = 1. - t
+        pts[target_mask] += 3*(mint**2)*t*dx[:,0] + 3.*mint*(t**2)*dx[:,1]  + (t**3)*dx[:,2]
 
         # Change in scale
         ds = self.scales_deform(hidden)
-        scales = scales_emb[:,:3] + ds
+        scales[target_mask] += ds
 
         # Change in rotation
         dr = self.rotations_deform(hidden)
-        if self.args.apply_rotation:
-            rotations = batch_quaternion_multiply(rotations_emb, dr)
-        else:
-            rotations = rotations_emb[:,:4] + dr
-        
-        h = h_emb
-        w = (self.opacity_w(hidden_static)**2)
-        mu =torch.sigmoid(self.opacity_mu(hidden_static))
-        opacity = h * torch.exp(-w*(time_emb- mu)**2)
+        rotations[target_mask] += dr
         
         # Change in color        
-        dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
-        shs = shs_emb + dshs
+        dshs = self.shs_deform(hidden).view(-1, 16, 3)
+        shs[target_mask] += dshs
         
+        time_emb = time_emb[target_mask]
         
+        w = (self.opacity_w(hidden_static)**2)
+        mu =torch.sigmoid(self.opacity_mu(hidden_static))
+
+        updated_opacity = h_emb[target_mask] * torch.exp(-w * (-mu)**2)
+
+        # Use clone to avoid in-place issue
+        opacity = opacity.clone()
+        opacity[target_mask] = updated_opacity
 
         if False:
             w_np = w.cpu().numpy().flatten()
@@ -190,6 +206,8 @@ class Deformation(nn.Module):
             if  "grid" in name:
                 parameter_list.append(param)
         return parameter_list
+    
+    
 class deform_network(nn.Module):
     def __init__(self, args) :
         super(deform_network, self).__init__()

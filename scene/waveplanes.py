@@ -75,7 +75,7 @@ def init_grid_param(
 
     return grid_coefs
 
-def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, is_opacity_grid):
+def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, is_opacity_grid, sep=False):
     """Generate features for each point
     """
     # time m feature
@@ -105,7 +105,10 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, is_opacity_grid):
             coeff = kplanes[i]
             if r != 3:
                 feature = coeff(pts[..., (q, r)], idwt)
-                sp_interp = sp_interp * feature
+                if sep:
+                    sp_interp = sp_interp * feature
+                else:
+                    interp_1 = interp_1 * feature
             else:
                 feature = coeff(pts[..., (3, q)], idwt)
                 interp_1 = interp_1 * feature
@@ -114,9 +117,10 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, is_opacity_grid):
             if r == 4:
                 q += 1
                 r = q + 1
-
-        return interp_1, sp_interp
-
+        if sep: # return space and space time features seperately
+            return interp_1, sp_interp
+        else:
+            return interp_1
 
 def get_feature_probability(pts: torch.Tensor, kplanes):
     """Generate features for each point
@@ -489,10 +493,13 @@ class WavePlaneField(nn.Module):
         return self.aabb[0], self.aabb[1]
 
     def set_aabb(self, xyz_max, xyz_min):
-        aabb = torch.tensor([
-            xyz_max,
-            xyz_min
-        ], dtype=torch.float32)
+        try:
+            aabb = torch.tensor([
+                xyz_max,
+                xyz_min
+            ], dtype=torch.float32)
+        except:
+            aabb = torch.stack([xyz_max, xyz_min], dim=0)  # Shape: (2, 3)
         self.aabb = nn.Parameter(aabb, requires_grad=False)
         print("Voxel Plane: set aabb=", self.aabb)
 
@@ -552,9 +559,9 @@ class WavePlaneField(nn.Module):
             pts, self.grids, self.idwt, True
         )
         
-    def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
-        """Computes and returns the densities."""
-        # breakpoint()
+    def forward(self,
+                pts: torch.Tensor,
+                timestamps: Optional[torch.Tensor] = None, sep:bool=False):
         pts = normalize_aabb(pts, self.aabb)
         if timestamps is not None:
             timestamps = (timestamps*2.)-1. # normalize timestamps between 0 and 1
@@ -563,11 +570,4 @@ class WavePlaneField(nn.Module):
         pts = pts.reshape(-1, pts.shape[-1])
 
         return interpolate_features_MUL(
-            pts, self.grids, self.idwt, False
-        )
-
-    def forward(self,
-                pts: torch.Tensor,
-                timestamps: Optional[torch.Tensor] = None, iterations: int = 0):
-
-        return self.get_density(pts, timestamps)
+            pts, self.grids, self.idwt, False, sep)
