@@ -138,7 +138,7 @@ class Deformation(nn.Module):
         
         mint = 1. - time_emb
         tsq = time_emb**2
-        pts = rays_pts_emb[:,:3] + 3*(mint**2)*time_emb*dx[:,0] + 3.*mint*tsq*dx[:,1]  + (time_emb**2 )*dx[:,2]
+        pts = rays_pts_emb[:,:3] + 3*(mint**2)*time_emb*dx[:,0] + 3.*mint*tsq*dx[:,1]  + (time_emb**3)*dx[:,2]
 
         # Change in scale
         # scales = scales_emb[:,:3]

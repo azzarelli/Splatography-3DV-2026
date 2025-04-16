@@ -356,7 +356,7 @@ class Neural3D_NDC_Dataset(Dataset):
                     R = -R
                     R[:,0] = -R[:,0]
                     T = -pose[:3,3].dot(R)
-                    image_times.append(idx/countss)
+                    image_times.append(idx/(countss-1))
                     image_poses.append((R,T))
                     # if self.downsample != 1.0:
                     #     img = video_frame.resize(self.img_wh, Image.LANCZOS)

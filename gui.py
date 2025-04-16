@@ -10,7 +10,7 @@ from tqdm import tqdm
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
-
+import itertools
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams, ModelHiddenParams
 from torch.utils.data import DataLoader
@@ -150,12 +150,24 @@ class GUI(GUIBase):
         self.iter_end = torch.cuda.Event(enable_timing=True)
 
         if self.view_test == False:
-            self.viewpoint_stack = self.scene.getTrainCameras()
             self.test_viewpoint_stack = self.scene.getTestCameras()
 
-            self.random_loader  = True
-            self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
-                                                num_workers=16, collate_fn=list))
+            if self.stage == 'fine':
+                print('Loading Fine (t = any) dataset')
+                self.viewpoint_stack = self.scene.getTrainCameras()
+
+                self.random_loader  = True
+                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                    num_workers=16, collate_fn=list))
+            elif self.stage == 'coarse': 
+                print('Loading Coarse (t=0) dataset')
+                zero_cams = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+                
+                self.viewpoint_stack = zero_cams * 100
+                
+                self.random_loader  = True
+                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                    num_workers=16, collate_fn=list))
 
         self.load_in_memory = False
 
@@ -189,33 +201,14 @@ class GUI(GUIBase):
             self.gaussians.oneupSHdegree()
 
         # Handle Data Loading:
-        if self.opt.dataloader and not self.load_in_memory and (self.stage == 'fine' or self.iteration < 500):
-            try:
-                viewpoint_cams = next(self.loader)
-            except StopIteration:
-                viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
-                                                    num_workers=16, collate_fn=list)
-                self.random_loader = True
-                self.loader = iter(viewpoint_stack_loader)
-                viewpoint_cams = next(self.loader)
-        else:
-            viewpoint_cams = []            
-            
-            if not self.viewpoint_stack:
-                    self.viewpoint_stack = self.scene.getTrainCameras()
-            
-            zero_idxs = self.scene.train_camera.zero_idxs
-            
-            index = random.randrange(len(zero_idxs))  # get random index
-
-            item = self.viewpoint_stack[zero_idxs[index]]
-            viewpoint_cams.append(item)
-
-            while len(viewpoint_cams) < self.opt.batch_size :
-                curr_idx = random.randrange(len(zero_idxs))
-                if curr_idx != index:
-                    item = self.viewpoint_stack[zero_idxs[index]]
-                    viewpoint_cams.append(item)
+        try:
+            viewpoint_cams = next(self.loader)
+        except StopIteration:
+            viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=True,
+                                                num_workers=16, collate_fn=list)
+            self.random_loader = True
+            self.loader = iter(viewpoint_stack_loader)
+            viewpoint_cams = next(self.loader)
         
         
 
@@ -290,12 +283,6 @@ class GUI(GUIBase):
             opacloss = 0.1*((1.0 - h_)**2).mean() # + ((w_).abs()).mean()
             
             # Minimize smallest axis of points for points with highly static opacity behaviour
-            
-            # loss += depth_loss
-
-            # if render_pkg['stfeats'] is not None:
-            #     loss += 0.001 * KNN_motion_features(render_pkg['means3D'], render_pkg['stfeats'])
-            
             # s_v, _ = torch.topk(scale_exp, k=2, dim=-1)
             # loss += w*(
             #     torch.maximum(
@@ -305,7 +292,7 @@ class GUI(GUIBase):
             #     - max_gauss_ratio
             # ).mean()
 
-        scale_exp = self.gaussians.get_scaling
+        # scale_exp = self.gaussians.get_scaling
         # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
         # pg_loss = (torch.abs(scale_exp.amin(dim=-1))).mean()
         
@@ -327,41 +314,6 @@ class GUI(GUIBase):
         else:
             loss += L1
         
-        # if self.stage == 'fine':
-            # NeuSG flat Gaussian loss
-            # max_gauss_ratio = 5
-            # scale_exp = self.gaussians._scaling
-            
-            # if self.stage == 'fine':
-            #     w = 0.1 * self.gaussians.get_dynamic_point_prob()
-            # else:
-            # w = 0.1
-            # pg_loss += (torch.abs(scale_exp.amin(dim=-1))).mean()
-            
-            # Phys Gaussian Loss (as per nerfstudio implementaton)
-            # max_s = scale_exp.amax(dim=-1) 
-            # pg_loss = (
-            #     torch.maximum(
-            #         max_s / scale_exp.amin(dim=-1),
-            #         torch.tensor(max_gauss_ratio),
-            #     )
-            #     - max_gauss_ratio
-            # ).mean()
-            
-            # loss += pg_loss
-            
-            # print(p.is_leaf)
-            # minimise the scale of dynamic points i,e, w.r.t the weight of the dynamic motion 
-            # N.b. we may want to make the weights frozen so we dont backprop directly yo gaussian planes
-            # but not sure. We may want to freeze to reduce the impact and focus solely on scales gradients
-            # we regularize based on the max scale axis
-            # if self.iteration > 122000:  
-            #     with torch.no_grad():
-            #         p = self.gaussians.dynamic_point_prob   
-            #     dyn_scale_loss = (p.squeeze(-1) * max_s).mean()
-            #     loss += dyn_scale_loss
-
-
         if self.gui:
             with torch.no_grad():
                     
