@@ -4,7 +4,7 @@ import os
 import copy
 import psutil
 import torch
-from gaussian_renderer import render
+from gaussian_renderer import render, render_hard,render_soft
 
 class GUIBase:
     """This method servers to intialize the DPG visualization (keeping my code cleeeean!)
@@ -35,10 +35,13 @@ class GUIBase:
         self.w_thresh = 10.
         self.h_thresh = 0.
         # Set-up the camera for visualization
+        self.show_scene_target = 0
+
         
         self.switch_off_viewer = False
-
-        self.cam =copy.deepcopy(self.scene.getTestCameras()[0])
+        
+        self.free_cams = [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+        self.current_cam_index = 0
         
         if self.gui:
             print('DPG loading ...')
@@ -109,6 +112,7 @@ class GUIBase:
                     dpg.add_text("no data", tag="_log_depth")
                     dpg.add_text("no data", tag="_log_opacs")
                     dpg.add_text("no data", tag="_log_dynscales")
+                    dpg.add_text("no data", tag="_log_knn")
 
                     dpg.add_text("no data", tag="_log_points")
                 else:
@@ -124,8 +128,31 @@ class GUIBase:
             with dpg.collapsing_header(label="Rendering", default_open=True):
                 def callback_toggle_show_rgb(sender):
                     self.switch_off_viewer = ~self.switch_off_viewer
+                    
+                def callback_toggle_show_target(sender):
+                    self.show_scene_target = 1
+                def callback_toggle_show_scene(sender):
+                    self.show_scene_target = -1 
+                def callback_toggle_show_full(sender):
+                    self.show_scene_target = 0 
+                    
+                def callback_toggle_reset_cam(sender):
+                    self.current_cam_index = 0
+                    
+                def callback_toggle_next_cam(sender):
+                    self.current_cam_index = (self.current_cam_index + 1) % len(self.free_cams)
+                    
+                    
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="Switch off viewer", callback=callback_toggle_show_rgb)
+                    dpg.add_button(label="Reset cam", callback=callback_toggle_reset_cam)
+                    dpg.add_button(label="Next cam", callback=callback_toggle_next_cam)
+
+
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Target", callback=callback_toggle_show_target)
+                    dpg.add_button(label="Scene", callback=callback_toggle_show_scene)
+                    dpg.add_button(label="Full", callback=callback_toggle_show_full)
                 
                 def callback_toggle_show_rgb(sender):
                     self.vis_mode = 'render'
@@ -290,17 +317,18 @@ class GUIBase:
             # dyn_mask =  self.get_target_mask()
             # self.scene.getTrainCameras().dataset.get_mask = False
 
-            self.cam.time = self.time
+            cam = self.free_cams[self.current_cam_index]
+            cam.time = self.time
         
             buffer_image = render(
-                    self.cam, 
+                    cam,
                     self.gaussians, 
                     self.pipe, 
                     self.background, 
-                    stage='fine',
-                    # view_args={
-                    #     'mask':dyn_mask
-                    # }
+                    stage=self.stage,
+                    view_args={
+                        'show_mask':self.show_scene_target
+                    }
             )
             
             try:

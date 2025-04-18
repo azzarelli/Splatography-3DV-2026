@@ -21,13 +21,6 @@ ModelHiddenParams = dict(
     l1_time_planes =  0.0005,
     opacity_lambda = 0.,
     
-    no_do=False,
-    no_dshs=False,
-    no_ds=False,
-    empty_voxel=False,
-    render_process=False,
-    static_mlp=False,
-
     # Use Waveplanes instead of Hexplanes
     use_waveplanes=True,
     # Learn optimal plane rotation
@@ -36,19 +29,16 @@ ModelHiddenParams = dict(
 OptimizationParams = dict(
     dataloader=True,
     iterations=16000,
+    coarse_iterations=300,
     batch_size=2, # Was 4
-    coarse_iterations=3000,
-    
-    densify_from_iter=3000, #best at 3001
-    # densification_interval=1,
-    densify_until_iter = 10_000,
-    
-    opacity_reset_interval = 60000,
-    
-    opacity_threshold_coarse = 0.005,
 
-    # pruning_from_iter = 1,
-    # pruning_interval=20,
+    densify_from_iter=3000, #best at 3001
+    densify_until_iter=10_000,
+    densification_interval=100,
+    densify_grad_threshold=0.0002,
+    opacity_reset_interval = 3000,    
+
+    pruning_interval = 100,
+    pruning_from_iter=3000,
     lambda_dssim = 0., #0.1,
-    # pruning_interval = 2000
 )

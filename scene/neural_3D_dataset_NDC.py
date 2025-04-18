@@ -10,7 +10,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms as T
 from tqdm import tqdm
-
+import torch.nn.functional as F
 
 def normalize(v):
     """Normalize a vector."""
@@ -253,8 +253,10 @@ class Neural3D_NDC_Dataset(Dataset):
         
         self.get_mask = False
 
+        self.stage = 'rgb'
         self.load_meta()
         print(f"meta data loaded, total image:{len(self)}")
+
 
     def load_meta(self):
         """
@@ -373,16 +375,21 @@ class Neural3D_NDC_Dataset(Dataset):
         img = Image.open(self.image_paths[index])
         
         img = self.transform(img)
-        mask = None
+        extra = None
         if self.get_mask:
             if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
                 camid = os.path.join(f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/static_masks',self.image_paths[index].split('/')[-3])
                 camid = f'{camid}.png'
-                mask = Image.open(camid)
-                mask = mask.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
+                extra = Image.open(camid)
+                extra = extra.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
 
-                mask = self.transform(mask)[-1]
-        return img, self.image_poses[index], self.image_times[index], mask
+                extra = self.transform(extra)[-1]
+        
+        elif 'cam00' not in self.image_paths[index]:
+            extra = Image.open(self.image_paths[index].replace('images', 'depth'))
+            extra = self.transform(extra).float()/255.
+
+        return img, self.image_poses[index], self.image_times[index], extra
     def load_pose(self,index):
         return self.image_poses[index]
 

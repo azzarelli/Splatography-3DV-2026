@@ -41,6 +41,10 @@ def l1_loss(network_output, gt, mask=None):
     else:
         return torch.abs(smooth_boolean_mask(mask.unsqueeze(0))*(network_output - gt)).mean()
 
+def l1_loss_intense(pred, gt, i):
+    diff = (pred - gt).abs()
+    return (i*diff).mean() + diff.mean()
+
 
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()

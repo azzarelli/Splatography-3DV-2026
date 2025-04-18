@@ -92,7 +92,7 @@ class Scene:
             self.gaussians.load_ply(os.path.join(skip_coarse,"point_cloud.ply"))
             self.gaussians.load_model(skip_coarse)
         elif self.loaded_iter:
-            print(f'Starting from iter {self.loaded_iter}')
+            print(f'Load from iter {self.loaded_iter}')
 
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                         "point_cloud",
@@ -123,6 +123,9 @@ class Scene:
     def getTrainCameras(self, scale=1.0):
         return self.train_camera
 
+    def index_train(self, index):
+        return self.train_camera[index]
+    
     def getTestCameras(self, scale=1.0):
         return self.test_camera
     

@@ -51,7 +51,7 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self._resolution = -1
-        self._white_background = True
+        self._white_background = False
         self.data_device = "cuda"
         self.eval = True
         self.render_process=False
@@ -97,19 +97,6 @@ class ModelHiddenParams(ParamGroup):
                             'wavelevel':2
                             }
 
-        self.posebase_pe = 10 # useless
-        self.timebase_pe = 4 # useless
-        self.scale_rotation_pe = 2 # useless
-        self.opacity_pe = 2 # useless
-        self.timenet_width = 64 # useless
-        self.timenet_output = 32 # useless
-        self.empty_voxel=False # useless
-        self.grid_pe=0 # useless, I was trying to add positional encoding to hexplane's features
-        self.static_mlp=False # useless
-
-
-        self.use_waveplanes=False # Use waveplanes instead of hexplanes
-        self.plane_rotation_correction=False # Use plane rotation correction.
         
         super().__init__(parser, "ModelHiddenParams")
         
@@ -144,9 +131,7 @@ class OptimizationParams(ParamGroup):
         self.densification_interval = 100
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
-        self.densify_grad_threshold_coarse = 0.0001
-        self.densify_grad_threshold_fine_init = 0.0001
-        self.densify_grad_threshold_after = 0.0001
+        self.densify_grad_threshold= 0.0001
         self.pruning_from_iter = 500
         self.pruning_interval = 100
         self.batch_size=1
