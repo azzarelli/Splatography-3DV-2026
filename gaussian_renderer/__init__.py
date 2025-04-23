@@ -205,39 +205,33 @@ def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-        no_mask =~pc.target_mask
     
-        scene_rgb, radii, scene_depth = rasterizer(
-            means3D=means3D[no_mask],
-            means2D=means2D[no_mask],
-            shs=colors[no_mask],
+        rendered_image, radii, rendered_depth = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=colors,
             colors_precomp=None,
-            opacities=opacity[no_mask],
-            scales=scales[no_mask],
-            rotations=rotation[no_mask],
-            cov3D_precomp=None
-        )
+            opacities=opacity,
+            scales=scales,
+            rotations=rotation,
+            cov3D_precomp=None)
     
-        target_rgb, radii, target_depth = rasterizer(
+        target_rgb, _, target_depth = rasterizer(
             means3D=means3D[pc.target_mask],
             means2D=means2D[pc.target_mask],
             shs=colors[pc.target_mask],
             colors_precomp=None,
-            opacities=opacity[pc.target_mask],
+            opacities=torch.ones_like(opacity[pc.target_mask], dtype=torch.float, device=opacity.device),
             scales=scales[pc.target_mask],
             rotations=rotation[pc.target_mask],
             cov3D_precomp=None
-        )
+            )
 
         # print(target_depth.min(), target_depth.max())
         # exit()
         # print(rendered_image.shape, viewpoint_camera.original_image.shape, target_mask.shape)
         gt_img = viewpoint_camera.original_image.cuda()
-        
-        hard_alpha = (target_depth > 0.001).float()
-        
-        rendered_image = hard_alpha*target_rgb + (1.-hard_alpha)*scene_rgb
-        
+
         # if stage == 'fine':
         #     mask = target_depth > 0.05
         #     L1 += l1_loss(target_rgb, gt_img*mask)

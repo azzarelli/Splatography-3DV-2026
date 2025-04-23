@@ -210,7 +210,7 @@ class GaussianModel:
         target_mask = target_mask[viable]
 
         
-        while target_mask.sum() < 80000:
+        while target_mask.sum() < 10000:
             target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
             fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
             fused_color = torch.cat([fused_color,fused_color[target_mask]], dim=0)

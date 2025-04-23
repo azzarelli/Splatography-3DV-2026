@@ -281,7 +281,7 @@ class GUI(GUIBase):
         self.gaussians.update_learning_rate(self.iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if self.iteration % 1000 == 0:
+        if self.iteration % 100 == 0:
             self.gaussians.oneupSHdegree()
             
         # Handle Data Loading:
