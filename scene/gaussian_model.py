@@ -88,6 +88,7 @@ class GaussianModel:
             self.denom,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
+            self.target_mask
         )
 
     def restore(self, model_args, training_args):
@@ -104,7 +105,8 @@ class GaussianModel:
         xyz_gradient_accum_abs,
         denom,
         opt_dict,
-        self.spatial_lr_scale) = model_args
+        self.spatial_lr_scale, self.target_mask) = model_args
+
         self._deformation.load_state_dict(deform_state)
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
@@ -140,7 +142,7 @@ class GaussianModel:
     
     @property
     def get_dyn_coefs(self):
-        return self._deformation.get_dyn_coefs(self.get_xyz,)
+        return self._deformation.get_dyn_coefs(self.get_xyz[self.target_mask],)
 
     def get_G(self, time, stage):
         means3D = self.get_xyz
@@ -182,17 +184,46 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, time_line: int):
+    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, time_line: int, cam_list=None):
         self.spatial_lr_scale = spatial_lr_scale
-        # breakpoint()
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
+        
+        # Construct pcd, increase number of points in target region
+        # increase scene points as well
+        # Remove unseen points
+        # Remove points betwen 1 and  target view masks
+        dyn_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
+        scene_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
+        
+        for cam in cam_list:             
+            dyn_mask += get_in_view_dyn_mask(cam, fused_point_cloud).long()
+            scene_mask += get_in_view_screenspace(cam, fused_point_cloud).long()
+        
+        scene_mask = scene_mask > 0
+        target_mask = dyn_mask > (len(cam_list)-1)
+        dyn_mask = torch.logical_or(target_mask, dyn_mask ==0)
+        viable  = torch.logical_and(dyn_mask, scene_mask)
+        
+        fused_point_cloud = fused_point_cloud[viable]
+        fused_color = fused_color[viable]
+        target_mask = target_mask[viable]
+
+        
+        while target_mask.sum() < 80000:
+            target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
+            fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
+            fused_color = torch.cat([fused_color,fused_color[target_mask]], dim=0)
+            target_mask = torch.cat([target_mask, target_mask[target_mask]])
+            
+        self.target_mask = target_mask
+        
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
-        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
+        dist2 = torch.clamp_min(distCUDA2(fused_point_cloud), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
 
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
@@ -482,7 +513,7 @@ class GaussianModel:
                                             torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
 
         # Only clone points in the scene not the target
-        selected_pts_mask = torch.logical_and(selected_pts_mask, ~self.target_mask)
+        selected_pts_mask = torch.logical_and(selected_pts_mask, self.target_mask)
         
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
@@ -507,7 +538,7 @@ class GaussianModel:
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
         
         # Only select non-target points for densification
-        selected_pts_mask = torch.logical_and(selected_pts_mask, ~self.target_mask)
+        selected_pts_mask = torch.logical_and(selected_pts_mask, self.target_mask)
         
         N = 2
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
@@ -551,9 +582,6 @@ class GaussianModel:
         #   Dupilation and splitting may have forced them outside the mask
         selected_pts_mask = torch.logical_and(mask, self.target_mask)
         
-        # Also prune points that are in the target region but not in the target mask 
-        # scene_pts = torch.logical_and(~mask, ~self.target_mask)
-
         # selected_pts_mask = torch.logical_or(target_points, scene_pts)
         self.prune_points(selected_pts_mask)
     
@@ -676,31 +704,63 @@ class GaussianModel:
         return total
     
     def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight ):
-        return plane_tv_weight * self._plane_regulation() + \
-            time_smoothness_weight * self._time_regulation() + \
-                l1_time_planes_weight * self._l1_regulation() 
+        return plane_tv_weight * self._plane_regulation() #+ \
+            # time_smoothness_weight * self._time_regulation() + \
+            #     l1_time_planes_weight * self._l1_regulation() 
 
-    def update_target_mask(self, cam_list, iteration, stage):    
+
+    def update_target_mask(self, cam_list, iteration, stage):  
         dyn_mask = torch.zeros_like(self.get_xyz[:,0],dtype=torch.long, device=self.get_xyz.device)
+        scene_mask = torch.zeros_like(self.get_xyz[:,0],dtype=torch.long, device=self.get_xyz.device)
+
         for cam in cam_list:             
             dyn_mask += get_in_view_dyn_mask(cam, self.get_xyz).long()
-        
+            scene_mask += get_in_view_screenspace(cam, self.get_xyz).long()
+
         self.target_mask  = dyn_mask > (len(cam_list)-1)
         
-        # if self._deformation.deformation_net.target_grid.aabb == None:
-        #     points = self._xyz[self.target_mask]
-        #     xyz_min = torch.min(points, dim=0).values
-        #     xyz_max = torch.max(points, dim=0).values
-        #     print(xyz_max)
-        #     self._deformation.deformation_net.target_grid.set_aabb(xyz_max, xyz_min)
+        # Also prune unseen points
+        unseen_points = scene_mask < 1
+        self.prune_points(unseen_points)
+
+        if stage == 'coarse':
+            points = self._xyz[self.target_mask]
+            xyz_min = torch.min(points, dim=0).values
+            xyz_max = torch.max(points, dim=0).values
+            self._deformation.deformation_net.grid.set_aabb(xyz_max, xyz_min)
     
-    def compute_rigidity_loss(self):        
-        edge_index = knn_graph(self._xyz, k=3, batch=None, loop=False)
+    def compute_rigidity_loss(self):
+        points = self._xyz[self.target_mask] 
+        edge_index = knn_graph(points, k=3, batch=None, loop=False)
         row, col = edge_index
         
-        distance_mask = 0.1 > torch.norm(self._xyz[row] - self._xyz[col], dim=1)  # (E,)
+        distance_mask = 0.1 > torch.norm(points[row] - points[col], dim=1)  # (E,)
         dx_coefs = self.get_dyn_coefs
+        opacity = self.get_h_opacity
+
+        # print(distance_mask.device, dx_coefs.device)
+        # print(distance_mask.shape, dx_coefs.shape)
+
+        # exit()
         diff = ((distance_mask*(((dx_coefs[row] - dx_coefs[col])**2).mean(-1)))).mean()
+        diff += ((distance_mask*(((opacity[row] - opacity[col])**2).mean(-1)))).mean()
+        return diff
+    
+    def compute_static_rigidity_loss(self):
+        points = self._xyz[self.target_mask] 
+        edge_index = knn_graph(points, k=3, batch=None, loop=False)
+        row, col = edge_index
+        
+        distance_mask = 0.1 > torch.norm(points[row] - points[col], dim=1)  # (E,)
+        scales = self.get_scaling.min(dim=1).values
+        # print(distance_mask.device, dx_coefs.device)
+        # print(distance_mask.shape, dx_coefs.shape)
+
+        # exit()
+        
+        diff = ((distance_mask*(((scales[row] - scales[col])**2).mean(-1)))).mean()
+        diff += ((distance_mask*(((scales[row] - scales[col])**2).mean(-1)))).mean()
+
         return diff
          
          
@@ -749,7 +809,29 @@ def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
     # plt.show()
     # exit()
     return mask_values.long()
-   
+
+def get_in_view_screenspace(camera, xyz: torch.Tensor) -> torch.Tensor:
+    device = xyz.device
+    N = xyz.shape[0]
+
+    # Convert to homogeneous coordinates
+    xyz_h = torch.cat([xyz, torch.ones((N, 1), device=device)], dim=-1)  # (N, 4)
+
+    # Apply full projection (world → clip space)
+    proj_xyz = xyz_h @ camera.full_proj_transform.to(device)  # (N, 4)
+
+    # Homogeneous divide to get NDC coordinates
+    ndc = proj_xyz[:, :3] / proj_xyz[:, 3:4]  # (N, 3)
+
+    # Check if points are in front of the camera and within [-1, 1] in all 3 axes
+    in_front = proj_xyz[:, 2] > 0
+    in_ndc_bounds = (ndc[:, 0].abs() <= 1) & (ndc[:, 1].abs() <= 1) & (ndc[:, 2].abs() <= 1)
+
+    # Final visibility mask (points that would fall within the image bounds)
+    visible_mask = in_front & in_ndc_bounds
+
+    return visible_mask.long()
+
 SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
 def gaussian_integral(w,h, mu):
     """Returns high weight (0 to 1) for solid materials

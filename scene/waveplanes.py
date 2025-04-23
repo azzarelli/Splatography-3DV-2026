@@ -8,11 +8,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, is_opacity_grid, sep=False):
+def interpolate_features_MUL(pts: torch.Tensor,time, kplanes, idwt, is_opacity_grid, sep=False):
     """Generate features for each point
     """
     # time m feature
     interp_1 = 1.
+    interp_2 = 1.
+    interp_3 = 1.
+
     sp_interp = 1.
     if is_opacity_grid: # Sample just the space-only grids
         # q,r are the coordinate combinations needed to retrieve pts
@@ -32,28 +35,39 @@ def interpolate_features_MUL(pts: torch.Tensor, kplanes, idwt, is_opacity_grid, 
                 r = 2
         return interp_1
     else:
+        
         # q,r are the coordinate combinations needed to retrieve pts
         q, r = 0, 1
         for i in range(6):
             coeff = kplanes[i]
             if r != 3:
                 feature = coeff(pts[..., (q, r)], idwt)
-                if sep:
-                    sp_interp = sp_interp * feature
-                else:
-                    interp_1 = interp_1 * feature
-            else:
-                feature = coeff(pts[..., (3, q)], idwt)
+                sp_interp = sp_interp * feature
                 interp_1 = interp_1 * feature
-
+                interp_2 = interp_2 * feature
+                interp_3 = interp_3 * feature
+            else:
+                for j in range(3):
+                    if j == 0: time = time * 0.
+                    elif j == 1: time = time + 1.
+                    elif j ==2: time = time * -1.
+                    
+                    coords = torch.cat([time, pts[:, q].unsqueeze(-1)], dim=-1)
+                    feature = coeff(coords, idwt)
+                    
+                    if j == 0: interp_1 = interp_1 * feature
+                    elif j == 1: interp_2 = interp_2 * feature
+                    elif j == 2: interp_3 = interp_3 * feature
+                    
             r += 1
             if r == 4:
                 q += 1
                 r = q + 1
-        if sep: # return space and space time features seperately
-            return interp_1, sp_interp
-        else:
-            return interp_1
+
+        interp = torch.cat([interp_1.unsqueeze(1), interp_2.unsqueeze(1), interp_3.unsqueeze(1)], dim=1).view(-1, interp_1.shape[-1])
+
+        return interp, sp_interp
+
 
 def get_feature_probability(pts: torch.Tensor, kplanes):
     """Generate features for each point
@@ -274,18 +288,18 @@ class WavePlaneField(nn.Module):
         pts = normalize_aabb(pts, self.aabb)
         pts = pts.reshape(-1, pts.shape[-1])
         return interpolate_features_MUL(
-            pts, self.grids, self.idwt, True
+            pts,None, self.grids, self.idwt, True
         )
         
     def forward(self,
                 pts: torch.Tensor,
                 timestamps: Optional[torch.Tensor] = None, sep:bool=False):
         pts = normalize_aabb(pts, self.aabb)
-        if timestamps is not None:
-            timestamps = (timestamps*2.)-1. # normalize timestamps between 0 and 1
-            pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
+        
+        timestamps = timestamps.detach().clone()
+        # timestamps = (timestamps*2.)-1. # normalize timestamps between 0 and 1
 
         pts = pts.reshape(-1, pts.shape[-1])
 
         return interpolate_features_MUL(
-            pts, self.grids, self.idwt, False, sep)
+            pts,timestamps, self.grids, self.idwt, False, sep)

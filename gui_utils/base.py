@@ -4,7 +4,7 @@ import os
 import copy
 import psutil
 import torch
-from gaussian_renderer import render, render_hard,render_soft
+from gaussian_renderer import render
 
 class GUIBase:
     """This method servers to intialize the DPG visualization (keeping my code cleeeean!)
@@ -39,8 +39,15 @@ class GUIBase:
 
         
         self.switch_off_viewer = False
+        self.full_opacity = False
         
-        self.free_cams = [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+        self.N_pseudo = 3 
+        if view_test:
+            self.free_cams = [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+        else:
+            self.free_cams = [self.scene.get_pseudo_view() for i in range(self.N_pseudo)]+ [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+
+        # self.free_cams = [self.scene.get_pseudo_view() for i in range(self.N_pseudo)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
         self.current_cam_index = 0
         
         if self.gui:
@@ -126,6 +133,9 @@ class GUIBase:
 
             # rendering options
             with dpg.collapsing_header(label="Rendering", default_open=True):
+                with dpg.group(horizontal=True):
+                    dpg.add_text("no data", tag="_log_view_camera")
+                
                 def callback_toggle_show_rgb(sender):
                     self.switch_off_viewer = ~self.switch_off_viewer
                     
@@ -163,9 +173,13 @@ class GUIBase:
                 def callback_toggle_show_norms(sender):
                     self.vis_mode = 'norms'
                     
+                def callback_toggle_show_fullopac(sender):
+                    self.full_opacity = ~self.full_opacity
+                    
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="RGB", callback=callback_toggle_show_rgb)
                     dpg.add_button(label="Depth", callback=callback_toggle_show_depth)
+                    dpg.add_button(label="Full Opa", callback=callback_toggle_show_fullopac)
                     dpg.add_button(label="Alpha", callback=callback_toggle_show_alpha)
                     dpg.add_button(label="Normls", callback=callback_toggle_show_norms)
                     
@@ -246,6 +260,9 @@ class GUIBase:
 
         dpg.bind_item_theme("_primary_window", theme_no_padding)
 
+        
+        
+            
         dpg.setup_dearpygui()
 
         dpg.show_viewport()
@@ -327,7 +344,8 @@ class GUIBase:
                     self.background, 
                     stage=self.stage,
                     view_args={
-                        'show_mask':self.show_scene_target
+                        'show_mask':self.show_scene_target,
+                        'full_opac':self.full_opacity
                     }
             )
             
@@ -363,6 +381,14 @@ class GUIBase:
         dpg.set_value(
             "_texture", buffer_image
         )  # buffer must be contiguous, else seg fault!
+        
+        # Add _log_view_camera
+        if self.current_cam_index < self.N_pseudo:
+            dpg.set_value("_log_view_camera", f"Random Novel Views")
+        elif self.current_cam_index == self.N_pseudo:
+            dpg.set_value("_log_view_camera", f"Test Views")
+        else:
+            dpg.set_value("_log_view_camera", f"Training Views")
 
 
 
@@ -411,3 +437,4 @@ def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
     # plt.show()
     # exit()
     return mask_values.long()
+

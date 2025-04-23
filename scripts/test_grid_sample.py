@@ -72,4 +72,4 @@ def test_grid_sample_rgb(C=3, H=5, W=5, align_corners=True):
     plt.tight_layout()
     plt.show()
 
-test_grid_sample_rgb(H=25, W=10, align_corners=True)
+test_grid_sample_rgb(H=25, W=3, align_corners=True)

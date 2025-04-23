@@ -17,7 +17,7 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 from scene.gaussian_model import GaussianModel
 
 
-def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, means3D=None, scales=None, rotation=None, opacity=None, shs=None, scaling_modifier=1.0,
+def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
            stage="fine", view_args=None, G=None):
     """
     Render the scene.
@@ -53,40 +53,33 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, me
     means2D = screenspace_points
     extras = None
 
-    if means3D is None:
-        means3D = pc.get_xyz
-        time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
-        shs = pc.get_features
+    means3D = pc.get_xyz
+    time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
+    colors = pc.get_features
 
+    scales = pc._scaling
+    rotations = pc._rotation
 
-        scales = pc._scaling
-        rotations = pc._rotation
+    h_opacity = pc.get_h_opacity
 
-        h_opacity = pc.get_h_opacity
-
-        if "coarse" in stage:
-            means3D, rotations_final, opacity, shs = means3D, rotations, h_opacity, shs
-
-            # means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
-        elif "fine" in stage:
-            means3D, rotations_final, opacity, shs, extras = pc._deformation(
-                point=means3D, 
-                rotations=rotations,
-                shs=shs,
-                times_sel=time, 
-                h_emb=h_opacity,
-                target_mask=pc.target_mask
-            )
-        else:
-            raise NotImplementedError
-        # Do the scaling and rotation activation after deformation
-        scales = pc.scaling_activation(scales + 0.)
-        rotation = pc.rotation_activation(rotations_final)
-    
+    if "coarse" in stage:
+        means3D, rotations_final, opacity = means3D, rotations, h_opacity
+    elif "fine" in stage:
+        means3D, rotations_final, opacity,colors, extras = pc._deformation(
+            point=means3D, 
+            rotations=rotations,
+            times_sel=time, 
+            h_emb=h_opacity,
+            shs=colors,
+            target_mask=pc.target_mask
+        )
     else:
-        means3D, scales, rotation, opacity, shs = pc.get_G(viewpoint_camera.time, stage)
-
+        raise NotImplementedError
     
+    # Do the scaling and rotation activation after deformation
+    scales = pc.scaling_activation(scales + 0.)
+    rotation = pc.rotation_activation(rotations_final)
+
     if view_args is not None:
         show_mask = view_args['show_mask'] 
         mask = None
@@ -98,15 +91,20 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, me
         if mask is not None:
             means3D = means3D[mask]
             means2D = means2D[mask]
-            shs = shs[mask]
+            colors = colors[mask]
             opacity = opacity[mask]
             scales = scales[mask]
             rotation = rotation[mask]
+            
+        if view_args['full_opac']:
+            opacity = torch.ones_like(opacity).cuda()
     
+    # colors = pc._deformation.deformation_net.get_view_color(colors, viewpoint_camera.R)
+
     rendered_image, radii, rendered_depth = rasterizer(
         means3D=means3D,
         means2D=means2D,
-        shs=shs,
+        shs=colors,
         colors_precomp=None,
         opacities=opacity,
         scales=scales,
@@ -124,55 +122,67 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, me
         # 'norms':rendered_norm, 'alpha':rendered_alpha
         }
 
-from utils.loss_utils import l1_loss
+from utils.loss_utils import l1_loss, l1_loss_masked
 def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor, means3D=None, scales=None, rotation=None, opacity=None, shs=None, scaling_modifier=1.0,
            stage="fine"):
     """
     Render the scene.
     """
-    means3D = pc.get_xyz
-    time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1)
-    shs = pc.get_features
+    extras = {}
+    
+    if stage == 'coarse':
+        means3D = pc.get_xyz    
+        scales = pc.get_scaling
+        rotations = pc._rotation
+        h_opacity = pc.get_h_opacity
+        colors = pc.get_features
+    else:
+        # freeze backprop to G representation
+        # with torch.no_grad():
+        means3D = pc.get_xyz    
+        scales = pc.get_scaling
+        rotations = pc._rotation
+        colors = pc.get_features
+        h_opacity = pc.get_h_opacity
 
-    scales = pc._scaling
-    rotations = pc._rotation
+    time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
 
-    h_opacity = pc.get_h_opacity
 
     if "coarse" in stage:
-        means3D, rotations_final, opacity, shs = means3D, rotations, h_opacity, shs
-
-        # means3D_final, scales_final, rotations_final, opacity, shs_final = means3D, scales, rotations, torch.ones_like(means3D[..., 0]), shs
+        means3D, rotations_final, opacity = means3D, rotations, h_opacity
     elif "fine" in stage:
-        means3D, rotations_final, opacity, shs, extras = pc._deformation(
+        means3D, rotations_final, opacity, colors, extras['dx_coeff'] = pc._deformation(
             point=means3D, 
             rotations=rotations,
-            shs=shs,
             times_sel=time, 
             h_emb=h_opacity,
-            target_mask=pc.target_mask
+            shs=colors,
+            target_mask=pc.target_mask,
         )
     else:
         raise NotImplementedError
     # Do the scaling and rotation activation after deformation
-    scales = pc.scaling_activation(scales + 0.)
+
     rotation = pc.rotation_activation(rotations_final)
     
-    # else:
-    #     means3D, scales, rotation, opacity, shs = pc.get_G(viewpoint_camera.time, stage)
     L1 = 0.
     radii_list = []
     visibility_filter_list = []
     viewspace_point_tensor_list = []
 
     for viewpoint_camera in viewpoint_cams:
-        screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
+        screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
         try:
             screenspace_points.retain_grad()
         except:
             pass
-
-
+        
+        # colors = pc._deformation.deformation_net.get_view_color(colors, viewpoint_camera.R)
+        # Need to deform colour per-view        
+        # if stage == 'fine':
+        #     colors = pc._deformation.deformation_net.deform_color(colors, sp_feat, viewpoint_camera.R)
+            
+        
         means2D = screenspace_points
         
         # Set up rasterization configuration
@@ -195,174 +205,54 @@ def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
+        no_mask =~pc.target_mask
     
-        rendered_image, radii, rendered_depth = rasterizer(
-            means3D=means3D,
-            means2D=means2D,
-            shs=shs,
+        scene_rgb, radii, scene_depth = rasterizer(
+            means3D=means3D[no_mask],
+            means2D=means2D[no_mask],
+            shs=colors[no_mask],
             colors_precomp=None,
-            opacities=opacity,
-            scales=scales,
-            rotations=rotation,
-            cov3D_precomp=None)
+            opacities=opacity[no_mask],
+            scales=scales[no_mask],
+            rotations=rotation[no_mask],
+            cov3D_precomp=None
+        )
+    
+        target_rgb, radii, target_depth = rasterizer(
+            means3D=means3D[pc.target_mask],
+            means2D=means2D[pc.target_mask],
+            shs=colors[pc.target_mask],
+            colors_precomp=None,
+            opacities=opacity[pc.target_mask],
+            scales=scales[pc.target_mask],
+            rotations=rotation[pc.target_mask],
+            cov3D_precomp=None
+        )
+
+        # print(target_depth.min(), target_depth.max())
+        # exit()
+        # print(rendered_image.shape, viewpoint_camera.original_image.shape, target_mask.shape)
+        gt_img = viewpoint_camera.original_image.cuda()
         
-        L1 += l1_loss(rendered_image, viewpoint_camera.original_image.cuda())
+        hard_alpha = (target_depth > 0.001).float()
+        
+        rendered_image = hard_alpha*target_rgb + (1.-hard_alpha)*scene_rgb
+        
+        # if stage == 'fine':
+        #     mask = target_depth > 0.05
+        #     L1 += l1_loss(target_rgb, gt_img*mask)
+        if stage == 'coarse':
+            mask = viewpoint_camera.mask.cuda()
+            L1 += l1_loss(target_rgb, gt_img*mask)
+            # L1 += l1_loss(target_depth, target_depth*mask)
+
+        L1 += l1_loss(rendered_image, gt_img)
+
         
         radii_list.append(radii.unsqueeze(0))
         visibility_filter_list.append((radii > 0).unsqueeze(0))
         viewspace_point_tensor_list.append(screenspace_points)
     
-    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1
-
-
-
-
-def render_hard(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
-           stage="fine"):
-    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
-    try:
-        screenspace_points.retain_grad()
-    except:
-        pass
-
-    # Set up rasterization configuration
-    means3D = pc.get_xyz
-    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-    raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
-        bg=bg_color,
-        scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform.cuda(),
-        projmatrix=viewpoint_camera.full_proj_transform.cuda(),
-        sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center.cuda(),
-        prefiltered=False,
-        debug=pipe.debug
-    )
-    time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
-
-    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
-
-    means2D = screenspace_points
-
-    cov3D_precomp = None
     
-    with torch.no_grad():
-        scales = pc.get_scaling.detach()
-        rotations = pc._rotation.detach()
-        
-        opacity = torch.ones(pc.get_xyz.shape[0], 1, device=pc.get_xyz.device) * 0.95
-        
-    if "coarse" in stage:
-        means3D_final = means3D
     
-    elif "fine" in stage:
-        means3D_final, rotations, _, _, _ = pc._deformation(
-            point=means3D, 
-            rotations=rotations,
-            times_sel=time, 
-            target_mask=pc.target_mask
-        )
-    else:
-        raise NotImplementedError
-
-
-    # Do the scaling and rotation activation after deformation
-    with torch.no_grad():
-        rotations = pc.rotation_activation(rotations)
-        
-
-    rendered_image, radii, rendered_depth = rasterizer(
-        means3D=means3D_final,
-        means2D=means2D,
-        shs=None,
-        colors_precomp=torch.ones_like(pc.get_xyz, device=pc.get_xyz.device),
-        opacities=opacity,
-        scales=scales,
-        rotations=rotations,
-        cov3D_precomp=cov3D_precomp)
-    
-    return {
-        "render": rendered_image,
-        "viewspace_points": screenspace_points,
-        "visibility_filter": radii > 0,
-        "radii": radii,
-        "depth": rendered_depth,
-        }
-    
-def render_soft(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
-           stage="fine"):
-    # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
-    try:
-        screenspace_points.retain_grad()
-    except:
-        pass
-
-    # Set up rasterization configuration
-    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-    raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
-        bg=bg_color,
-        scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform.cuda(),
-        projmatrix=viewpoint_camera.full_proj_transform.cuda(),
-        sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center.cuda(),
-        prefiltered=False,
-        debug=pipe.debug
-    )
-    rasterizer = GaussianRasterizer(raster_settings=raster_settings)
-
-    means2D = screenspace_points 
-    means3D = pc.get_xyz.detach()
-
-    with torch.no_grad():
-        time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
-        
-        scales = pc.get_scaling.detach()
-        rotations = pc._rotation.detach()
-
-    opacity = pc.get_h_opacity
-    
-    if "fine" in stage:
-        means3D, rotations, opacity, _, _ = pc._deformation(
-            point=means3D, 
-            rotations=rotations,
-            h_emb=opacity,
-            times_sel=time, 
-            target_mask=pc.target_mask
-        )
-
-
-
-    # Do the scaling and rotation activation after deformation
-    rotations = pc.rotation_activation(rotations)
-        
-
-    rendered_image, radii, rendered_depth = rasterizer(
-        means3D=means3D,
-        means2D=means2D,
-        shs=None,
-        colors_precomp=torch.ones_like(pc.get_xyz, device=pc.get_xyz.device),
-        opacities=opacity,
-        scales=scales,
-        rotations=rotations,
-        cov3D_precomp=None)
-    
-    return {
-        "render": rendered_image,
-        "viewspace_points": screenspace_points,
-        "visibility_filter": radii > 0,
-        "radii": radii,
-        "depth": rendered_depth,
-        }
+    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, extras

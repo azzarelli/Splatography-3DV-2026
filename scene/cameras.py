@@ -90,28 +90,29 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
         
-        if not depth:
-            self.original_image = image.clamp(0.0, 1.0)[:3,:,:]
-        else: # store original depth image
-            self.original_image = image
-        # breakpoint()
-        # .to(self.data_device)
-        self.image_width = self.original_image.shape[2]
-        self.image_height = self.original_image.shape[1]
-
-        if gt_alpha_mask is not None:
-            gt_alpha_mask = gt_alpha_mask.bool().unsqueeze(0).repeat(3, 1, 1)
-            img = torch.zeros_like(self.original_image)
-
-            img[gt_alpha_mask.bool()] = self.original_image[gt_alpha_mask.bool()]
-
-            self.original_image = img
-             # *= gt_alpha_mask
-
+        if image is not None:
+            if not depth:
+                self.original_image = image.clamp(0.0, 1.0)[:3,:,:]
+            else: # store original depth image
+                self.original_image = image
+            # breakpoint()
             # .to(self.data_device)
-        else:
-            self.original_image *= torch.ones((1, self.image_height, self.image_width))
-                                                #   , device=self.data_device)
+            self.image_width = self.original_image.shape[2]
+            self.image_height = self.original_image.shape[1]
+
+            if gt_alpha_mask is not None:
+                gt_alpha_mask = gt_alpha_mask.bool().unsqueeze(0).repeat(3, 1, 1)
+                img = torch.zeros_like(self.original_image)
+
+                img[gt_alpha_mask.bool()] = self.original_image[gt_alpha_mask.bool()]
+
+                self.original_image = img
+                # *= gt_alpha_mask
+
+                # .to(self.data_device)
+            else:
+                self.original_image *= torch.ones((1, self.image_height, self.image_width))
+                                                    #   , device=self.data_device)
         self.depth = depth
         self.mask = mask
 
@@ -122,11 +123,7 @@ class Camera(nn.Module):
         self.scale = scale
 
         self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1)
-        # .cuda()
-        #
-        # if ppx is not None and ppy is not None:
-        #     self.projection_matrix = getProjectionMatrix_(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy, ppx=ppx, ppy=ppy, image_width=self.original_image.shape[2], image_height=self.original_image.shape[1]).transpose(0,1)
-        # else:
+
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx,
                                                       fovY=self.FoVy).transpose(0, 1)
 

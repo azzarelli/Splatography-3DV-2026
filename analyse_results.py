@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 root = '/home/barry/Desktop/mywork/GS_Research/output/dynerf/'
 folder = 'flame_steak/'
 
-focal_word = 'test3' 
+focal_word = 'test5' 
 bench_marks = ['test','bez_post16k','bez_knnsq','bez_highthres','bez','h_ns_coarse','h_pgns_coarse','h_pgloss','h_abs','w_relu','w_minsq','w_sloth','w_minimize']
 #
 # Corrections needed here

@@ -222,7 +222,7 @@ class Neural3D_NDC_Dataset(Dataset):
         N_random_pose=1000,
         bd_factor=0.75,
         eval_step=1,
-        eval_index=0,
+        selected_cams=[],
         sphere_scale=1.0,
     ):
         self.img_wh = (
@@ -240,7 +240,7 @@ class Neural3D_NDC_Dataset(Dataset):
         self.world_bound_scale = 1.1
         self.bd_factor = bd_factor
         self.eval_step = eval_step
-        self.eval_index = eval_index
+        self.selected_cams = selected_cams
         self.blender2opencv = np.eye(4)
         self.transform = T.ToTensor()
 
@@ -271,56 +271,39 @@ class Neural3D_NDC_Dataset(Dataset):
         # breakpoint()
         assert len(videos) == poses_arr.shape[0]
 
-        H, W, focal = poses[0, :, -1]
-        focal = focal / self.downsample
+        self.H, self.W, focal = poses[0, :, -1] / self.downsample
+        
         self.focal = [focal, focal]
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
-        # poses, _ = center_poses(
-        #     poses, self.blender2opencv
-        # )  # Re-center poses so that the average is near the center.
-
-        # near_original = self.near_fars.min()
-        # scale_factor = near_original * 0.75
-        # self.near_fars /= (
-        #     scale_factor  # rescale nearest plane so that it is at z = 4/3.
-        # )
-        # poses[..., 3] /= scale_factor
 
         # Sample N_views poses for validation - NeRF-like camera trajectory.
         N_views = 50
         self.val_poses = get_spiral(poses, self.near_fars, N_views=N_views)
         # self.val_poses = self.directions
-        W, H = self.img_wh
-        poses_i_train = []
-
-        poses_i_train = [1,10,11,20]
-
-        self.poses = poses[poses_i_train]
+        self.poses = poses[self.selected_cams]
         self.poses_all = poses #[[0]+poses_i_train]
-        self.image_paths, self.image_poses, self.image_times, N_cam, N_time = self.load_images_path(videos, self.split)
+        self.image_paths, self.image_poses, self.image_times, N_cam, N_time, self.poses = self.load_images_path(videos, self.split)
         self.cam_number = N_cam
         self.time_number = N_time
+        
     def get_val_pose(self):
         render_poses = self.val_poses
         render_times = torch.linspace(0.0, 1.0, render_poses.shape[0]) * 2.0 - 1.0
         return render_poses, self.time_scale * render_times
+    
     def load_images_path(self,videos,split):
         image_paths = []
         image_poses = []
         image_times = []
+        
+        general_poses = []
+        
         N_cams = 0
         N_time = 0
         countss = 50
         for index, video_path in enumerate(videos):
-            
-            if index == self.eval_index:
-                if split =="train":
-                    continue
-            else:
-                if split == "test":
-                    continue
-            
-            if index in  [0,1, 10, 11, 20]:
+
+            if (index in  self.selected_cams and split == 'train') or (index == 0 and split == 'test'):
                 N_cams +=1
                 count = 0
                 video_images_path = video_path.split('.')[0]
@@ -341,7 +324,6 @@ class Neural3D_NDC_Dataset(Dataset):
                                 img = video_frame.resize(self.img_wh, Image.LANCZOS)
                             img.save(os.path.join(image_path,"%04d.png"%count))
 
-                            # img = transform(img)
                             count += 1
                             this_count+=1
                         else:
@@ -359,16 +341,13 @@ class Neural3D_NDC_Dataset(Dataset):
                     R[:,0] = -R[:,0]
                     T = -pose[:3,3].dot(R)
                     image_times.append(idx/(countss-1))
+                    if idx == 0:
+                        general_poses.append((R,T))
                     image_poses.append((R,T))
-                    # if self.downsample != 1.0:
-                    #     img = video_frame.resize(self.img_wh, Image.LANCZOS)
-                    # img.save(os.path.join(image_path,"%04d.png"%count))
                     this_count+=1
                 N_time = len(images_path)
 
-                    #     video_data_save[count] = img.permute(1,2,0)
-                    #     count += 1
-        return image_paths, image_poses, image_times, N_cams, N_time
+        return image_paths, image_poses, image_times, N_cams, N_time, general_poses
     def __len__(self):
         return len(self.image_paths)
     def __getitem__(self,index):
@@ -385,9 +364,9 @@ class Neural3D_NDC_Dataset(Dataset):
 
                 extra = self.transform(extra)[-1]
         
-        elif 'cam00' not in self.image_paths[index]:
-            extra = Image.open(self.image_paths[index].replace('images', 'depth'))
-            extra = self.transform(extra).float()/255.
+        # elif 'cam00' not in self.image_paths[index]:
+        #     extra = Image.open(self.image_paths[index].replace('images', 'depth'))
+        #     extra = self.transform(extra).float()/255.
 
         return img, self.image_poses[index], self.image_times[index], extra
     def load_pose(self,index):

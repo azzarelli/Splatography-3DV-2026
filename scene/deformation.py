@@ -42,10 +42,9 @@ class Deformation(nn.Module):
         self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 9))
         
         self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
-        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
-        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
-
-        # Same for opacity grid
+        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 8))
+        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.shs_base = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
       
         # self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
         self.opacity_h = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
@@ -55,33 +54,24 @@ class Deformation(nn.Module):
 
     def query_time(self, rays_pts_emb, time_emb, iterations, mask=None):
         # Sample target points
-        sp, st = self.grid(rays_pts_emb[mask,:3], time_emb[mask,:1],sep=True)
+        st, sp = self.grid(rays_pts_emb[mask,:3], time_emb[mask,:1],sep=True)
         sp_features = self.space_enc(sp)
         st_features = self.spacetime_enc(st)
         return sp_features, st_features
 
+    def get_dx_coeffs(self, xyz):
+        return self.pos_coeffs(self.space_enc(self.grid.get_opacity_vars(xyz[:,:3])))
+
     def forward(self,rays_pts_emb, rotations_emb, shs_emb, time_emb, iteration, h_emb, target_mask):
-        
         sp_features, st_features = self.query_time(rays_pts_emb, time_emb, iteration,target_mask)
         
         pts = rays_pts_emb + 0. #.clone()
         
         # 3rd order Bezier deformation for target points
         dx_coeffs = self.pos_coeffs(sp_features).view(-1, 3, 3) # N, 3, 3 
-        t = time_emb[0:1]
+        t = time_emb[0:1].squeeze(0)
         mint = 1. - t
-        pts[target_mask] += 3. * (mint**2) * t*dx_coeffs[:,0] + 3. * mint * (t**2) * dx_coeffs[:, 1] + (t**3) *  dx_coeffs[:, 2]
-
-        # Change in rotation
-        rotations = rotations_emb + 0.
-        rotations[target_mask] += self.rotations_deform(st_features)        
-        
-        if shs_emb is not None:
-            shs = shs_emb + 0.
-            dshs = self.shs_deform(st_features).view(-1, 16, 3)
-            shs[target_mask] += dshs
-        else:
-            shs = None
+        pts[target_mask] += 3. * (mint**2) * t*dx_coeffs[:,0] + 3. * mint * (t**2) * dx_coeffs[:, 1] + (t**3)*dx_coeffs[:, 2]
 
         if h_emb is not None:
             opacity = h_emb + 0.
@@ -91,9 +81,26 @@ class Deformation(nn.Module):
             
             feat_exp = torch.exp(-w * (t-mu)**2)
             
-            opacity[target_mask]  = h_emb[target_mask] * feat_exp
+            opacity[target_mask]  = feat_exp # h_emb[target_mask] * feat_exp
         else:
             opacity = None
+            
+        # Change in rotation
+        rotations = rotations_emb + 0.
+        rotation_coeffs = self.rotations_deform(sp_features).view(-1, 2, 4)
+
+        rotations[target_mask] += 2. * mint*t*rotation_coeffs[:,0] + (t**2)*rotation_coeffs[:, 1]
+                
+        if shs_emb is not None:
+            shs = shs_emb + 0.
+            base = self.shs_base(sp_features)
+            shs_coeffs = self.shs_deform(sp_features).view(-1, 3, 1)
+            dshs = base*feat_exp* (3. * (mint**2) * t*shs_coeffs[:,0] + 3. * mint * (t**2) * shs_coeffs[:, 1] + (t**3)*shs_coeffs[:, 2])
+            shs[target_mask] += dshs.view(-1, 16, 3)
+        else:
+            shs = None
+
+        
         # scales[target_mask] = scales[target_mask] * feat_exp # scale (N,3) temporal change function (N, 1)
 
         # start_time = time.time()
@@ -131,7 +138,7 @@ class Deformation(nn.Module):
             plt.show()
             exit()
 
-        return pts, rotations, opacity, shs, None
+        return pts, rotations, opacity,shs, dx_coeffs
     
     def get_mlp_parameters(self):
         parameter_list = []
@@ -203,6 +210,9 @@ class deform_network(nn.Module):
     
     def get_grid_parameters(self):
         return self.deformation_net.get_grid_parameters()
+    
+    def get_dyn_coefs(self, xyz):
+        return self.deformation_net.get_dx_coeffs(xyz)
 
 def initialize_weights(m):
     if isinstance(m, nn.Linear):

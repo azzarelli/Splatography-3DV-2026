@@ -35,11 +35,18 @@ def smooth_boolean_mask(mask, kernel_size=3):
 def lpips_loss(img1, img2, lpips_model):
     loss = lpips_model(img1,img2)
     return loss.mean()
+
 def l1_loss(network_output, gt, mask=None):
     if mask is None:
         return torch.abs((network_output - gt)).mean()
     else:
         return torch.abs(smooth_boolean_mask(mask.unsqueeze(0))*(network_output - gt)).mean()
+
+def l1_loss_masked(pred, gt, mask=None):
+    mask = mask.squeeze(0)
+    pred = pred[mask]
+    gt = gt[mask]
+    return (pred - gt.abs()).mean()
 
 def l1_loss_intense(pred, gt, i):
     diff = (pred - gt).abs()
