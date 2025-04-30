@@ -76,13 +76,6 @@ class Scene:
         
         
         # self.video_camera = cameraList_from_camInfos(scene_info.video_cameras,-1,args)
-        xyz_max = scene_info.point_cloud.points.max(axis=0)
-        xyz_min = scene_info.point_cloud.points.min(axis=0)
-        if args.add_points:
-            print("add points.")
-            # breakpoint()
-            scene_info = scene_info._replace(point_cloud=add_points(scene_info.point_cloud, xyz_max=xyz_max, xyz_min=xyz_min))
-        self.gaussians._deformation.deformation_net.set_aabb(xyz_max,xyz_min)
 
         if skip_coarse:
             print(f'Skipping coarse step with {skip_coarse}')

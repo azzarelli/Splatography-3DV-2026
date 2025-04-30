@@ -52,18 +52,23 @@ class Deformation(nn.Module):
         self.opacity_mu = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
 
 
-    def query_time(self, rays_pts_emb, time_emb, iterations, mask=None):
+    def query_time(self, rays_pts_emb,scale_emb, time_emb, iterations, mask=None):
+        # Given point scales we should model the surrounding features
+        # we need to project the point and it's scale onto the xy, xz, yz planes - hence we need to generate points based off the aabb
+        # scale_emb
+        
         # Sample target points
-        st, sp = self.grid(rays_pts_emb[mask,:3], time_emb[mask,:1],sep=True)
+        sp = self.grid(rays_pts_emb[mask,:3], time_emb[mask,:1], scale_emb[mask, :3])
         sp_features = self.space_enc(sp)
-        st_features = self.spacetime_enc(st)
-        return sp_features, st_features
+        # st_features = self.spacetime_enc(st)
+        return sp_features
 
     def get_dx_coeffs(self, xyz):
         return self.pos_coeffs(self.space_enc(self.grid.get_opacity_vars(xyz[:,:3])))
 
-    def forward(self,rays_pts_emb, rotations_emb, shs_emb, time_emb, iteration, h_emb, target_mask):
-        sp_features, st_features = self.query_time(rays_pts_emb, time_emb, iteration,target_mask)
+    def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, time_emb, iteration, h_emb, target_mask):
+
+        sp_features = self.query_time(rays_pts_emb,scale_emb, time_emb, iteration, target_mask)
         
         pts = rays_pts_emb + 0. #.clone()
         
@@ -74,14 +79,13 @@ class Deformation(nn.Module):
         pts[target_mask] += 3. * (mint**2) * t*dx_coeffs[:,0] + 3. * mint * (t**2) * dx_coeffs[:, 1] + (t**3)*dx_coeffs[:, 2]
 
         if h_emb is not None:
-            opacity = h_emb + 0.
+            opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
+            w = (h_emb[target_mask,1]**2).unsqueeze(-1)
+            mu = torch.sigmoid(h_emb[target_mask,2]).unsqueeze(-1)
             
-            w = (self.opacity_w(sp_features)**2)
-            mu = torch.sigmoid(self.opacity_mu(sp_features))
-            
-            feat_exp = torch.exp(-w * (t-mu)**2)
-            
-            opacity[target_mask]  = feat_exp # h_emb[target_mask] * feat_exp
+            feat_exp =  torch.exp(-w * (t-mu)**2)
+            opacity = opacity.clone()
+            opacity[target_mask] = feat_exp # h_emb[target_mask] * feat_exp
         else:
             opacity = None
             
@@ -153,30 +157,6 @@ class Deformation(nn.Module):
                 parameter_list.append(param)
         return parameter_list
 
-def smooth_feature_knn(feature_masked, rays_pts_emb, target_mask, k=3):
-    with torch.no_grad():
-        coords = rays_pts_emb[target_mask, :3]  # (N_masked, 3)
-        N_masked = coords.size(0)
-        feat_shape = feature_masked.shape[1:]
-        feature_dim = feature_masked.view(N_masked, -1).shape[1]
-
-        edge_index = knn_graph(coords, k=k, loop=True)  # (2, N_masked * k)
-        row, col = edge_index  # row[i] is center, col[i] is neighbor
-
-        # Flatten features for accumulation
-        feature_flat = feature_masked.view(N_masked, -1)  # (N_masked, F)
-        neighbor_feat = feature_flat[col]                 # (E, F)
-
-        # Accumulate features for each row index
-        summed = torch.zeros_like(feature_flat)  # (N_masked, F)
-        counts = torch.zeros(N_masked, 1, device=feature_masked.device)
-
-        summed.index_add_(0, row, neighbor_feat)
-        counts.index_add_(0, row, torch.ones_like(row, dtype=torch.float32).unsqueeze(1).to(feature_masked.device))
-
-        smoothed_flat = summed / counts.clamp(min=1.0)
-        return smoothed_flat.view(N_masked, *feat_shape)
-    
     
 class deform_network(nn.Module):
     def __init__(self, args) :
@@ -187,11 +167,12 @@ class deform_network(nn.Module):
 
         self.apply(initialize_weights)
 
-    def forward(self, point, rotations=None, shs=None, times_sel=None, h_emb=None, iteration=None, target_mask=None):
+    def forward(self, point, rotations=None, scales=None, shs=None, times_sel=None, h_emb=None, iteration=None, target_mask=None):
 
         return  self.deformation_net(
             point,
             rotations,
+            scales,
             shs,
             times_sel, 
             iteration=iteration, 

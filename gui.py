@@ -100,7 +100,7 @@ class GUI(GUIBase):
 
         self.results_dir = os.path.join(self.args.model_path, 'active_results')
         if ckpt_start is None:
-            if not os.path.exists(self.args.model_path):os.mkdir(self.args.model_path)   
+            if not os.path.exists(self.args.model_path):os.makedirs(self.args.model_path)   
 
             if os.path.exists(self.results_dir):
                 print(f'[Removing old results] : {self.results_dir}')
@@ -207,65 +207,6 @@ class GUI(GUIBase):
         self.scene.getTrainCameras().dataset.get_mask = False
         return zero_cams
 
-    
-    
-    def hard_depth_step(self,viewpoint_cams):
-        # Depth Norm
-        patch_range = (5, 17)
-
-        loss = 0.
-        for viewpoint_cam in viewpoint_cams:
-
-            depth_hard = render_hard(
-                viewpoint_cam, 
-                self.gaussians, 
-                self.pipe, 
-                self.background, 
-                stage=self.stage,
-            )['depth']
-            
-            mono_depth = viewpoint_cam.mask.cuda()
-            
-            loss_l2_dpt = patch_norm_mse_loss(depth_hard[None,...], mono_depth[None,...], randint(patch_range[0], patch_range[1]), 1e-8)
-            loss += 0.1 * loss_l2_dpt
-
-            loss_global = patch_norm_mse_loss_global(depth_hard[None,...], mono_depth[None,...], randint(patch_range[0], patch_range[1]),  1e-8)
-            loss += 1. * loss_global
-
-        loss = loss / len(viewpoint_cams)
-        loss.backward()
-        if self.iteration < self.opt.iterations:
-            self.gaussians.optimizer.step()
-        return loss.item()
-    
-    def soft_depth_step(self,viewpoint_cams):
-        # Depth Norm
-        patch_range = (5, 17)
-
-        loss = 0.
-        for viewpoint_cam in viewpoint_cams:
-
-            depth_hard = render_soft(
-                viewpoint_cam, 
-                self.gaussians, 
-                self.pipe, 
-                self.background, 
-                stage=self.stage,
-            )['depth']
-            
-            mono_depth = viewpoint_cam.mask.cuda()
-            
-            loss_l2_dpt = patch_norm_mse_loss(depth_hard[None,...], mono_depth[None,...], randint(patch_range[0], patch_range[1]), 1e-8)
-            loss += 0.1 * loss_l2_dpt
-
-            loss_global = patch_norm_mse_loss_global(depth_hard[None,...], mono_depth[None,...], randint(patch_range[0], patch_range[1]),  1e-8)
-            loss += 1. * loss_global
-
-        loss = loss / len(viewpoint_cams)
-        loss.backward()
-        if self.iteration < self.opt.iterations:
-            self.gaussians.optimizer.step()
-        return loss.item()
       
     
     def train_step(self):
@@ -313,7 +254,7 @@ class GUI(GUIBase):
         pg_loss = torch.tensor(0.).cuda()
         depth_loss = torch.tensor(0.).cuda()
         
-        radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, extras = render_batch(
+        radii_list, visibility_filter_list, viewspace_point_tensor_list, L1, extras = render_batch(
             viewpoint_cams, 
             self.gaussians, 
             self.pipe,
@@ -323,14 +264,12 @@ class GUI(GUIBase):
         
         if self.stage == 'fine':
             L1 += self.gaussians.compute_regulation(
-                self.hyperparams.time_smoothness_weight, 
-                self.hyperparams.l1_time_planes, 
                 self.hyperparams.plane_tv_weight,
                 )
             
         
         if self.stage == 'coarse':
-            opacloss += ((1.0 - self.gaussians.get_h_opacity)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+            opacloss += ((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
 
             scale_exp = self.gaussians.get_scaling
             # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
@@ -338,7 +277,8 @@ class GUI(GUIBase):
             
         
         if self.stage == 'fine':
-            dyn_target_loss += self.gaussians.compute_rigidity_loss()
+            pass
+            # dyn_target_loss += self.gaussians.compute_rigidity_loss()
         else:
             dyn_target_loss += self.gaussians.compute_static_rigidity_loss()
         # max_gauss_ratio = 10
@@ -418,19 +358,19 @@ class GUI(GUIBase):
             self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
 
             # Densification for scene
-            # densify_threshold = self.opt.densify_grad_threshold
-            # if  self.stage == 'fine' and \
-            #     self.iteration > self.opt.densify_from_iter and \
-            #     self.iteration < self.opt.densify_until_iter and \
-            #     self.iteration % self.opt.densification_interval == 0 and \
-            #     (~self.gaussians.target_mask).sum() < 100000:
-            #         self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
+            densify_threshold = self.opt.densify_grad_threshold
+            if  self.stage == 'fine' and \
+                self.iteration > self.opt.densify_from_iter and \
+                self.iteration < self.opt.densify_until_iter and \
+                self.iteration % self.opt.densification_interval == 0 and \
+                (self.gaussians.target_mask).sum() < 100000:
+                    self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
 
             # Global pruning
             if  self.stage == 'fine' and \
                 self.iteration > self.opt.pruning_from_iter and \
                 self.iteration % self.opt.pruning_interval == 0 and \
-                (~self.gaussians.target_mask).sum() > 100000:
+                (self.gaussians.target_mask).sum() > 110000:
                 size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                 self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
             
@@ -469,8 +409,8 @@ class GUI(GUIBase):
             viewpoint_cams = self.test_viewpoint_stack
 
 
-        if not os.path.exists(f'debugging/{self.iteration}') and self.iteration % 1000 == 0:
-            os.mkdir(f'debugging/{self.iteration}')
+        # if not os.path.exists(f'debugging/{self.iteration}') and self.iteration % 1000 == 0:
+        #     os.mkdir(f'debugging/{self.iteration}')
 
         PSNR = 0.
         SSIM = 0.

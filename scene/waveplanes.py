@@ -8,101 +8,60 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def interpolate_features_MUL(pts: torch.Tensor,time, kplanes, idwt, is_opacity_grid, sep=False):
+OFFSETS = torch.tensor([
+    [-1.0, 0.0],
+    [-0.5, 0.0],
+    [0.5, 0.0],
+    [1.0, 0.0],
+    [0.0, -1.0],
+    [0.0, -0.5],
+    [0.0, 0.5],
+    [0.0, 1.0],
+    [0.5, 0.5],
+    [0.5, -0.5],
+    [-0.5, 0.5],
+    [-0.5, -0.5]
+]).cuda().unsqueeze(0)
+
+def interpolate_features_MUL(pts: torch.Tensor,time, kplanes, idwt, is_opacity_grid, scales):
     """Generate features for each point
     """
     # time m feature
     interp_1 = 1.
-    interp_2 = 1.
-    interp_3 = 1.
 
-    sp_interp = 1.
-    if is_opacity_grid: # Sample just the space-only grids
-        # q,r are the coordinate combinations needed to retrieve pts
-        q, r = 0, 1
-        for i in range(3):
-            if i == 2:# Make sure we are using the space-only planes [0,1,3]
-                i == 3
-            coeff = kplanes[i]
-                
-            feature = coeff(pts[..., (q, r)], idwt)
-
-            interp_1 = interp_1 * feature
-
-            r +=1
-            if r == 3:
-                q = 1
-                r = 2
-        return interp_1
-    else:
-        
-        # q,r are the coordinate combinations needed to retrieve pts
-        q, r = 0, 1
-        for i in range(6):
-            coeff = kplanes[i]
-            if r != 3:
-                feature = coeff(pts[..., (q, r)], idwt)
-                sp_interp = sp_interp * feature
-                interp_1 = interp_1 * feature
-                interp_2 = interp_2 * feature
-                interp_3 = interp_3 * feature
-            else:
-                for j in range(3):
-                    if j == 0: time = time * 0.
-                    elif j == 1: time = time + 1.
-                    elif j ==2: time = time * -1.
-                    
-                    coords = torch.cat([time, pts[:, q].unsqueeze(-1)], dim=-1)
-                    feature = coeff(coords, idwt)
-                    
-                    if j == 0: interp_1 = interp_1 * feature
-                    elif j == 1: interp_2 = interp_2 * feature
-                    elif j == 2: interp_3 = interp_3 * feature
-                    
-            r += 1
-            if r == 4:
-                q += 1
-                r = q + 1
-
-        interp = torch.cat([interp_1.unsqueeze(1), interp_2.unsqueeze(1), interp_3.unsqueeze(1)], dim=1).view(-1, interp_1.shape[-1])
-
-        return interp, sp_interp
-
-
-def get_feature_probability(pts: torch.Tensor, kplanes):
-    """Generate features for each point
-    """
-    pts = torch.concatenate([pts, torch.zeros_like(pts[:, 0].unsqueeze(-1), device=pts.device)], dim=-1)
+    # samples = rays_pts_emb[mask,:3].unsqueeze(1).repeat(1,13,1)
+    # base_offsets = torch.tensor([-1.0, -0.5, 0.5, 1.0], device=mask.device).unsqueeze(0).repeat(3,1)  # (4,)
     
-    # time m feature
-    interp = 1.
+    # scales = scale_emb[mask, :3].unsqueeze(1).repeat(1,4,1)
+    
+    # # scale_offsets =  
+    
+    # print(samples.shape, base_offsets.shape, scales.shape)
+    # exit()
+    
     # q,r are the coordinate combinations needed to retrieve pts
     q, r = 0, 1
-    for i in range(6):
-        if r == 3:
-            vectorplane = kplanes[i].signal[0] # Get the feature plane
-            # First get the mean along the temporal planes then get the mean across features
-            vectorplane = vectorplane.mean(-1).unsqueeze(-1).mean(1).unsqueeze(0)
-            # print(kplanes[i].signal[0].median(-1)[0].shape) 
-            feature = (
-                grid_sample_wrapper(vectorplane, pts[..., (3, q)])
-                .view(-1, vectorplane.shape[1])
-            ) #.mean(-1)
-            
-            interp = interp * feature
+    for i in range(3):
+        scale_offsets = scales[..., (q,r)].unsqueeze(1).repeat(1,12,1) * OFFSETS
 
-            # visualize_grid_and_coords(vectorplane.repeat(1,1,1, 50), pts[..., (3, q)])
-            # exit()
-            
-        r += 1
-        if r == 4:
-            q += 1
-            r = q + 1
-    # exit()
-    # Now determine the probabilites
-    # \exp\left(-w^{2}\ \cdot\ \left(1-x\right)^{2}\right)
-    # w was 49 previously
-    return 1. - torch.exp(-9 * (1-interp)**2)
+        pts_ = pts[..., (q, r)].unsqueeze(1).repeat(1,13,1)
+        pts_[:, 1:, :] += scale_offsets
+
+        pts_ = pts_.view(-1, 2)
+        
+        feature = kplanes[i](pts_, idwt)
+        
+        feature = feature.view(-1,13,feature.shape[-1]).mean(1)
+
+        interp_1 = interp_1 * feature
+
+        r +=1
+        if r == 3:
+            q = 1
+            r = 2
+    return interp_1
+   
+
 
 import matplotlib.pyplot as plt
 
@@ -177,16 +136,10 @@ class WavePlaneField(nn.Module):
         self.cacheplanes = True
         self.is_waveplanes = True
         
-        j, k = 0, 1
-        for i in range(6):
-            # We only need a grid for the space-time features
-            if k == 3: 
-                what = 'spacetime'
-                res = [self.grid_config['resolution'][j], self.grid_config['resolution'][3]]
-            else:
-                what = 'space'
-                res = [self.grid_config['resolution'][j],
-                    self.grid_config['resolution'][k]]
+        for i in range(3):
+            what = 'space'
+            res = [self.grid_config['resolution'][0],
+                self.grid_config['resolution'][0]]
             
             gridset = GridSet(
                 what=what,
@@ -203,10 +156,7 @@ class WavePlaneField(nn.Module):
             )
 
             self.grids.append(gridset)
-            k += 1
-            if k == 4:
-                j += 1
-                k = j + 1
+
                 
 
     def compact_save(self, fp):
@@ -238,51 +188,25 @@ class WavePlaneField(nn.Module):
     def grids_(self, regularise_wavelet_coeff: bool = False, time_only: bool = False, notflat: bool = False):
         """Return the grids as a list of parameters for regularisation
         """
-        if regularise_wavelet_coeff:
-            # Retrive coefficients to regularise
-            ms_planes = []
-            for i in range(6):
-                # Skip space planes in time only
-                if time_only and i not in [2, 4, 5]:
-                    continue
 
-                gridset = self.grids[i]
+        ms_planes = []
+        for i in range(3):
+            gridset = self.grids[i]
 
-                ms_feature_planes = gridset.wave_coefs(notflat=notflat)
+            if self.cacheplanes:
+                ms_feature_planes = gridset.signal
+            else:
+                ms_feature_planes = gridset.idwt_transform(self.idwt)
 
-                if ms_planes == []:
-                    ms_planes = [[] for j in range(len(ms_feature_planes))]
+            # Initialise empty ms_planes
+            if ms_planes == []:
+                ms_planes = [[] for j in range(len(ms_feature_planes))]
 
-                for j, feature_plane in enumerate(ms_feature_planes):
-                    ms_planes[j].append(feature_plane)
-        else:
-            ms_planes = []
-            for i in range(6):
-                if time_only and i not in [2, 4, 5]:
-                    continue
-
-                gridset = self.grids[i]
-
-                if self.cacheplanes:
-                    ms_feature_planes = gridset.signal
-                else:
-                    ms_feature_planes = gridset.idwt_transform(self.idwt)
-
-                # Initialise empty ms_planes
-                if ms_planes == []:
-                    ms_planes = [[] for j in range(len(ms_feature_planes))]
-
-                for j, feature_plane in enumerate(ms_feature_planes):
-                    ms_planes[j].append(feature_plane)
+            for j, feature_plane in enumerate(ms_feature_planes):
+                ms_planes[j].append(feature_plane)
 
         return ms_planes
 
-    def get_dynamic_probabilities(self,pts: torch.Tensor,):
-        pts = normalize_aabb(pts, self.aabb)
-        pts = pts.reshape(-1, pts.shape[-1])
-        return get_feature_probability(
-            pts, self.grids
-        )
         
     def get_opacity_vars(self, pts):
         pts = normalize_aabb(pts, self.aabb)
@@ -293,7 +217,7 @@ class WavePlaneField(nn.Module):
         
     def forward(self,
                 pts: torch.Tensor,
-                timestamps: Optional[torch.Tensor] = None, sep:bool=False):
+                timestamps: Optional[torch.Tensor] = None, scales=None):
         pts = normalize_aabb(pts, self.aabb)
         
         timestamps = timestamps.detach().clone()
@@ -302,4 +226,4 @@ class WavePlaneField(nn.Module):
         pts = pts.reshape(-1, pts.shape[-1])
 
         return interpolate_features_MUL(
-            pts,timestamps, self.grids, self.idwt, False, sep)
+            pts,timestamps, self.grids, self.idwt, False,scales)

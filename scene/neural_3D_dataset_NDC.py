@@ -271,6 +271,13 @@ class Neural3D_NDC_Dataset(Dataset):
         # breakpoint()
         assert len(videos) == poses_arr.shape[0]
 
+        selected_idxs = []
+        for idx, vid in enumerate(videos):
+            for s in self.selected_cams:
+                if f'{s:02}' in vid.split('/')[-1]:
+                    selected_idxs.append(idx)
+        self.selected_cams = selected_idxs
+
         self.H, self.W, focal = poses[0, :, -1] / self.downsample
         
         self.focal = [focal, focal]
@@ -307,7 +314,12 @@ class Neural3D_NDC_Dataset(Dataset):
                 N_cams +=1
                 count = 0
                 video_images_path = video_path.split('.')[0]
-                image_path = os.path.join(video_images_path,"images")
+                if split == 'train':
+                    image_path = os.path.join(video_images_path,"images")
+                    
+                else:
+                    image_path = os.path.join(video_images_path,"masks")
+
                 video_frames = cv2.VideoCapture(video_path)
                 if not os.path.exists(image_path):
                     print(f"no images saved in {image_path}, extract images from video.")
@@ -347,6 +359,24 @@ class Neural3D_NDC_Dataset(Dataset):
                     this_count+=1
                 N_time = len(images_path)
 
+        # import matplotlib.pyplot as plt
+        # from mpl_toolkits.mplot3d import Axes3D
+
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
+
+        # positions = np.array([T for R, T in image_poses])
+        # x = positions[:, 0]
+        # y = positions[:, 1]
+        # z = positions[:, 2]
+
+        # ax.scatter(x, y, z, marker='o')
+        # ax.set_xlabel('X')
+        # ax.set_ylabel('Y')
+        # ax.set_zlabel('Z')
+        # ax.set_title('3D Scatter of Positions')
+        # plt.show()
+        # exit()
         return image_paths, image_poses, image_times, N_cams, N_time, general_poses
     def __len__(self):
         return len(self.image_paths)
@@ -357,7 +387,7 @@ class Neural3D_NDC_Dataset(Dataset):
         extra = None
         if self.get_mask:
             if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
-                camid = os.path.join(f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/static_masks',self.image_paths[index].split('/')[-3])
+                camid = os.path.join(f'{self.root_dir}/static_masks',self.image_paths[index].split('/')[-3])
                 camid = f'{camid}.png'
                 extra = Image.open(camid)
                 extra = extra.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)

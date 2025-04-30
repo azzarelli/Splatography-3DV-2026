@@ -137,40 +137,21 @@ class GaussianModel:
         return torch.cat((features_dc, features_rest), dim=1)
 
     @property
-    def get_h_opacity(self):
-        return self.opacity_activation(self._opacity)
+    def get_opacity(self):
+        return self._opacity
+    
+    @property
+    def get_hopac(self):
+        return torch.sigmoid(self.get_opacity[:, 0]).unsqueeze(-1)
     
     @property
     def get_dyn_coefs(self):
         return self._deformation.get_dyn_coefs(self.get_xyz[self.target_mask],)
 
-    def get_G(self, time, stage):
-        means3D = self.get_xyz
-        time = torch.tensor(time).to(means3D.device).repeat(means3D.shape[0], 1)
-        shs = self.get_features
-
-        scales = self._scaling
-        rot = self._rotation
-
-        opa = self.get_h_opacity
-
-        if stage == 'fine':
-            means3D, rot, opa, shs, extras = self._deformation(
-                point=means3D, 
-                rotations=rot,
-                shs=shs,
-                times_sel=time, 
-                h_emb=opa,
-                target_mask=self.target_mask
-            )
-        
-        scales = self.scaling_activation(scales + 0.)
-        rot = self.rotation_activation(rot)
-        
-        return means3D,scales,rot,shs,opa
-
 
     def opacity_integral(self, w,h,mu):
+        print("missing opac integral in  gaussing class")
+        exit()
         return gaussian_integral(w,h,mu)
     
     @property
@@ -218,6 +199,11 @@ class GaussianModel:
             
         self.target_mask = target_mask
         
+        xyz_min = fused_point_cloud[target_mask].min(0).values - 1.
+        xyz_max = fused_point_cloud[target_mask].max(0).values + 1.
+
+        self._deformation.deformation_net.set_aabb(xyz_max, xyz_min)
+        
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
@@ -228,7 +214,7 @@ class GaussianModel:
 
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
-        opacities = 1. * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
+        opacities = 1. * torch.ones((fused_point_cloud.shape[0], 3), dtype=torch.float, device="cuda")
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._deformation = self._deformation.to("cuda")
@@ -296,7 +282,8 @@ class GaussianModel:
             l.append('f_dc_{}'.format(i))
         for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
             l.append('f_rest_{}'.format(i))
-        l.append('opacity')
+        for i in range(self._opacity.shape[1]):
+            l.append('opacity_{}'.format(i))
         for i in range(self._scaling.shape[1]):
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
@@ -346,7 +333,15 @@ class GaussianModel:
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
-        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+        
+        opac_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("opacity")]
+        opac_names = sorted(opac_names, key = lambda x: int(x.split('_')[-1]))
+        opacities = np.zeros((xyz.shape[0], len(opac_names)))
+        for idx, attr_name in enumerate(opac_names):
+            opacities[:, idx] = np.asarray(plydata.elements[0][attr_name])
+            
+        # opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+        
         features_dc = np.zeros((xyz.shape[0], 3, 1))
         features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
         features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
@@ -562,62 +557,6 @@ class GaussianModel:
         self.prune_points(prune_filter)
 
     
-    def densify_target(self,cam_list):     
-        self.clone_target()
-        self.split_target()
-        
-        self.prune_target(cam_list)
-
-        torch.cuda.empty_cache()
-    
-    def prune_target(self, cam_list):
-        target_mask = torch.zeros_like(self.get_xyz[:,0],dtype=torch.long, device=self.get_xyz.device)
-        # Cycle through each view and upate mask to track how many views each point is within
-        for cam in cam_list:             
-            target_mask += get_in_view_dyn_mask(cam, self.get_xyz).long()
-        # New densified points that sit ouside the target region
-        mask  = target_mask < (len(cam_list)-1)
-        
-        # Prune points that should be in our mask but aren't
-        #   Dupilation and splitting may have forced them outside the mask
-        selected_pts_mask = torch.logical_and(mask, self.target_mask)
-        
-        # selected_pts_mask = torch.logical_or(target_points, scene_pts)
-        self.prune_points(selected_pts_mask)
-    
-    def clone_target(self):
-        selected_pts_mask = self.target_mask
-        
-        new_xyz = self._xyz[selected_pts_mask]
-        new_features_dc = self._features_dc[selected_pts_mask]
-        new_features_rest = self._features_rest[selected_pts_mask]
-        new_scaling = self._scaling[selected_pts_mask]
-        new_rotation = self._rotation[selected_pts_mask]
-        new_opacities = self._opacity[selected_pts_mask]
-        new_target_mask = self.target_mask[selected_pts_mask]
-        self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
-        
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest,new_opacities, new_scaling, new_rotation)
-        
-    def split_target(self,):
-        N = 2
-        selected_pts_mask = self.target_mask
-    
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
-        samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
-        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-
-        new_target_mask = self.target_mask[selected_pts_mask].repeat(N)
-        self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
-        self.densification_postfix(new_xyz,new_features_dc, new_features_rest,new_opacity, new_scaling, new_rotation)
-            
 
     def compute_topac_width(self, w, h, threshold=0.05):
         """ Implementing the function: t = m +- sqrt(-ln(0.05/h)/(w**2))
@@ -646,21 +585,18 @@ class GaussianModel:
                     We can then asses the absolute distance between t_neg and t_pos and remove spikes that apear smaller than our temporal
                     grid resolution (basically temporal pruning)
         """
-        h = self.get_h_opacity
-        # Hyper params
-        # width_threshold = float(1./ (2. * self._deformation.deformation_net.grid.grid_config[0]['resolution'][3]))
-        # Calulcate min width
-        # width = self.compute_topac_width(w, h, 0.025)
-        # prune_mask = #(width < width_threshold).squeeze()
-        prune_mask = (h < 0.1).squeeze() #torch.logical_or((h < 0.1).squeeze(), prune_mask)
+        h = self.get_hopac
+        prune_mask = (h < 0.05).squeeze()
+        
+        h_mask = torch.logical_and((h < 0.5), self.target_mask)
+        prune_mask = torch.logical_or(h_mask, prune_mask)
+        
         
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
-            if prune_mask is None:
-                prune_mask = big_points_vs
-            else:
-                prune_mask = torch.logical_or(prune_mask, big_points_vs)
+
+            prune_mask = torch.logical_or(prune_mask, big_points_vs)
             prune_mask = torch.logical_or(prune_mask, big_points_ws)
         self.prune_points(prune_mask)
 
@@ -668,7 +604,8 @@ class GaussianModel:
         
     
     def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.get_h_opacity, torch.ones_like(self.get_h_opacity)*0.01))
+        opacities_new = self.get_opacity
+        opacities_new[:,0] = opacities_new[:,0] * 0.01
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
@@ -676,37 +613,14 @@ class GaussianModel:
         total = 0
         # model.grids is 6 x [1, rank * F_dim, reso, reso]
         for grids in self._deformation.deformation_net.grid.grids_():
-            time_grids =  [0,1,3]
-            for grid_id in time_grids:
-                total += compute_plane_smoothness(grids[grid_id])
+            for grid in grids:
+                total += compute_plane_smoothness(grid)
         
-
         return total
 
-    def _time_regulation(self):
     
-        total = 0
-        # model.grids is 6 x [1, rank * F_dim, reso, reso]
-        for grids in self._deformation.deformation_net.grid.grids_():
-            time_grids = [2, 4, 5]
-            for grid_id in time_grids:
-                total += compute_plane_smoothness(grids[grid_id])
-                
-        return total
-    
-    def _l1_regulation(self):
-        total = 0.0
-        for grids in self._deformation.deformation_net.grid.grids_():
-            spatiotemporal_grids = [2, 4, 5]
-            for grid_id in spatiotemporal_grids:
-                total += torch.abs(1 - grids[grid_id]).mean()
-                
-        return total
-    
-    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight ):
-        return plane_tv_weight * self._plane_regulation() #+ \
-            # time_smoothness_weight * self._time_regulation() + \
-            #     l1_time_planes_weight * self._l1_regulation() 
+    def compute_regulation(self, plane_tv_weight ):
+        return plane_tv_weight * self._plane_regulation()
 
 
     def update_target_mask(self, cam_list, iteration, stage):  
@@ -736,14 +650,14 @@ class GaussianModel:
         
         distance_mask = 0.1 > torch.norm(points[row] - points[col], dim=1)  # (E,)
         dx_coefs = self.get_dyn_coefs
-        opacity = self.get_h_opacity
+        # opacity = self.get_opacity[:,1].unsqueeze(-1)
 
         # print(distance_mask.device, dx_coefs.device)
         # print(distance_mask.shape, dx_coefs.shape)
 
         # exit()
         diff = ((distance_mask*(((dx_coefs[row] - dx_coefs[col])**2).mean(-1)))).mean()
-        diff += ((distance_mask*(((opacity[row] - opacity[col])**2).mean(-1)))).mean()
+        # diff += ((distance_mask*(((opacity[row] - opacity[col])**2).mean(-1)))).mean()
         return diff
     
     def compute_static_rigidity_loss(self):

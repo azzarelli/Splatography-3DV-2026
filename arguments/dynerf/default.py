@@ -2,15 +2,15 @@ ModelHiddenParams = dict(
     scene_config = {
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
-     'output_coordinate_dim': 16,
-     'resolution': [264, 264, 264, 3],
+     'output_coordinate_dim': 32,
+     'resolution': [512, 512, 512, 3],
      'wavelevel':2
     },
     target_config = {
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
-     'resolution': [128, 128, 128, 3],
+     'resolution': [264, 264, 264, 3],
      'wavelevel':2
     },
     
@@ -29,7 +29,7 @@ ModelHiddenParams = dict(
 OptimizationParams = dict(
     dataloader=True,
     iterations=16000,
-    coarse_iterations=1500,
+    coarse_iterations=2000,
     batch_size=2, # Was 4
 
     densify_from_iter=3000, #best at 3001

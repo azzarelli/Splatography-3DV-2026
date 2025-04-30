@@ -57,27 +57,19 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
     colors = pc.get_features
 
-    scales = pc._scaling
+    scales = pc.get_scaling
     rotations = pc._rotation
 
-    h_opacity = pc.get_h_opacity
+    means3D, rotations_final, opacity,colors, extras = pc._deformation(
+        point=means3D, 
+        rotations=rotations,
+        scales=scales,
+        times_sel=time, 
+        h_emb=pc.get_opacity,
+        shs=colors,
+        target_mask=pc.target_mask
+    )
 
-    if "coarse" in stage:
-        means3D, rotations_final, opacity = means3D, rotations, h_opacity
-    elif "fine" in stage:
-        means3D, rotations_final, opacity,colors, extras = pc._deformation(
-            point=means3D, 
-            rotations=rotations,
-            times_sel=time, 
-            h_emb=h_opacity,
-            shs=colors,
-            target_mask=pc.target_mask
-        )
-    else:
-        raise NotImplementedError
-    
-    # Do the scaling and rotation activation after deformation
-    scales = pc.scaling_activation(scales + 0.)
     rotation = pc.rotation_activation(rotations_final)
 
     if view_args is not None:
@@ -134,7 +126,7 @@ def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor
         means3D = pc.get_xyz    
         scales = pc.get_scaling
         rotations = pc._rotation
-        h_opacity = pc.get_h_opacity
+        opacity = pc.get_hopac
         colors = pc.get_features
     else:
         # freeze backprop to G representation
@@ -143,19 +135,20 @@ def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor
         scales = pc.get_scaling
         rotations = pc._rotation
         colors = pc.get_features
-        h_opacity = pc.get_h_opacity
+        opacity = pc.get_opacity
 
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
 
 
     if "coarse" in stage:
-        means3D, rotations_final, opacity = means3D, rotations, h_opacity
+        means3D, rotations_final, opacity = means3D, rotations, opacity[:, 0].unsqueeze(-1)
     elif "fine" in stage:
         means3D, rotations_final, opacity, colors, extras['dx_coeff'] = pc._deformation(
             point=means3D, 
             rotations=rotations,
+            scales = scales,
             times_sel=time, 
-            h_emb=h_opacity,
+            h_emb=opacity,
             shs=colors,
             target_mask=pc.target_mask,
         )
@@ -215,8 +208,11 @@ def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor
             scales=scales,
             rotations=rotation,
             cov3D_precomp=None)
-    
-        target_rgb, _, target_depth = rasterizer(
+
+        # Stop tracking for raddii
+        radii = radii * 0
+        
+        target_rgb, target_radii, target_depth = rasterizer(
             means3D=means3D[pc.target_mask],
             means2D=means2D[pc.target_mask],
             shs=colors[pc.target_mask],
@@ -227,14 +223,10 @@ def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor
             cov3D_precomp=None
             )
 
-        # print(target_depth.min(), target_depth.max())
-        # exit()
-        # print(rendered_image.shape, viewpoint_camera.original_image.shape, target_mask.shape)
+        radii[pc.target_mask] = target_radii
+
         gt_img = viewpoint_camera.original_image.cuda()
 
-        # if stage == 'fine':
-        #     mask = target_depth > 0.05
-        #     L1 += l1_loss(target_rgb, gt_img*mask)
         if stage == 'coarse':
             mask = viewpoint_camera.mask.cuda()
             L1 += l1_loss(target_rgb, gt_img*mask)
@@ -246,7 +238,5 @@ def render_batch(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor
         radii_list.append(radii.unsqueeze(0))
         visibility_filter_list.append((radii > 0).unsqueeze(0))
         viewspace_point_tensor_list.append(screenspace_points)
-    
-    
     
     return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, extras
