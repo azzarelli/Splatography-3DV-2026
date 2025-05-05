@@ -16,13 +16,14 @@ class FourDGSdataset(Dataset):
         dataset,
         args,
         dataset_type,
-        split
+        split,
+        maxframes
     ):
         self.dataset = dataset
         self.args = args
         self.dataset_type=dataset_type
         
-        self.zero_idxs = [i*50 for i in range(4)]
+        self.zero_idxs = [i*maxframes for i in range(4)]
         if dataset_type == 'train':
             print(f'Zero Indexs are: {self.zero_idxs}')
             

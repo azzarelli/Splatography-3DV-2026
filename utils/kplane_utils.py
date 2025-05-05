@@ -27,7 +27,7 @@ def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners:
     
     B, feature_dim = grid.shape[:2]
     n = coords.shape[-2]
-
+    
     # Grid is range -1 to 1 and is dependant on the resolution
     interp = grid_sampler(
         grid,  # [B, feature_dim, reso, ...]
@@ -88,7 +88,6 @@ class GridSet(nn.Module):
         init_mode = 'uniform'
         if self.what == 'spacetime':
             init_mode = 'ones'
-
         self.feature_size = config['feature_size']
         self.resolution = resolution
         self.wave = config['wave']
@@ -168,8 +167,8 @@ class GridSet(nn.Module):
 
         fine = idwt((yl, yh))
 
-        # if self.what == 'spacetime':
-        #     return fine + 1.
+        if self.what == 'spacetime':
+            return fine + 1.
         return fine
     
     def yl_only(self):
@@ -191,16 +190,10 @@ class GridSet(nn.Module):
             signal.append(plane)
         
         # Sample features
-        if self.what == 'spacetime':
-            feature = (
-                grid_sample_wrapper_temporal(plane, pts)
-                .view(-1, plane.shape[1])
-            )
-        else:
-            feature = (
-                grid_sample_wrapper(plane, pts)
-                .view(-1, plane.shape[1])
-            )        
+        feature = (
+            grid_sample_wrapper(plane, pts)
+            .view(-1, plane.shape[1])
+        )        
         # visualize_grid_and_coords(plane, pts)
 
 

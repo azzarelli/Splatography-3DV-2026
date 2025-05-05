@@ -32,13 +32,17 @@ class GUIBase:
         self.show_radius = 30.
         self.vis_mode = 'render'
         self.show_dynamic = 0.
-        self.w_thresh = 10.
+        self.w_thresh = 0.
         self.h_thresh = 0.
+        
+        self.set_w_flag = False
+        self.w_val = 0.01
         # Set-up the camera for visualization
         self.show_scene_target = 0
 
         
         self.switch_off_viewer = False
+        self.switch_off_viewer_args = False
         self.full_opacity = False
         
         self.N_pseudo = 3 
@@ -130,15 +134,31 @@ class GUIBase:
                 dpg.add_text("no data", tag="_log_psnr_test")
                 dpg.add_text("no data", tag="_log_ssim")
 
-
+            
             # rendering options
             with dpg.collapsing_header(label="Rendering", default_open=True):
-                with dpg.group(horizontal=True):
-                    dpg.add_text("no data", tag="_log_view_camera")
-                
                 def callback_toggle_show_rgb(sender):
                     self.switch_off_viewer = ~self.switch_off_viewer
+                def callback_toggle_use_controls(sender):
+                    self.switch_off_viewer_args = ~self.switch_off_viewer_args
+                     
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Viewer On/Off", callback=callback_toggle_show_rgb)
+                    dpg.add_button(label="Controls On/Off", callback=callback_toggle_use_controls)
                     
+                     
+                def callback_toggle_reset_cam(sender):
+                    self.current_cam_index = 0
+                    
+                def callback_toggle_next_cam(sender):
+                    self.current_cam_index = (self.current_cam_index + 1) % len(self.free_cams)
+                    
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Reset cam", callback=callback_toggle_reset_cam)
+                    dpg.add_text("no data", tag="_log_view_camera")
+                    dpg.add_button(label="Next cam", callback=callback_toggle_next_cam)
+
+                
                 def callback_toggle_show_target(sender):
                     self.show_scene_target = 1
                 def callback_toggle_show_scene(sender):
@@ -146,18 +166,9 @@ class GUIBase:
                 def callback_toggle_show_full(sender):
                     self.show_scene_target = 0 
                     
-                def callback_toggle_reset_cam(sender):
-                    self.current_cam_index = 0
+                
                     
-                def callback_toggle_next_cam(sender):
-                    self.current_cam_index = (self.current_cam_index + 1) % len(self.free_cams)
-                    
-                    
-                with dpg.group(horizontal=True):
-                    dpg.add_button(label="Switch off viewer", callback=callback_toggle_show_rgb)
-                    dpg.add_button(label="Reset cam", callback=callback_toggle_reset_cam)
-                    dpg.add_button(label="Next cam", callback=callback_toggle_next_cam)
-
+                
 
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="Target", callback=callback_toggle_show_target)
@@ -173,16 +184,23 @@ class GUIBase:
                 def callback_toggle_show_norms(sender):
                     self.vis_mode = 'norms'
                     
-                def callback_toggle_show_fullopac(sender):
-                    self.full_opacity = ~self.full_opacity
-                    
+
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="RGB", callback=callback_toggle_show_rgb)
                     dpg.add_button(label="Depth", callback=callback_toggle_show_depth)
-                    dpg.add_button(label="Full Opa", callback=callback_toggle_show_fullopac)
                     dpg.add_button(label="Alpha", callback=callback_toggle_show_alpha)
                     dpg.add_button(label="Normls", callback=callback_toggle_show_norms)
+                
+                def callback_toggle_show_fullopac(sender):
+                    self.full_opacity = ~self.full_opacity
+                def callback_toggle_show_wthesh(sender):
+                    self.set_w_flag = ~self.set_w_flag
                     
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="h=1", callback=callback_toggle_show_fullopac)
+                    dpg.add_button(label="Set/Unset w", callback=callback_toggle_show_wthesh)
+
+                
                 def callback_show_max_radius(sender):
                     self.show_radius = dpg.get_value(sender)
                     
@@ -219,7 +237,7 @@ class GUIBase:
                     self.h_thresh = dpg.get_value(sender)
                     
                 dpg.add_slider_float(
-                    label="h > theshold",
+                    label="h > thresh",
                     default_value=0.,
                     max_value=1.,
                     min_value=0.,
@@ -230,11 +248,22 @@ class GUIBase:
                     self.w_thresh = dpg.get_value(sender)
                     
                 dpg.add_slider_float(
-                    label="w > theshold",
-                    default_value=1.,
-                    max_value=10.,
+                    label="w > thresh",
+                    default_value=0.,
+                    max_value=3.,
                     min_value=0.,
                     callback=callback_toggle_w_thresh,
+                )
+                
+                def callback_toggle_w(sender):
+                    self.w_val = dpg.get_value(sender)
+                    
+                dpg.add_slider_float(
+                    label="Set globa w",
+                    default_value=1.,
+                    max_value=100.,
+                    min_value=0.,
+                    callback=callback_toggle_w,
                 )
 
         dpg.create_viewport(
@@ -290,16 +319,18 @@ class GUIBase:
                         self.train_step()
                         self.iteration += 1
 
-
                     if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
                         if self.stage == 'fine':
-                            self.test_step()
+                            with torch.no_grad():
+                                self.test_step()
 
                     if self.iteration > self.final_iter and self.stage == 'fine':
                         self.stage = 'done'
                         exit()
 
-            
+                # if self.view_test == True:
+                #     self.train_depth()
+                
                 with torch.no_grad():
                     self.viewer_step()
                     dpg.render_dearpygui_frame()
@@ -345,7 +376,13 @@ class GUIBase:
                     stage=self.stage,
                     view_args={
                         'show_mask':self.show_scene_target,
-                        'full_opac':self.full_opacity
+                        'full_opac':self.full_opacity,
+                        'w_thresh':self.w_thresh,
+                        'dx_thresh': self.show_dynamic,
+                        'h_thresh':self.h_thresh,
+                        "set_w":self.w_val,
+                        "set_w_flag":self.set_w_flag,
+                        "viewer_status":self.switch_off_viewer_args
                     }
             )
             

@@ -493,8 +493,7 @@ def readCondenseSceneInfo(datadir, eval):
     return scene_info
 
 
-def readdynerfInfo(datadir,num_cams):
-    
+def readdynerfInfo(datadir,num_cams, maxframes):
     if num_cams == '4':
         selected_cams = [1,10,11,20]
     else:
@@ -504,27 +503,29 @@ def readdynerfInfo(datadir,num_cams):
     ply_path = os.path.join(datadir, "points3D_downsample2.ply")
     from scene.neural_3D_dataset_NDC import Neural3D_NDC_Dataset
     train_dataset = Neural3D_NDC_Dataset(
-    datadir,
-    "train",
-    1.0,
-    time_scale=1,
-    scene_bbox_min=[-2.5, -2.0, -1.0],
-    scene_bbox_max=[2.5, 2.0, 1.0],
-    selected_cams=selected_cams,
-        )    
+        datadir,
+        "train",
+        downsample=2.0,
+        time_scale=1,
+        scene_bbox_min=[-2.5, -2.0, -1.0],
+        scene_bbox_max=[2.5, 2.0, 1.0],
+        selected_cams=selected_cams,
+        maxframes=maxframes
+    )    
     test_dataset = Neural3D_NDC_Dataset(
-    datadir,
-    "test",
-    1.0,
-    time_scale=1,
-    scene_bbox_min=[-2.5, -2.0, -1.0],
-    scene_bbox_max=[2.5, 2.0, 1.0],
-    selected_cams=selected_cams
-        )
+        datadir,
+        "test",
+        downsample=2.0,
+        time_scale=1,
+        scene_bbox_min=[-2.5, -2.0, -1.0],
+        scene_bbox_max=[2.5, 2.0, 1.0],
+        selected_cams=selected_cams,
+        maxframes=maxframes
+    )
     train_cam_infos = format_infos(train_dataset,"train")
     val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset)
     nerf_normalization = getNerfppNorm(train_cam_infos)
-    print(f'Number of training cameras: {len(train_dataset)/50}')
+    print(f'Number of training cameras: {len(train_dataset)/maxframes}')
 
     # xyz = np.load
     pcd = fetchPly(ply_path)
@@ -536,7 +537,7 @@ def readdynerfInfo(datadir,num_cams):
                            video_cameras=val_cam_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
-                           maxtime=50
+                           maxtime=maxframes
                            )
     return scene_info
 

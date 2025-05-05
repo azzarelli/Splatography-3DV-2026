@@ -91,28 +91,16 @@ class Camera(nn.Module):
             self.data_device = torch.device("cuda")
         
         if image is not None:
-            if not depth:
-                self.original_image = image.clamp(0.0, 1.0)[:3,:,:]
-            else: # store original depth image
-                self.original_image = image
+            if image.shape[0] == 4:
+                self.gt_alpha_mask = image[-1,:]
+                image = image[:-1, :]                
+            self.original_image = image
             # breakpoint()
             # .to(self.data_device)
             self.image_width = self.original_image.shape[2]
             self.image_height = self.original_image.shape[1]
 
-            if gt_alpha_mask is not None:
-                gt_alpha_mask = gt_alpha_mask.bool().unsqueeze(0).repeat(3, 1, 1)
-                img = torch.zeros_like(self.original_image)
 
-                img[gt_alpha_mask.bool()] = self.original_image[gt_alpha_mask.bool()]
-
-                self.original_image = img
-                # *= gt_alpha_mask
-
-                # .to(self.data_device)
-            else:
-                self.original_image *= torch.ones((1, self.image_height, self.image_width))
-                                                    #   , device=self.data_device)
         self.depth = depth
         self.mask = mask
 
@@ -130,6 +118,15 @@ class Camera(nn.Module):
         # .cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
+
+    @torch.no_grad()
+    def direction_normal(self):
+        R_c2w = self.world_view_transform[:3, :3].T
+        # Camera looks along [0, 0, -1] in its local space
+        direction = torch.tensor([0.0, 0.0, -1.0], device=R_c2w.device)
+        direction = R_c2w @ direction  # transform to world space
+        direction = direction / direction.norm()
+        return direction
 
     def update_projections(self):
         self.world_view_transform = torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale)).transpose(0, 1)

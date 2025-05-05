@@ -24,7 +24,7 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, num_cams='4', load_iteration=None, skip_coarse=None):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, num_cams='4', load_iteration=None, skip_coarse=None, max_frames=50):
         """
         :param path: Path to colmap scene main folder.
         """
@@ -40,7 +40,7 @@ class Scene:
             print("Loading trained model at iteration {}".format(self.loaded_iter))
 
         
-        scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, num_cams)
+        scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, num_cams, max_frames)
         dataset_type="dynerf"
         # if os.path.exists(os.path.join(args.source_path, "rotation_correction.json")):
         #     scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.eval)
@@ -70,12 +70,9 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
 
-        self.train_camera = FourDGSdataset(scene_info.train_cameras, args, dataset_type, 'train')
-        self.test_camera = FourDGSdataset(scene_info.test_cameras, args, dataset_type, 'test')
+        self.train_camera = FourDGSdataset(scene_info.train_cameras, args, dataset_type, 'train', maxframes=max_frames)
+        self.test_camera = FourDGSdataset(scene_info.test_cameras, args, dataset_type, 'test', maxframes=max_frames)
         # self.video_camera = FourDGSdataset(scene_info.video_cameras, args, dataset_type)
-        
-        
-        # self.video_camera = cameraList_from_camInfos(scene_info.video_cameras,-1,args)
 
         if skip_coarse:
             print(f'Skipping coarse step with {skip_coarse}')

@@ -108,80 +108,6 @@ def render_path_spiral(c2w, up, rads, focal, zdelta, zrate, N_rots=2, N=120):
         render_poses.append(viewmatrix(z, up, c))
     return render_poses
 
-
-
-def process_video(video_data_save, video_path, img_wh, downsample, transform):
-    """
-    Load video_path data to video_data_save tensor.
-    """
-    video_frames = cv2.VideoCapture(video_path)
-    count = 0
-    video_images_path = video_path.split('.')[0]
-    image_path = os.path.join(video_images_path,"images")
-
-    if not os.path.exists(image_path):
-        os.makedirs(image_path)
-        while video_frames.isOpened():
-            ret, video_frame = video_frames.read()
-            if ret:
-                video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
-                video_frame = Image.fromarray(video_frame)
-                if downsample != 1.0:
-                    
-                    img = video_frame.resize(img_wh, Image.LANCZOS)
-                img.save(os.path.join(image_path,"%04d.png"%count))
-
-                img = transform(img)
-                video_data_save[count] = img.permute(1,2,0)
-                count += 1
-            else:
-                break
-      
-    else:
-        images_path = os.listdir(image_path)
-        images_path.sort()
-        
-        for path in images_path:
-            img = Image.open(os.path.join(image_path,path))
-            if downsample != 1.0:  
-                img = img.resize(img_wh, Image.LANCZOS)
-                img = transform(img)
-                video_data_save[count] = img.permute(1,2,0)
-                count += 1
-        
-    video_frames.release()
-    print(f"Video {video_path} processed.")
-    return None
-
-
-# define a function to process all videos
-def process_videos(videos, skip_index, img_wh, downsample, transform, num_workers=1):
-    """
-    A multi-threaded function to load all videos fastly and memory-efficiently.
-    To save memory, we pre-allocate a tensor to store all the images and spawn multi-threads to load the images into this tensor.
-    """
-    all_imgs = torch.zeros(len(videos) - 1, 50, img_wh[-1] , img_wh[-2], 3)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
-        # start a thread for each video
-        current_index = 0
-        futures = []
-        for index, video_path in enumerate(videos):
-            # skip the video with skip_index (eval video)
-            if index == skip_index:
-                continue
-            else:
-                future = executor.submit(
-                    process_video,
-                    all_imgs[current_index],
-                    video_path,
-                    img_wh,
-                    downsample,
-                    transform,
-                )
-                futures.append(future)
-                current_index += 1
-    return all_imgs
-
 def get_spiral(c2ws_all, near_fars, rads_scale=1.0, N_views=120):
     """
     Generate a set of poses using NeRF's spiral camera trajectory as validation poses.
@@ -223,20 +149,22 @@ class Neural3D_NDC_Dataset(Dataset):
         bd_factor=0.75,
         eval_step=1,
         selected_cams=[],
+        maxframes=50,
         sphere_scale=1.0,
     ):
+        
         self.img_wh = (
-            int(1352 / downsample),
-            int(1014 / downsample),
+            int(2704 / downsample),
+            int(2028 / downsample),
         )  # According to the neural 3D paper, the default resolution is 1024x768
         self.root_dir = datadir
         self.split = split
-        self.downsample = 2704 / self.img_wh[0]
+        self.downsample = downsample
         self.is_stack = is_stack
         self.N_vis = N_vis
         self.time_scale = time_scale
         self.scene_bbox = torch.tensor([scene_bbox_min, scene_bbox_max])
-
+        self.depth_paths = []
         self.world_bound_scale = 1.1
         self.bd_factor = bd_factor
         self.eval_step = eval_step
@@ -250,8 +178,10 @@ class Neural3D_NDC_Dataset(Dataset):
         self.white_bg = False
         self.ndc_ray = True
         self.depth_data = False
+        self.maxframes = maxframes
         
         self.get_mask = False
+        self.get_depth = False
 
         self.stage = 'rgb'
         self.load_meta()
@@ -284,8 +214,7 @@ class Neural3D_NDC_Dataset(Dataset):
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
 
         # Sample N_views poses for validation - NeRF-like camera trajectory.
-        N_views = 50
-        self.val_poses = get_spiral(poses, self.near_fars, N_views=N_views)
+        self.val_poses = get_spiral(poses, self.near_fars, N_views=self.maxframes)
         # self.val_poses = self.directions
         self.poses = poses[self.selected_cams]
         self.poses_all = poses #[[0]+poses_i_train]
@@ -307,7 +236,6 @@ class Neural3D_NDC_Dataset(Dataset):
         
         N_cams = 0
         N_time = 0
-        countss = 50
         for index, video_path in enumerate(videos):
 
             if (index in  self.selected_cams and split == 'train') or (index == 0 and split == 'test'):
@@ -315,8 +243,11 @@ class Neural3D_NDC_Dataset(Dataset):
                 count = 0
                 video_images_path = video_path.split('.')[0]
                 if split == 'train':
-                    image_path = os.path.join(video_images_path,"images")
-                    
+                    if 'flame_steak' in video_images_path: name__ = "images_2x"
+                    else: name__ = 'images'
+                    image_path = os.path.join(video_images_path,name__)
+                    depth_path = video_images_path[:-5]+'vda/'+video_images_path.split('/')[-1]+'/target_depth.png'
+                    self.depth_paths.append(depth_path)
                 else:
                     image_path = os.path.join(video_images_path,"masks")
 
@@ -327,7 +258,7 @@ class Neural3D_NDC_Dataset(Dataset):
                     this_count = 0
                     while video_frames.isOpened():
                         ret, video_frame = video_frames.read()
-                        if this_count >= countss:break
+                        if this_count >= self.maxframes:break
                         if ret:
                             video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
                             video_frame = Image.fromarray(video_frame)
@@ -345,20 +276,22 @@ class Neural3D_NDC_Dataset(Dataset):
                 images_path.sort()
                 this_count = 0
                 for idx, path in enumerate(images_path):
-                    if this_count >=countss:break
+                    if this_count >=self.maxframes:break
                     image_paths.append(os.path.join(image_path,path))
                     pose = np.array(self.poses_all[index])
                     R = pose[:3,:3]
                     R = -R
                     R[:,0] = -R[:,0]
                     T = -pose[:3,3].dot(R)
-                    image_times.append(idx/(countss-1))
+                    image_times.append(idx/(self.maxframes-1))
+                    
                     if idx == 0:
                         general_poses.append((R,T))
                     image_poses.append((R,T))
                     this_count+=1
+                # print(video_images_path, R,T)
                 N_time = len(images_path)
-
+        # exit()
         # import matplotlib.pyplot as plt
         # from mpl_toolkits.mplot3d import Axes3D
 
@@ -380,6 +313,12 @@ class Neural3D_NDC_Dataset(Dataset):
         return image_paths, image_poses, image_times, N_cams, N_time, general_poses
     def __len__(self):
         return len(self.image_paths)
+    
+    def get_depth_img(self, index):
+        img = Image.open(self.depth_paths[index])
+        img = self.transform(img)
+        return img
+    
     def __getitem__(self,index):
         img = Image.open(self.image_paths[index])
         
@@ -393,12 +332,15 @@ class Neural3D_NDC_Dataset(Dataset):
                 extra = extra.resize((img.shape[-1], img.shape[-2]), Image.LANCZOS)
 
                 extra = self.transform(extra)[-1]
-        
-        # elif 'cam00' not in self.image_paths[index]:
-        #     extra = Image.open(self.image_paths[index].replace('images', 'depth'))
-        #     extra = self.transform(extra).float()/255.
+        # elif self.get_depth:
+        else:
+            if 'cam00' not in self.image_paths[index]:
+                extra = Image.open(self.image_paths[index].replace('images', 'depth'))
+                extra = self.transform(extra).float()/255.
 
         return img, self.image_poses[index], self.image_times[index], extra
+    
+    
     def load_pose(self,index):
         return self.image_poses[index]
 
