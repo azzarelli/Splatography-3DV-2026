@@ -23,43 +23,22 @@ OFFSETS = torch.tensor([
     [-0.5, -0.5]
 ]).cuda().unsqueeze(0)
 
-def interpolate_features_MUL(pts: torch.Tensor,time, kplanes, idwt, is_opacity_grid, scales):
+def interpolate_features_MUL(pts,time, kplanes, idwt):
     """Generate features for each point
     """
     # time m feature
-    interp_1 = 1.
+    feature = 1.
 
-    # samples = rays_pts_emb[mask,:3].unsqueeze(1).repeat(1,13,1)
-    # base_offsets = torch.tensor([-1.0, -0.5, 0.5, 1.0], device=mask.device).unsqueeze(0).repeat(3,1)  # (4,)
-    
-    # scales = scale_emb[mask, :3].unsqueeze(1).repeat(1,4,1)
-    
-    # # scale_offsets =  
-    
-    # print(samples.shape, base_offsets.shape, scales.shape)
-    # exit()
+    pts = torch.cat([pts, time], dim=-1)
     
     # q,r are the coordinate combinations needed to retrieve pts
-    q, r = 0, 1
-    for i in range(3):
-        scale_offsets = scales[..., (q,r)].unsqueeze(1).repeat(1,12,1) * OFFSETS
+    coords = [[0,1], [0,2], [3,0], [1,2],[3,1],[3,2]]
+    for i in range(6):
+        q,r = coords[i]
 
-        pts_ = pts[..., (q, r)].unsqueeze(1).repeat(1,13,1)
-        pts_[:, 1:, :] += scale_offsets
+        feature = feature * kplanes[i](pts[..., (q, r)], idwt)
 
-        pts_ = pts_.view(-1, 2)
-        
-        feature = kplanes[i](pts_, idwt)
-        
-        feature = feature.view(-1,13,feature.shape[-1]).mean(1)
-
-        interp_1 = interp_1 * feature
-
-        r +=1
-        if r == 3:
-            q = 1
-            r = 2
-    return interp_1
+    return feature
    
 
 
@@ -136,10 +115,15 @@ class WavePlaneField(nn.Module):
         self.cacheplanes = True
         self.is_waveplanes = True
         
-        for i in range(3):
-            what = 'space'
-            res = [self.grid_config['resolution'][0],
-                self.grid_config['resolution'][0]]
+        for i in range(6):
+            if i in [0,1,3]:
+                what = 'space'
+                res = [self.grid_config['resolution'][0],
+                    self.grid_config['resolution'][0]]
+            else:
+                what = 'space'
+                res = [self.grid_config['resolution'][0],
+                self.grid_config['resolution'][1]]
             
             gridset = GridSet(
                 what=what,
@@ -190,7 +174,7 @@ class WavePlaneField(nn.Module):
         """
 
         ms_planes = []
-        for i in range(3):
+        for i in range(6):
             gridset = self.grids[i]
 
             if self.cacheplanes:
@@ -207,23 +191,14 @@ class WavePlaneField(nn.Module):
 
         return ms_planes
 
-        
-    def get_opacity_vars(self, pts):
-        pts = normalize_aabb(pts, self.aabb)
-        pts = pts.reshape(-1, pts.shape[-1])
-        return interpolate_features_MUL(
-            pts,None, self.grids, self.idwt, True
-        )
-        
     def forward(self,
                 pts: torch.Tensor,
                 timestamps: Optional[torch.Tensor] = None, scales=None):
         pts = normalize_aabb(pts, self.aabb)
         
-        timestamps = timestamps.detach().clone()
-        # timestamps = (timestamps*2.)-1. # normalize timestamps between 0 and 1
+        timestamps = (timestamps*2.)-1. # normalize timestamps between 0 and 1
 
         pts = pts.reshape(-1, pts.shape[-1])
 
         return interpolate_features_MUL(
-            pts,timestamps, self.grids, self.idwt, False,scales)
+            pts,timestamps, self.grids, self.idwt)

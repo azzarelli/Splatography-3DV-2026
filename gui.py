@@ -84,6 +84,8 @@ class GUI(GUIBase):
             self.skip_coarse = None
             self.stage = 'coarse'
 
+        self.total_frames = 50
+
         expname = 'output/'+expname
         self.expname = expname
         self.opt = opt
@@ -179,26 +181,25 @@ class GUI(GUIBase):
 
         if self.view_test == False:
             self.test_viewpoint_stack = self.scene.getTestCameras()
+            self.random_loader = True
+            # if self.stage == 'fine':
+            print('Loading Fine (t = any) dataset')
+            self.scene.getTrainCameras().dataset.get_mask = True
 
-            if self.stage == 'fine':
-                print('Loading Fine (t = any) dataset')
-                self.scene.getTrainCameras().dataset.get_mask = True
+            self.viewpoint_stack = self.scene.getTrainCameras() # [self.scene.index_train(i*50) for i in range(4*self.total_frames)] # self.scene.getTrainCameras()
+            
+            self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
+                                                num_workers=32, collate_fn=list))
+            self.scene.getTrainCameras().dataset.get_mask = False
+            # if self.stage == 'coarse': 
+            #     print('Loading Coarse (t=0) dataset')
+            #     self.scene.getTrainCameras().dataset.get_mask = True
+            #     self.viewpoint_stack = [[self.scene.index_train((i*50)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
+            #     self.scene.getTrainCameras().dataset.get_mask = False
 
-                self.viewpoint_stack = [[self.scene.index_train((i*50)+t) for i in range(4)] for t in range(50)] # self.scene.getTrainCameras()
-                
-                self.random_loader  = True
-                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=True,
-                                                    num_workers=16, collate_fn=list))
-                self.scene.getTrainCameras().dataset.get_mask = False
-            if self.stage == 'coarse': 
-                print('Loading Coarse (t=0) dataset')
-                self.scene.getTrainCameras().dataset.get_mask = True
-                self.viewpoint_stack = [[self.scene.index_train((i*50)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
-                self.scene.getTrainCameras().dataset.get_mask = False
-
-                self.random_loader  = True
-                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=True,
-                                                    num_workers=16, collate_fn=list))
+            #     self.random_loader  = True
+            #     self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=self.random_loader,
+            #                                         num_workers=32, collate_fn=list))
 
     @property
     def get_zero_cams(self):
@@ -229,18 +230,14 @@ class GUI(GUIBase):
         try:
             viewpoint_cams = next(self.loader)
         except StopIteration:
-            viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=1, shuffle=True,
-                                                num_workers=16, collate_fn=list)
-            self.random_loader = True
+            viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
+                                                num_workers=32, collate_fn=list)
             self.loader = iter(viewpoint_stack_loader)
             viewpoint_cams = next(self.loader)
 
         # Render
         if (self.iteration - 1) == self.debug_from:
             self.pipe.debug = True
-
-        # need to get t
-        viewpoint_cams = viewpoint_cams[0]
 
         # Generate scene based on an input camera from our current batch (defined by viewpoint_cams)
         radii_list = []
@@ -262,25 +259,24 @@ class GUI(GUIBase):
             stage=self.stage,
         )
         
+        # Global regularization          
+        opacloss += ((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+
+        # Regularizers for fine stage
         if self.stage == 'fine':
             L1 += self.gaussians.compute_regulation(
+                self.hyperparams.time_smoothness_weight, 
+                self.hyperparams.l1_time_planes, 
                 self.hyperparams.plane_tv_weight,
-                )
-            
-        
-        if self.stage == 'coarse':
-            opacloss += ((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
-
-            scale_exp = self.gaussians.get_scaling
-            # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
-            pg_loss = 0.01* (scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
-            
-        
-        if self.stage == 'fine':
-            pass
+            )
             # dyn_target_loss += self.gaussians.compute_rigidity_loss()
         else:
-            dyn_target_loss += self.gaussians.compute_static_rigidity_loss()
+            pass
+            # dyn_target_loss += self.gaussians.compute_static_rigidity_loss()
+            # scale_exp = self.gaussians.get_scaling
+            # opac_int = self.gaussians.opacity_integral(w=w_, h=h_, mu=mu_)
+            # pg_loss = 0.01* (scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
+            
         # max_gauss_ratio = 10
         # pg_loss = (
         #     torch.maximum(
@@ -302,7 +298,7 @@ class GUI(GUIBase):
                     dpg.set_value("_log_dynscales", f"DynScales loss: {dyn_scale_loss} ")
                     dpg.set_value("_log_knn", f"Target loss: {dyn_target_loss} ")
                     if (self.iteration % 2) == 0:
-                        dpg.set_value("_log_points", f"Scene Pts: {(~self.gaussians.target_mask).sum()} | Target Pts: {(self.gaussians.target_mask).sum()} ")
+                        dpg.set_value("_log_points", f"Scene Pts: {self.gaussians._xyz.shape[0]}")
                     
 
             if self.iteration % 2000 == 0:
@@ -362,22 +358,17 @@ class GUI(GUIBase):
             if  self.stage == 'fine' and \
                 self.iteration > self.opt.densify_from_iter and \
                 self.iteration < self.opt.densify_until_iter and \
-                self.iteration % self.opt.densification_interval == 0 and \
-                (self.gaussians.target_mask).sum() < 100000:
+                self.iteration % self.opt.densification_interval == 0 and self.gaussians._xyz.shape[0] < 300000:
                     self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
 
             # Global pruning
             if  self.stage == 'fine' and \
                 self.iteration > self.opt.pruning_from_iter and \
-                self.iteration % self.opt.pruning_interval == 0 and \
-                (self.gaussians.target_mask).sum() > 110000:
+                self.iteration % self.opt.pruning_interval == 0 and self.gaussians._xyz.shape[0] > 2:
                 size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                 self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
             
-            # if self.iteration == 1 and self.stage == 'fine':
-            #     self.gaussians.prune_target(self.get_zero_cams)
-            
-                
+    
             if self.iteration % self.opt.opacity_reset_interval == 0 and self.stage == 'fine':
                 self.gaussians.reset_opacity()
                 

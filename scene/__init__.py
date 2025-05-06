@@ -102,7 +102,7 @@ class Scene:
 
         if not skip_coarse and load_iteration is None:
             with torch.no_grad():
-                self.train_camera.update_target(self.gaussians._xyz[~self.gaussians.target_mask].mean(dim=0).cpu())
+                self.train_camera.update_target(self.gaussians._xyz.mean(dim=0).cpu())
 
         
         

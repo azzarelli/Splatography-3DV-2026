@@ -168,8 +168,8 @@ class GridSet(nn.Module):
 
         fine = idwt((yl, yh))
 
-        # if self.what == 'spacetime':
-        #     return fine + 1.
+        if self.what == 'spacetime':
+            return fine + 1.
         return fine
     
     def yl_only(self):
