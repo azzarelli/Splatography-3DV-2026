@@ -8,20 +8,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-OFFSETS = torch.tensor([
-    [-1.0, 0.0],
-    [-0.5, 0.0],
-    [0.5, 0.0],
-    [1.0, 0.0],
-    [0.0, -1.0],
-    [0.0, -0.5],
-    [0.0, 0.5],
-    [0.0, 1.0],
-    [0.5, 0.5],
-    [0.5, -0.5],
-    [-0.5, 0.5],
-    [-0.5, -0.5]
-]).cuda().unsqueeze(0)
+# OFFSETS = torch.tensor([
+#     [-1.0, 0.0],
+#     [-0.5, 0.0],
+#     [0.5, 0.0],
+#     [1.0, 0.0],
+#     [0.0, -1.0],
+#     [0.0, -0.5],
+#     [0.0, 0.5],
+#     [0.0, 1.0],
+#     [0.5, 0.5],
+#     [0.5, -0.5],
+#     [-0.5, 0.5],
+#     [-0.5, -0.5]
+# ]).cuda().unsqueeze(0)
 
 def interpolate_features_MUL(pts, time, kplanes, idwt, scales):
     """Generate features for each point

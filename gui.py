@@ -212,23 +212,26 @@ class GUI(GUIBase):
         if self.view_test == False:
             self.test_viewpoint_stack = self.scene.getTestCameras()
             self.random_loader  = True
+            self.viewpoint_stack = self.scene.getTrainCameras()
+            self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
+                                                num_workers=32, collate_fn=list))
+            
+            # if self.stage == 'fine':
+            #     print('Loading Fine (t = any) dataset')
+            #     # self.scene.getTrainCameras().dataset.get_mask = True
 
-            if self.stage == 'fine':
-                print('Loading Fine (t = any) dataset')
-                # self.scene.getTrainCameras().dataset.get_mask = True
+            #     self.viewpoint_stack = self.scene.getTrainCameras()
+            #     self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
+            #                                         num_workers=32, collate_fn=list))
+            #     # self.scene.getTrainCameras().dataset.get_mask = False
+            # if self.stage == 'coarse': 
+            #     print('Loading Coarse (t=0) dataset')
+            #     self.scene.getTrainCameras().dataset.get_mask = True
+            #     self.viewpoint_stack = [[self.scene.index_train((i*self.total_frames)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
+            #     self.scene.getTrainCameras().dataset.get_mask = False
 
-                self.viewpoint_stack = [self.scene.index_train(i) for i in range(self.total_frames*4)] # self.scene.getTrainCameras()
-                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
-                                                    num_workers=32, collate_fn=list))
-                # self.scene.getTrainCameras().dataset.get_mask = False
-            if self.stage == 'coarse': 
-                print('Loading Coarse (t=0) dataset')
-                self.scene.getTrainCameras().dataset.get_mask = True
-                self.viewpoint_stack = [[self.scene.index_train((i*self.total_frames)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
-                self.scene.getTrainCameras().dataset.get_mask = False
-
-                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=self.random_loader,
-                                                    num_workers=32, collate_fn=list))
+            #     self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=self.random_loader,
+            #                                         num_workers=32, collate_fn=list))
                 
     @property
     def get_zero_cams(self):
@@ -278,11 +281,6 @@ class GUI(GUIBase):
         viewspace_point_tensor_list = []
 
         L1 = torch.tensor(0.).cuda()
-        dyn_target_loss = torch.tensor(0.).cuda()
-        dyn_scale_loss= torch.tensor(0.).cuda()
-        opacloss = torch.tensor(0.).cuda()
-        pg_loss = torch.tensor(0.).cuda()
-        depth_loss = torch.tensor(0.).cuda()
         
         radii_list, visibility_filter_list, viewspace_point_tensor_list, L1, extra_losses = render_batch(
             viewpoint_cams, 
@@ -293,18 +291,21 @@ class GUI(GUIBase):
             iteration=self.iteration
         )
         
-        patchloss, normloss = extra_losses
+        depthloss, normloss = extra_losses
         
         
-        opacloss += 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
-        opacloss += ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+        hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+        wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
 
         # scale_exp = self.gaussians.get_scaling
         # pg_loss = 0.01* (scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
         
         if self.stage == 'coarse':
+            planeloss = 0.
+
             normloss += self.gaussians.compute_static_rigidity_loss(self.iteration)
-            max_gauss_ratio = 10
+            
+            max_gauss_ratio = 5
             scale_exp = self.gaussians.get_scaling
             pg_loss = (
                 torch.maximum(
@@ -313,10 +314,12 @@ class GUI(GUIBase):
                 )
                 - max_gauss_ratio
             ).mean()
+            
         elif self.stage == 'fine':
+            pg_loss = 0.
             # dyn_target_loss += self.gaussians.compute_rigidity_loss(self.iteration)
             
-            L1 += self.gaussians.compute_regulation(
+            planeloss = self.gaussians.compute_regulation(
                 self.hyperparams.time_smoothness_weight, self.hyperparams.l1_time_planes, self.hyperparams.plane_tv_weight
             )
             # max_gauss_ratio = 10
@@ -334,17 +337,20 @@ class GUI(GUIBase):
             #     self.background,
             # )
 
-        loss = L1 + pg_loss + dyn_scale_loss + opacloss +normloss+ dyn_target_loss + patchloss
-
+        loss = L1 +  planeloss + \
+            depthloss +\
+                hopacloss + wopacloss +\
+                   normloss + \
+                       pg_loss
         
         with torch.no_grad():
             if self.gui:
                     dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
-                    dpg.set_value("_log_loss", f"Loss: {loss.item()} ")
-                    dpg.set_value("_log_opacs", f"Opac loss: {opacloss} ")
-                    dpg.set_value("_log_depth", f"Depth loss: {pg_loss} ")
-                    dpg.set_value("_log_dynscales", f"Scales : {patchloss} ")
-                    dpg.set_value("_log_knn", f"Norm Rigidity loss: {normloss} ")
+                    dpg.set_value("_log_loss", f"Loss: {L1.item()} | Planes {planeloss} ")
+                    dpg.set_value("_log_opacs", f"h/w: {hopacloss}  |  {wopacloss} ")
+                    dpg.set_value("_log_depth", f"PhysG: {pg_loss} ")
+                    dpg.set_value("_log_dynscales", f"Norms : {normloss} ")
+                    dpg.set_value("_log_knn", f"Depth: {depthloss} ")
                     if (self.iteration % 2) == 0:
                         dpg.set_value("_log_points", f"Scene Pts: {(~self.gaussians.target_mask).sum()} | Target Pts: {(self.gaussians.target_mask).sum()} ")
                     
@@ -353,17 +359,17 @@ class GUI(GUIBase):
                 self.track_cpu_gpu_usage(0.1)
             # Error if loss becomes nan
             if torch.isnan(loss).any():
-                if torch.isnan(pg_loss):
-                    print("PG loss is nan!")
-                if torch.isnan(opacloss):
-                    print("Opac loss is nan!")
-                if torch.isnan(dyn_scale_loss):
-                    print("Dyn loss is nan!")
-                if torch.isnan(dyn_target_loss):
-                    print("Dyn target loss is nan!")
-                        
+                # if torch.isnan(pg_loss):
+                #     print("PG loss is nan!")
+                # if torch.isnan(opacloss):
+                #     print("Opac loss is nan!")
                 # if torch.isnan(dyn_scale_loss):
-                #     print("Dyn Scale is nan!")
+                #     print("Dyn loss is nan!")
+                # if torch.isnan(dyn_target_loss):
+                #     print("Dyn target loss is nan!")
+                        
+                # # if torch.isnan(dyn_scale_loss):
+                # #     print("Dyn Scale is nan!")
                     
                 print("loss is nan, end training, reexecv program now.")
                 os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -388,11 +394,12 @@ class GUI(GUIBase):
             torch.cuda.synchronize()
             # Save scene when at the saving iteration
             if (self.iteration in self.saving_iterations) or (self.stage == 'coarse' and self.iteration == 2999):
-                print("\n[ITER {}] Saving Gaussians".format(self.iteration))
-                self.scene.save(self.iteration, self.stage)
+                pass
+                # print("\n[ITER {}] Saving Gaussians".format(self.iteration))
+                # self.scene.save(self.iteration, self.stage)
     
-                print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
-                torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
+                # print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
+                # torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
     
 
             self.timer.start()

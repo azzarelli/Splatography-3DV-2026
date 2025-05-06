@@ -15,6 +15,43 @@ from torch.autograd import Variable
 from math import exp
 import lpips
 
+
+
+import torch.nn.functional as F
+
+def local_triplet_ranking_loss(depth_pred, depth_target, margin=0.05, patch_size=3):
+    """
+    Computes triplet ranking loss over local patches in the depth map.
+    - depth_pred: predicted depth (Gaussian Splatting) — shape [1, H, W]
+    - depth_target: reference depth (Monocular Estimator) — shape [1, H, W]
+    """
+    B, H, W = 1, *depth_pred.shape[-2:]
+    pad = patch_size // 2
+
+    # Unfold to extract local patches
+    pred_patches = F.unfold(depth_pred.unsqueeze(0), kernel_size=patch_size, padding=pad)
+    target_patches = F.unfold(depth_target.unsqueeze(0), kernel_size=patch_size, padding=pad)
+
+    # pred_patches, target_patches: [1, patch_size*patch_size, H*W]
+    pred_center = depth_pred.view(1, 1, -1)  # shape: [1, 1, H*W]
+    target_center = depth_target.view(1, 1, -1)
+
+    # Broadcast for anchor-positive comparisons
+    pred_diff = pred_patches - pred_center  # shape: [1, P, H*W]
+    target_diff = target_patches - target_center
+
+    # Determine sign of relative order in target
+    target_order = torch.sign(target_diff)  # -1, 0, 1
+
+    # Use only non-zero relative order (i.e., ignore ties)
+    valid = target_order != 0
+
+    # Triplet hinge loss: enforce same sign in prediction as in target
+    loss = F.relu(margin - target_order * pred_diff)
+    loss = loss[valid].mean()
+
+    return loss
+
 def smooth_boolean_mask(mask, kernel_size=3):
     """
     Returns:

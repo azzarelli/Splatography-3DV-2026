@@ -191,7 +191,7 @@ def linear_rgb_to_srgb(linear_rgb: torch.Tensor) -> torch.Tensor:
     srgb[above] = 1.055 * (linear_rgb[above] ** (1/2.4)) - 0.055
     return srgb
 
-from utils.loss_utils import l1_loss, l1_loss_masked
+from utils.loss_utils import l1_loss, l1_loss_masked,local_triplet_ranking_loss
 def render_batch(
     viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
     stage="fine", iteration=0):
@@ -208,6 +208,7 @@ def render_batch(
     
     L1 = 0.
     norm_loss = 0.
+    depth_loss = 0.
     radii_list = []
     visibility_filter_list = []
     viewspace_point_tensor_list = []
@@ -290,100 +291,28 @@ def render_batch(
         radii[pc.target_mask] = target_radii
         
         gt_img = viewpoint_camera.original_image.cuda()
+        depth_pseudo = viewpoint_camera.mask.cuda()
         # gt_img = srgb_to_linear_rgb(gt_img)
         
         L1 += l1_loss(rendered_image, gt_img)
 
-        patchloss = 0.
-        if stage == 'coarse':
-            mask = viewpoint_camera.mask.cuda()
-            L1 += l1_loss(target_rgb, gt_img*mask)
+        # Depth pred
+        depth_loss += local_triplet_ranking_loss(depth_pseudo, rendered_depth)
+        
+        # if stage == 'coarse':
+        #     mask = viewpoint_camera.mask.cuda()
+        #     L1 += l1_loss(target_rgb, gt_img*mask)
             
-        elif stage == 'fine' :
+        if stage == 'fine' :
             # norms
             norm_loss += pc.compute_normals_rigidity(norms=norms)
             
-            valid_mask = target_depth[0] > 0
-
-            # valid_indices = valid_mask.nonzero(as_tuple=False)  # Shape: (N, 2)
-            # min_row = valid_indices[:, 0].min()
-            # max_row = valid_indices[:, 0].max()
-            # min_col = valid_indices[:, 1].min()
-            # max_col = valid_indices[:, 1].max()
-
-            # L1 += l1_loss(rendered_image[:, min_row:max_row + 1, min_col:max_col + 1], gt_img[:, min_row:max_row + 1, min_col:max_col + 1])
-            # pass
-            # patch_size = 32
-
-            # # Mask out non-relevant regions; here mask is actually the depth image
-            # depth_mask = (target_depth > 0) * viewpoint_camera.mask.cuda()
-
-            # # Patchify
-            # d = patchify(target_depth.unsqueeze(0), patch_size)  # actual depth
-            # d_e = patchify(depth_mask.unsqueeze(0), patch_size)  # mono-depth binary mask
-
-            # # Compute means excluding zeros (masked mean)
-            # mu = masked_mean(d)              # shape: (N, 1)
-            # mu_e = masked_mean(d_e)          # shape: (N, 1)
-
-            # # Expand means to match shape of d
-            # mu_exp = mu.expand_as(d)
-            # mu_e_exp = mu_e.expand_as(d)
-
-            # # Condition mask: select values to nudge
-            # condition = (
-            #     ((d > mu_exp) & (d_e < mu_e_exp)) |  # When d is behind but should be infront
-            #     ((d < mu_exp) & (d_e > mu_e_exp))    # visa versa
-            # ) & (d > 0)
-
-            # # For points that meat this condition, push them 0.1 closer to the mean
-            # patchloss = 0.01 * (0.1 * (d[condition] - mu_exp[condition])).abs().mean()
-            # patch_size = 32
-            
-            # # Mask out non relevant regions
-            # depth = (target_depth > 0)* viewpoint_camera.mask.cuda()
-            # # print(target_depth.shape)
-            # d_e = patchify(depth.unsqueeze(0), patch_size) # (-1, MxM) bascially shaped (-1, 1024)
-            # d = patchify(target_depth.unsqueeze(0), patch_size) # get normalization without zero values
-            
-            # mu_e = masked_mean(d_e)
-            # mu = masked_mean(d) #.mean(-1, keepdim=True)
-            
-            # z_xor = (((d_e > mu_e) & (d < mu)) ^ ((d_e < mu_e) & (d > mu))) & (d > 0)
-            # mu_expanded = mu.expand_as(d)
-            # L1 += 0.01*(d[z_xor] - mu_expanded[z_xor]).abs().mean()
-            # Using Tukey IQR based outlier detection (not using depth preds but maybe worth it)?
-            # If not we can go for somethign a bit more complex like mean adjusted but for IQR
-            # patch_size = 16
-            # # # Mask out non-relevant regions
-            # # # depth = (target_depth > 0) * viewpoint_camera.mask.cuda()
-            # # # d_e = patchify(depth.unsqueeze(0), patch_size)  # shape: (N, MxM)
-            # d = patchify(target_depth.unsqueeze(0), patch_size)  # shape: (N, MxM)
-
-            # # Calculate Q1, Q3 and IQR per patch
-            # Q1 = d.quantile(0.10, dim=1, keepdim=True)  # shape: (N, 1)
-            # Q3 = d.quantile(0.90, dim=1, keepdim=True)
-            # IQR = Q3 - Q1
-
-            # # Tukey oulier detection
-            # lower_bound = Q1 - 1.5 * IQR
-            # upper_bound = Q3 + 1.5 * IQR
-
-            # # Create mask of outliers (below lower or above upper) AND valid depth
-            # outlier_mask = ((d < lower_bound) | (d > upper_bound)) & (d > 0)
-
-            # # Use per-patch mean for normalization (could use median if more robust)
-            # mu = masked_mean(d)
-            # mu_expanded = mu.expand_as(d)
-
-            # # L1 loss only on outlier values
-            # L1 += 0.0001 * ((d[outlier_mask] - mu_expanded[outlier_mask])**2).mean()
             
         radii_list.append(radii.unsqueeze(0))
         visibility_filter_list.append((radii > 0).unsqueeze(0))
         viewspace_point_tensor_list.append(screenspace_points)
     
-    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (patchloss, norm_loss)
+    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss)
 
 
 def masked_mean(patches):

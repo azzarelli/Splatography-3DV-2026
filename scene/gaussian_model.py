@@ -697,6 +697,9 @@ class GaussianModel:
         self.densification_postfix(new_xyz, new_colors,new_opacities, new_scaling, new_rotation)
     
     def generate_neighbours(self, points):
+        # Maybe we can get NN by sampling every 0.25 time steps
+        # getting the neighbours at each time step? Maybe by selecting the closest
+        # points independant of time?
         edge_index = knn_graph(points, k=5, batch=None, loop=False)
         self.target_neighbours = edge_index
 

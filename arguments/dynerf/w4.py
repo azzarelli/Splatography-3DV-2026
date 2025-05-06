@@ -4,14 +4,14 @@ ModelHiddenParams = dict(
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
      'resolution': [512, 50],
-     'wavelevel':2
+     'wavelevel':4
     },
 
     net_width = 128,
     
-    plane_tv_weight = 0.0005,
+    plane_tv_weight = 0.0002,
     time_smoothness_weight = 0.001,
-    l1_time_planes =  0.001,
+    l1_time_planes =  0.0005,
     opacity_lambda = 0.,
     
 )
