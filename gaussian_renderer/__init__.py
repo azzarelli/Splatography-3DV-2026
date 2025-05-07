@@ -318,9 +318,7 @@ def render_batch(
             depth_pseudo = viewpoint_camera.mask.cuda()
             depth_mask = target_depth > 0
             # depth_loss += local_triplet_ranking_loss(depth_pseudo, rendered_depth)
-        
-        
-                
+    
     
         radii_list.append(radii.unsqueeze(0))
         visibility_filter_list.append((radii > 0).unsqueeze(0))

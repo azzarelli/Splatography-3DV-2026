@@ -8,6 +8,7 @@ from scene.triplanes import TriPlaneField
 import time
 
 from torch_cluster import knn_graph
+from utils.general_utils import strip_symmetric, build_scaling_rotation
 
 
 class Deformation(nn.Module):
@@ -23,6 +24,17 @@ class Deformation(nn.Module):
 
         self.ratio=0
         self.create_net()
+        
+        
+        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
+            L = build_scaling_rotation(scaling_modifier * scaling, rotation)
+            actual_covariance = L @ L.transpose(1, 2)
+            symm = strip_symmetric(actual_covariance)
+            return symm
+
+        # inputs scaling, scalingmod=1.0, rotation
+        self.covariance_activation = build_covariance_from_scaling_rotation
+
         
     @property
     def get_aabb(self):
@@ -52,24 +64,24 @@ class Deformation(nn.Module):
     def update_wavelevel(self):
         self.grid.update_J()
 
-    def query_spacetime(self, rays_pts_emb, time, scale_emb, mask=None):
+    def query_spacetime(self, rays_pts_emb, time, covariances, mask=None):
         
         if mask is not None:
-            space, spacetime = self.grid(rays_pts_emb[mask,:3], time[mask,:], scale_emb[mask, :3])
+            space, spacetime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances)
         else:
-            space, spacetime = self.grid(rays_pts_emb[:,:3], time, scale_emb[:, :3])
+            space, spacetime = self.grid(rays_pts_emb[:,:3], time, covariances)
 
         st = self.spacetime_enc(space * spacetime)
-        return st, space * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
+        return st, space # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
 
-    def query_spacetheta(self, rays_pts_emb, angle, st_feature, mask=None):
+    def query_spacetheta(self, rays_pts_emb, angle, input_feature, mask=None):
         
         if mask is not None:
             angle_feature = self.grid.theta(rays_pts_emb[mask,:3], angle)
         else:
             angle_feature = self.grid.theta(rays_pts_emb[:,:3], angle)
 
-        sttheta = self.color_enc(st_feature*angle_feature)
+        sttheta = self.color_enc(input_feature*angle_feature)
         return sttheta
 
     # def get_dx_coeffs(self, xyz, scale):
@@ -81,7 +93,9 @@ class Deformation(nn.Module):
     #     return dx, rot, col, None
 
     def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):
-        dyn_feature, spacetime_feature = self.query_spacetime(rays_pts_emb,time_emb,scale_emb, target_mask)
+        covariances = self.covariance_activation(scale_emb[target_mask], 1., rotations_emb[target_mask])
+        
+        dyn_feature, spacetime_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
         
         # Change in rotation
         rotations = rotations_emb + 0.

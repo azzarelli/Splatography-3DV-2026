@@ -479,6 +479,7 @@ class GaussianModel:
         return optimizable_tensors
 
     def prune_points(self, mask):
+        mask = torch.logical_and(mask, ~self.target_mask)
         valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
@@ -500,6 +501,7 @@ class GaussianModel:
         
     def densification_postfix(self, new_xyz,new_colors, new_opacities, new_scaling, new_rotation):
         d = {"xyz": new_xyz,
+
         "scaling" : new_scaling,
         "opacity": new_opacities,
         "rotation" : new_rotation,
@@ -533,7 +535,7 @@ class GaussianModel:
         grads_abs = self.xyz_gradient_accum_abs / self.denom
         grads_abs[grads_abs.isnan()] = 0.0
         
-        # self.densify_and_clone(extent, grads=grads, grad_threshold=max_grad)
+        self.densify_and_clone(extent, grads=grads, grad_threshold=max_grad)
         self.densify_and_split(extent, grads=grads_abs, grad_threshold=max_grad)
     
     def densify_and_clone(self, scene_extent, grads,grad_threshold ):
@@ -569,43 +571,30 @@ class GaussianModel:
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
         
         # Only select non-target points for densification
-        selected_pts_mask =  torch.logical_and(selected_pts_mask, self.target_mask)
-
-
-        # Split along the long axis of the gaussian
-        new_scaling = self._scaling[selected_pts_mask]
-        stds_mask = torch.zeros_like(new_scaling, device=new_scaling.device, dtype=torch.bool)
-        max_idx = torch.argmax(new_scaling, dim=1)
-        # Mask for max axis
-        row_idx = torch.arange(new_scaling.size(0), device=new_scaling.device)
-        stds_mask[row_idx, max_idx] = True
-        # Half the large axis, 85% of other axis
-        new_scaling[stds_mask] = new_scaling[stds_mask] *0.5
-        new_scaling[~stds_mask] = new_scaling[~stds_mask] * 0.85
-        new_opacity = self._opacity[selected_pts_mask]
-        new_opacity[:,0] = new_opacity[:, 0] * 0.60
-        max_normal = rotated_softmax_axis_direction(self.get_rotation[selected_pts_mask], self.get_scaling[selected_pts_mask])
-        scaling = self.get_scaling[selected_pts_mask]
-        max_extent = torch.max(scaling, dim=1, keepdim=True).values  # (N, 1)
-        offset = max_normal * (max_extent / 2)
-        new_xyz = torch.cat([
-            self._xyz[selected_pts_mask] - offset,
-            self._xyz[selected_pts_mask] + offset
-        ], dim=0)
+        selected_pts_mask = torch.logical_and(selected_pts_mask, self.target_mask)
         
-        new_rotation = self._rotation[selected_pts_mask].repeat(2, 1)
-        new_colors = self._colors[selected_pts_mask].repeat(2, 1)
-        new_scaling = new_scaling.repeat(2,1)
-
-        new_opacity = new_opacity.repeat(2, 1)
+        N = 2
+        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
+        means =torch.zeros((stds.size(0), 3),device="cuda")
+        samples = torch.normal(mean=means, std=stds)
+        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
+        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
+        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
+        # new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
+        # new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
+        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+        new_colors = self._colors[selected_pts_mask].repeat(N,1)
+        
         # Update target mask
-        new_target_mask = self.target_mask[selected_pts_mask].repeat(2)
+        new_target_mask = self.target_mask[selected_pts_mask].repeat(N)
         self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)            
 
         self.densification_postfix(new_xyz,new_colors,new_opacity, new_scaling, new_rotation)
-        
-        prune_filter = torch.cat((selected_pts_mask, torch.zeros(2 * selected_pts_mask.sum().item(), device="cuda", dtype=bool)))
+
+        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
+
     
 
     def compute_topac_width(self, w, h, threshold=0.05):
@@ -863,25 +852,7 @@ def rotated_softmin_axis_direction(r, s, temperature=10.0):
     rotated = quaternion_rotate(r, soft_axis)  # (N, 3)
 
     return rotated        
-
-def rotated_softmax_axis_direction(r, s, temperature=10.0):
-    # s: (N, 3), we want the direction of the largest abs scale
-    abs_s = torch.abs(s)
-
-    # Step 1: Compute softmax weights (higher abs(s) => higher weight)
-    weights = F.softmax(abs_s * temperature, dim=1)  # (N, 3)
-
-    # Step 2: Basis axes: x, y, z
-    basis = torch.eye(3, device=s.device).unsqueeze(0)  # (1, 3, 3)
-
-    # Step 3: Weighted sum of basis vectors
-    soft_axis = torch.bmm(weights.unsqueeze(1), basis.repeat(s.size(0), 1, 1)).squeeze(1)  # (N, 3)
-
-    # Step 4: Rotate the direction
-    rotated = quaternion_rotate(r, soft_axis)  # (N, 3)
-
-    return rotated
-       
+         
 def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
     device = xyz.device
     N = xyz.shape[0]
