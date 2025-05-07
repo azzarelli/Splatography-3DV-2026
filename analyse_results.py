@@ -5,8 +5,10 @@ import matplotlib.pyplot as plt
 root = './output/dynerf/'
 folder = 'flame_salmon/'
 
-focal_word = 'covloss1'
-bench_marks = ['covloss','wavelevel','pseudodepth1','tune','l1001norms','l10001norms','tv001norms', 'tv0005norms', 'w2norms','w4norms','1norms','01norms','001norms','0005norms','0025norms','005norms','sigW1']
+focal_word = 'covloss3'
+bench_marks = ['covloss2','covloss2','covloss','wavelevel']
+
+# ,'pseudodepth1','tune','l1001norms','l10001norms','tv001norms', 'tv0005norms', 'w2norms','w4norms','1norms','01norms','001norms','0005norms','0025norms','005norms','sigW1']
 
 
 # ,'sigW4', 'sigW5', 'sigW6', 'sigW7','sigW8','sigW9','rigid1','rigid3']

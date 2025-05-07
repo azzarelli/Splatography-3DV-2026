@@ -190,7 +190,7 @@ class WavePlaneField(nn.Module):
         for i in range(3):
             what = 'spacetime'
             res = [self.grid_config['resolution'][0],
-                self.grid_config['resolution'][0]]
+                360]
             
             gridset = GridSet(
                 what=what,

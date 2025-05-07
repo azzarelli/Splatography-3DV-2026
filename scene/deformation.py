@@ -59,7 +59,7 @@ class Deformation(nn.Module):
         self.rgb_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
         # intial rgb, temporal rgb, rotation
-        self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size*2, net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
     def update_wavelevel(self):
         self.grid.update_J()
@@ -111,8 +111,7 @@ class Deformation(nn.Module):
     
         shs = shs_emb + 0.
         # gaussian_integral(w) *  self.rgb_deform(st_feature).view(-1, 3)
-        
-        shs[target_mask] += self.rgb_decoder(col_feature) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
+        shs[target_mask] += self.rgb_decoder(torch.cat([dyn_feature,col_feature], dim=-1)) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
         
         pts = rays_pts_emb + 0. #.clone()        
         pts[target_mask] += self.pos_coeffs(dyn_feature)
