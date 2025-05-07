@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from submodules.pytorch_wavelets_.dwt.transform2d import DWTForward
+from submodules.pytorch_wavelets_.dwt.transform2d import DWTForward,DWTInverse
 
 
 def normalize_aabb(pts, aabb):
@@ -81,6 +81,7 @@ class GridSet(nn.Module):
         super().__init__()
 
         self.what = what
+        self.config = config
         self.is_proposal = is_proposal
         self.running_compressed = False
         self.cachesig = cachesig
@@ -93,9 +94,14 @@ class GridSet(nn.Module):
         self.wave = config['wave']
         self.mode = config['wave_mode']
         self.J = J
+        self.current_J = J
+        
 
         # Initialise a signal to DWT into our initial Wave coefficients
         dwt = DWTForward(J=J, wave=config['wave'], mode=config['wave_mode']).cuda()
+        
+        self.idwt = DWTInverse(wave='coif4', mode='periodization').cuda().float()
+        
         init_plane = torch.empty(
             [1, config['feature_size'], resolution[0], resolution[1]]
         ).cuda()
@@ -150,39 +156,34 @@ class GridSet(nn.Module):
 
         return ms
 
-    def idwt_transform(self, idwt):
-        coeffs = []
-        for i in range(self.J + 1):
-            coeffs.append(self.grids[i])
+    def update_J(self):
+        pass
+        # if self.current_J <= self.J:
+        #     self.current_J += 1
 
+    def idwt_transform(self):
         yl = 0.
         yh = []
-
         for i in range(self.J + 1):
             if i == 0:
-                yl = self.scaler[i] * coeffs[i]
+                yl = self.scaler[i] * self.grids[i]
             else:
-                co = self.scaler[i] * coeffs[i]
+                co = self.scaler[i] * self.grids[i]
                 yh.append(co)
 
-        fine = idwt((yl, yh))
+        # yh_rev = yh[::-1]
+        # yh_rev = yh_rev[:self.current_J]
+        # yh = yh_rev[::-1]
+        fine = self.idwt((yl, yh))
 
         if self.what == 'spacetime':
             return fine + 1.
         return fine
-    
-    def yl_only(self):
 
-        fine = self.scaler[0] * self.grids[0]
-        if self.what == 'spacetime':
-            return fine + 1.
-        return fine
-
-
-    def forward(self, pts, idwt):
+    def forward(self, pts):
         """Given a set of points sample the dwt transformed Kplanes and return features
         """
-        plane = self.idwt_transform(idwt)
+        plane = self.idwt_transform()
             
         signal = []
         
@@ -194,8 +195,6 @@ class GridSet(nn.Module):
             grid_sample_wrapper(plane, pts)
             .view(-1, plane.shape[1])
         )        
-        # visualize_grid_and_coords(plane, pts)
-
 
         self.signal = signal
         self.step += 1

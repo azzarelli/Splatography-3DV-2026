@@ -23,7 +23,7 @@ import torch.nn.functional as F
 #     [-0.5, -0.5]
 # ]).cuda().unsqueeze(0)
 
-def interpolate_features_MUL(pts, time, kplanes, idwt, scales):
+def interpolate_features_MUL(pts, time, kplanes):
     """Generate features for each point
     """
     # time m feature
@@ -48,16 +48,16 @@ def interpolate_features_MUL(pts, time, kplanes, idwt, scales):
             # feature = kplanes[i](data_, idwt)
             
             # feature = feature.view(-1,13,feature.shape[-1]).mean(1)
-            feature = kplanes[i](data[..., (q,r)], idwt)
+            feature = kplanes[i](data[..., (q,r)])
             space = space * feature
 
         elif i in [2, 4, 5]:
-            spacetime = spacetime * kplanes[i](data[..., (r, q)], idwt)
+            spacetime = spacetime * kplanes[i](data[..., (r, q)])
 
     return space, spacetime
    
 
-def interpolate_features_theta(pts, angle, kplanes, idwt):
+def interpolate_features_theta(pts, angle, kplanes):
     """Generate features for each point
     """
     feature = 1.
@@ -69,7 +69,7 @@ def interpolate_features_theta(pts, angle, kplanes, idwt):
     for i in range(len(coords)):
         q,r = coords[i]
 
-        feature = feature * kplanes[6+i](data[..., (q,r)], idwt)
+        feature = feature * kplanes[6+i](data[..., (q,r)])
     return feature
    
 
@@ -142,8 +142,6 @@ class WavePlaneField(nn.Module):
         self.grids = nn.ModuleList()
 
         # Define the DWT functon
-        self.idwt = DWTInverse(wave='coif4', mode='periodization').cuda().float()
-
         self.cacheplanes = True
         self.is_waveplanes = True
         
@@ -218,6 +216,11 @@ class WavePlaneField(nn.Module):
         self.aabb = nn.Parameter(aabb, requires_grad=False)
         print("Voxel Plane: set aabb=", self.aabb)
 
+    def update_J(self):
+        for grid in self.grids:
+            grid.update_J()
+        print(f'Updating J to {self.grids[0].current_J}')
+
     def grids_(self, regularise_wavelet_coeff: bool = False, time_only: bool = False, notflat: bool = False):
         """Return the grids as a list of parameters for regularisation
         """
@@ -225,10 +228,7 @@ class WavePlaneField(nn.Module):
         for i in range(len(self.grids)):
             gridset = self.grids[i]
 
-            if self.cacheplanes:
-                ms_feature_planes = gridset.signal
-            else:
-                ms_feature_planes = gridset.idwt_transform(self.idwt)
+            ms_feature_planes = gridset.signal
 
             # Initialise empty ms_planes
             if ms_planes == []:
@@ -245,10 +245,10 @@ class WavePlaneField(nn.Module):
         time = (time*2.)-1. # go from 0 to 1 to -1 to +1 for grid interp
 
         return interpolate_features_MUL(
-            pts,time, self.grids, self.idwt,scales)
+            pts,time, self.grids)
 
     def theta(self, pts, angle):
         pts = normalize_aabb(pts, self.aabb)
         pts = pts.reshape(-1, pts.shape[-1])
         return interpolate_features_theta(
-            pts,angle, self.grids, self.idwt)
+            pts,angle, self.grids)

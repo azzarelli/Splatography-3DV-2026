@@ -49,6 +49,8 @@ class Deformation(nn.Module):
         # intial rgb, temporal rgb, rotation
         self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
+    def update_wavelevel(self):
+        self.grid.update_J()
 
     def query_spacetime(self, rays_pts_emb, time, scale_emb, mask=None):
         
@@ -221,6 +223,9 @@ class deform_network(nn.Module):
     def get_aabb(self):
         
         return self.deformation_net.get_aabb
+
+    def update_wavelevel(self):
+        self.deformation_net.update_wavelevel()
 
     def get_mlp_parameters(self):
         return self.deformation_net.get_mlp_parameters() 

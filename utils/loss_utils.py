@@ -19,7 +19,7 @@ import lpips
 
 import torch.nn.functional as F
 
-def local_triplet_ranking_loss(depth_pred, depth_target, margin=0.05, patch_size=3):
+def local_triplet_ranking_loss(depth_pred, depth_target, margin=0.05, patch_size=9):
     """
     Computes triplet ranking loss over local patches in the depth map.
     - depth_pred: predicted depth (Gaussian Splatting) — shape [1, H, W]

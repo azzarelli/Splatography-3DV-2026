@@ -25,7 +25,7 @@ OptimizationParams = dict(
     densify_from_iter=3000, #best at 3001
     densify_until_iter=10_000,
     densification_interval=100,
-    densify_grad_threshold=0.0001,
+    densify_grad_threshold=0.00001,
     opacity_reset_interval = 3000,    
 
     pruning_interval = 100,

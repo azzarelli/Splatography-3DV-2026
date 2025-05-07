@@ -212,26 +212,23 @@ class GUI(GUIBase):
         if self.view_test == False:
             self.test_viewpoint_stack = self.scene.getTestCameras()
             self.random_loader  = True
-            self.viewpoint_stack = self.scene.getTrainCameras()
-            self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
-                                                num_workers=32, collate_fn=list))
-            
-            # if self.stage == 'fine':
-            #     print('Loading Fine (t = any) dataset')
-            #     # self.scene.getTrainCameras().dataset.get_mask = True
 
-            #     self.viewpoint_stack = self.scene.getTrainCameras()
-            #     self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
-            #                                         num_workers=32, collate_fn=list))
-            #     # self.scene.getTrainCameras().dataset.get_mask = False
-            # if self.stage == 'coarse': 
-            #     print('Loading Coarse (t=0) dataset')
-            #     self.scene.getTrainCameras().dataset.get_mask = True
-            #     self.viewpoint_stack = [[self.scene.index_train((i*self.total_frames)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
-            #     self.scene.getTrainCameras().dataset.get_mask = False
+            if self.stage == 'fine':
+                print('Loading Fine (t = any) dataset')
+                # self.scene.getTrainCameras().dataset.get_mask = True
 
-            #     self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=self.random_loader,
-            #                                         num_workers=32, collate_fn=list))
+                self.viewpoint_stack = self.scene.getTrainCameras()
+                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
+                                                    num_workers=32, collate_fn=list))
+                # self.scene.getTrainCameras().dataset.get_mask = False
+            if self.stage == 'coarse': 
+                print('Loading Coarse (t=0) dataset')
+                self.scene.getTrainCameras().dataset.get_mask = True
+                self.viewpoint_stack = [[self.scene.index_train((i*self.total_frames)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
+                self.scene.getTrainCameras().dataset.get_mask = False
+
+                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=self.random_loader,
+                                                    num_workers=32, collate_fn=list))
                 
     @property
     def get_zero_cams(self):
@@ -270,8 +267,10 @@ class GUI(GUIBase):
         if self.iteration % 100 == 0:
             self.gaussians.oneupSHdegree()
         
-        if self.iteration % 100 == 0 or self.gaussians.target_neighbours is None:
-            self.gaussians.update_neighbours()
+        # if self.stage == 'fine' and self.iteration % 1000 == 0 and self.iteration > 1:
+        #     self.gaussians.update_wavelevel()
+        
+        
           
         viewpoint_cams = self.get_batch_views
 
@@ -291,7 +290,7 @@ class GUI(GUIBase):
             iteration=self.iteration
         )
         
-        depthloss, normloss = extra_losses
+        depthloss, normloss, covloss = extra_losses
         
         
         hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
@@ -341,8 +340,9 @@ class GUI(GUIBase):
             depthloss +\
                 hopacloss + wopacloss +\
                    normloss + \
-                       pg_loss
-        
+                       pg_loss + \
+                           covloss
+        # print( planeloss ,depthloss,hopacloss ,wopacloss ,normloss ,pg_loss,covloss)
         with torch.no_grad():
             if self.gui:
                     dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
@@ -350,7 +350,7 @@ class GUI(GUIBase):
                     dpg.set_value("_log_opacs", f"h/w: {hopacloss}  |  {wopacloss} ")
                     dpg.set_value("_log_depth", f"PhysG: {pg_loss} ")
                     dpg.set_value("_log_dynscales", f"Norms : {normloss} ")
-                    dpg.set_value("_log_knn", f"Depth: {depthloss} ")
+                    dpg.set_value("_log_knn", f"Depth: {depthloss} | cov {covloss} ")
                     if (self.iteration % 2) == 0:
                         dpg.set_value("_log_points", f"Scene Pts: {(~self.gaussians.target_mask).sum()} | Target Pts: {(self.gaussians.target_mask).sum()} ")
                     

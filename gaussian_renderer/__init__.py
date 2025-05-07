@@ -209,13 +209,14 @@ def render_batch(
     L1 = 0.
     norm_loss = 0.
     depth_loss = 0.
+    covloss = 0.
     radii_list = []
     visibility_filter_list = []
     viewspace_point_tensor_list = []
     norms = None
 
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
-    for viewpoint_camera in viewpoint_cams:
+    for idx, viewpoint_camera in enumerate(viewpoint_cams):
         time = time*0. +viewpoint_camera.time
         
         if "coarse" in stage:
@@ -231,10 +232,15 @@ def render_batch(
                 view_dir=viewpoint_camera.direction_normal(),
                 target_mask=pc.target_mask,
             )
-            
+        
+        
+        
         # Do the scaling and rotation activation after deformation
         rotations_final = pc.rotation_activation(rotations_final)
-            
+        
+        if (iteration % 100 == 0 and idx == 0) or pc.target_neighbours is None:
+            pc.update_neighbours(means3D_final[pc.target_mask])
+        
         screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
         try:
             screenspace_points.retain_grad()
@@ -291,28 +297,36 @@ def render_batch(
         radii[pc.target_mask] = target_radii
         
         gt_img = viewpoint_camera.original_image.cuda()
-        depth_pseudo = viewpoint_camera.mask.cuda()
         # gt_img = srgb_to_linear_rgb(gt_img)
         
         L1 += l1_loss(rendered_image, gt_img)
 
-        # Depth pred
-        depth_loss += local_triplet_ranking_loss(depth_pseudo, rendered_depth)
+        # covloss += pc.compute_covariance_loss(
+        #     means3D_final[pc.target_mask],
+        #     rotations_final[pc.target_mask],
+        #     scales[pc.target_mask]
+        # )
         
-        # if stage == 'coarse':
-        #     mask = viewpoint_camera.mask.cuda()
-        #     L1 += l1_loss(target_rgb, gt_img*mask)
+        if stage == 'coarse':
+            mask = viewpoint_camera.mask.cuda()
+            L1 += l1_loss(target_rgb, gt_img*mask)
             
-        if stage == 'fine' :
+        elif stage == 'fine' :
             # norms
             norm_loss += pc.compute_normals_rigidity(norms=norms)
-            
-            
+            # Depth pred
+            depth_pseudo = viewpoint_camera.mask.cuda()
+            depth_mask = target_depth > 0
+            # depth_loss += local_triplet_ranking_loss(depth_pseudo, rendered_depth)
+        
+        
+                
+    
         radii_list.append(radii.unsqueeze(0))
         visibility_filter_list.append((radii > 0).unsqueeze(0))
         viewspace_point_tensor_list.append(screenspace_points)
     
-    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss)
+    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss, covloss)
 
 
 def masked_mean(patches):
