@@ -73,11 +73,11 @@ def lpips_loss(img1, img2, lpips_model):
     loss = lpips_model(img1,img2)
     return loss.mean()
 
-def l1_loss(network_output, gt, mask=None):
-    if mask is None:
+def l1_loss(network_output, gt, weights=None):
+    if weights is None:
         return torch.abs((network_output - gt)).mean()
     else:
-        return torch.abs(smooth_boolean_mask(mask.unsqueeze(0))*(network_output - gt)).mean()
+        return torch.abs(weights*(network_output - gt)).mean()
 
 def l1_loss_masked(pred, gt, mask=None):
     mask = mask.squeeze(0)

@@ -387,32 +387,32 @@ class GUI(GUIBase):
             
             # exit()
             # Save snapshot of waveplanes
-            if self.iteration % 4000 == 0:
-                planes = self.gaussians.get_waveplanes()
+            # if self.iteration % 4000 == 0:
+            #     planes = self.gaussians.get_waveplanes()
 
-                for idx, plane_set in enumerate(planes):
-                    for idx_, plane in enumerate(plane_set):
-                        plane_save = plane.mean(0).mean(0)
+            #     for idx, plane_set in enumerate(planes):
+            #         for idx_, plane in enumerate(plane_set):
+            #             plane_save = plane.mean(0).mean(0)
                         
-                        if plane_save.shape[0] != 3:
-                            plane_save = plane_save.unsqueeze(0).repeat(3,1,1)
+            #             if plane_save.shape[0] != 3:
+            #                 plane_save = plane_save.unsqueeze(0).repeat(3,1,1)
                         
-                        if idx in [0,1,3]:
-                            starter = 'P'
-                        elif idx in [2,4,5]:
-                            starter = 'T'
-                        else:
-                            starter = 'C'
+            #             if idx in [0,1,3]:
+            #                 starter = 'P'
+            #             elif idx in [2,4,5]:
+            #                 starter = 'T'
+            #             else:
+            #                 starter = 'C'
                             
-                        if idx_ == 0:
-                            ender = 'yl'
-                        elif idx_ == 1:
-                            ender = 'yh1'
-                        else:
-                            ender = 'yh0'
+            #             if idx_ == 0:
+            #                 ender = 'yl'
+            #             elif idx_ == 1:
+            #                 ender = 'yh1'
+            #             else:
+            #                 ender = 'yh0'
                             
-                        plane_save = (plane_save - plane_save.min()) / (plane_save.max() - plane_save.min())
-                        save_image(plane_save, f'./output/planes/{starter}{idx}_{ender}_{self.stage}{self.iteration}.png')
+            #             plane_save = (plane_save - plane_save.min()) / (plane_save.max() - plane_save.min())
+            #             save_image(plane_save, f'./output/planes/{starter}{idx}_{ender}_{self.stage}{self.iteration}.png')
             
             radii = torch.cat(radii_list, 0).max(dim=0).values
             visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
@@ -425,7 +425,7 @@ class GUI(GUIBase):
            
             torch.cuda.synchronize()
             # Save scene when at the saving iteration
-            if (self.iteration in self.saving_iterations) or (self.stage == 'coarse' and self.iteration == 2999):
+            if (self.iteration in self.saving_iterations) or (self.stage == 'coarse' and self.iteration == 1000):
                 print("\n[ITER {}] Saving Gaussians".format(self.iteration))
                 self.scene.save(self.iteration, self.stage)
     

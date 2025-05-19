@@ -513,9 +513,9 @@ class GaussianModel:
         grads_abs = self.xyz_gradient_accum_abs / self.denom
         grads_abs[grads_abs.isnan()] = 0.0
         
-        self.split_spikes(extent, grads=grads, grad_threshold=max_grad)
-        # self.densify_and_clone(extent, grads=grads_abs, grad_threshold=max_grad)
-        # self.densify_and_split(extent, grads=grads_abs, grad_threshold=max_grad)
+        # self.split_spikes(extent, grads=grads, grad_threshold=max_grad)
+        self.densify_and_clone(extent, grads=grads_abs, grad_threshold=max_grad)
+        self.densify_and_split(extent, grads=grads_abs, grad_threshold=max_grad)
     
     def densify_and_clone(self, scene_extent, grads,grad_threshold ):
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)

@@ -9,16 +9,15 @@ ModelHiddenParams = dict(
 
     net_width = 128,
     
-    plane_tv_weight = 0., # 0.0005,
-    time_smoothness_weight = 0., # 0.001,
-    l1_time_planes = 0., # 0.001,
+    plane_tv_weight = 0.0005,
+    time_smoothness_weight = 0.001,
+    l1_time_planes =  0.001,
     opacity_lambda = 0.,
     
     minview_weight=0.,
-    tvtotal1_weight=0.00001,
-    spsmoothness_weight=0.1,
-    minmotion_weight=0.00001,
-    
+    tvtotal1_weight=0.0, #0001,
+    spsmoothness_weight=0., #1,
+    minmotion_weight=0.0, #0001,
 )
 
 OptimizationParams = dict(

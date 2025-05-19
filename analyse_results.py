@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 root = './output/dynerf/'
 folder = 'flame_salmon/'
 
-focal_word = 'covloss3'
-bench_marks = ['ABC_Angle0.1', 'ABC_Angle0.01','ABC_Angle0.001','ABC_Angle0.0001', 'ABC_Angle1e-05']
+focal_word = 'ABC_Update1'
+bench_marks = ['covloss3','ABC_Angle0.1', 'ABC_Angle0.01','ABC_Angle0.001','ABC_Angle0.0001', 'ABC_Angle1e-05']
 # bench_marks = ['ABC_SP1e-05','ABC_SP0.0001','ABC_SP0.001', 'ABC_SP0.01','ABC_SP0.1']
 # bench_marks = ['ABC_TV1e-05', 'ABC_TV0.0001', 'ABC_TV0.001','ABC_TV0.01', 'ABC_TV0.1']
 

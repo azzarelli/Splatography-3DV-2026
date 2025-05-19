@@ -10,6 +10,43 @@ import time
 from torch_cluster import knn_graph
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
+# Source: https://www.image-engineering.de/library/technotes/958-how-to-convert-between-srgb-and-ciexyz
+RGB2XYZ = torch.tensor([
+        [0.4124564, 0.3575761, 0.1804375],
+        [0.2126729, 0.7151522, 0.0721750],
+        [0.0193339, 0.1191920, 0.9503041],
+    ], dtype=torch.float).cuda()  # shape (3, 3)
+
+XYZ2RGB = torch.tensor([
+        [ 3.2404542, -1.5371385, -0.4985314],
+        [-0.9692660,  1.8760108,  0.0415560],
+        [ 0.0556434, -0.2040259,  1.0572252],
+    ], dtype=torch.float).cuda()  # shape (3, 3)
+
+
+def rgb_to_xyz(rgb):
+    threshold = 0.04045
+    rgb_linear = torch.where(
+        rgb <= threshold,
+        rgb / 12.92,
+        ((rgb + 0.055) / 1.055) ** 2.4
+    )
+    
+    xyz = torch.matmul(rgb_linear, RGB2XYZ.T)
+
+    return xyz
+
+def xyz_to_rgb(xyz):
+    rgb_linear = torch.matmul(xyz, XYZ2RGB.T)
+
+    threshold = 0.0031308
+    rgb =  torch.where(
+        rgb_linear <= threshold,
+        12.92 * rgb_linear,
+        1.055 * (rgb_linear.clamp(min=1e-8) ** (1/2.4)) - 0.055
+    )
+
+    return rgb.clamp(0.0, 1.0) 
 
 class Deformation(nn.Module):
     def __init__(self, W=256, args=None):
@@ -59,7 +96,7 @@ class Deformation(nn.Module):
         self.rgb_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
         # intial rgb, temporal rgb, rotation
-        self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size*2, net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
 
     def update_wavelevel(self):
         self.grid.update_J()
@@ -105,13 +142,15 @@ class Deformation(nn.Module):
         norms = rotated_softmin_axis_direction(rotations[target_mask], scale_emb[target_mask])
         norms = norms / norms.norm()
 
-        cos_theta = torch.clamp(torch.matmul(norms, view_dir.cuda()), -1.0, 1.0).unsqueeze(-1)
+        # cos_theta = torch.clamp(torch.matmul(norms, view_dir.cuda()), -1.0, 1.0).unsqueeze(-1)
         
-        col_feature = self.query_spacetheta(rays_pts_emb, cos_theta, spacetime_feature, target_mask)
+        # col_feature = self.query_spacetheta(rays_pts_emb, cos_theta, spacetime_feature, target_mask)
     
-        shs = shs_emb + 0.
+        xyz = rgb_to_xyz(shs_emb)
         # gaussian_integral(w) *  self.rgb_deform(st_feature).view(-1, 3)
-        shs[target_mask] += self.rgb_decoder(torch.cat([dyn_feature, col_feature], dim=-1)) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
+        xyz[target_mask, 1] *= self.rgb_decoder(dyn_feature).squeeze(-1) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
+        shs = xyz_to_rgb(xyz)
+        
         
         pts = rays_pts_emb + 0. #.clone()        
         pts[target_mask] += self.pos_coeffs(dyn_feature)

@@ -334,9 +334,11 @@ def render_batch(
         radii[pc.target_mask] = target_radii
         
         gt_img = viewpoint_camera.original_image.cuda()
-        # gt_img = srgb_to_linear_rgb(gt_img)
         
         L1 += l1_loss(rendered_image, gt_img)
+        # weights = viewpoint_camera.weights.cuda().unsqueeze(0)
+
+        # L1 += l1_loss(rendered_image, gt_img, weights)
 
         # covloss += pc.compute_covariance_loss(
         #     means3D_final[pc.target_mask],

@@ -252,16 +252,17 @@ class WavePlaneField(nn.Module):
         """
         ms_planes = []
         for i in range(len(self.grids)):
-            gridset = self.grids[i]
+            if i < 6:
+                gridset = self.grids[i]
 
-            ms_feature_planes = gridset.signal
+                ms_feature_planes = gridset.signal
 
-            # Initialise empty ms_planes
-            if ms_planes == []:
-                ms_planes = [[] for j in range(len(ms_feature_planes))]
+                # Initialise empty ms_planes
+                if ms_planes == []:
+                    ms_planes = [[] for j in range(len(ms_feature_planes))]
 
-            for j, feature_plane in enumerate(ms_feature_planes):
-                ms_planes[j].append(feature_plane)
+                for j, feature_plane in enumerate(ms_feature_planes):
+                    ms_planes[j].append(feature_plane)
 
         return ms_planes
 
