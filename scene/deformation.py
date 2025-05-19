@@ -111,7 +111,7 @@ class Deformation(nn.Module):
     
         shs = shs_emb + 0.
         # gaussian_integral(w) *  self.rgb_deform(st_feature).view(-1, 3)
-        shs[target_mask] += self.rgb_decoder(torch.cat([dyn_feature,col_feature], dim=-1)) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
+        shs[target_mask] += self.rgb_decoder(torch.cat([dyn_feature, col_feature], dim=-1)) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
         
         pts = rays_pts_emb + 0. #.clone()        
         pts[target_mask] += self.pos_coeffs(dyn_feature)

@@ -39,6 +39,40 @@ def rotated_softmin_axis_direction(r, s, temperature=10.0):
 
     return rotated
 
+def differentiable_cdf_match(source, target, eps=1e-5):
+    """
+    Remap 'source' values to match the CDF of 'target', using differentiable quantile mapping.
+    Works in older PyTorch versions (no torch.interp).
+    """
+    # Sort source and target
+    source_sorted, _ = torch.sort(source)
+    target_sorted, _ = torch.sort(target)
+
+    # Build uniform CDF positions
+    cdf_vals = torch.linspace(0.0, 1.0, len(source_sorted), device=source.device)
+
+    # Step 1: Get CDF values of 'source' values via inverse CDF
+    # Interpolate where each source value would sit in its own sorted list
+    idx = torch.searchsorted(source_sorted, source, right=False).clamp(max=len(cdf_vals) - 2)
+    x0 = source_sorted[idx]
+    x1 = source_sorted[idx + 1]
+    y0 = cdf_vals[idx]
+    y1 = cdf_vals[idx + 1]
+    t = (source - x0) / (x1 - x0 + eps)
+    source_cdf = y0 + t * (y1 - y0)
+
+    # Step 2: Map CDF to target values (i.e., inverse CDF of target)
+    idx = torch.searchsorted(cdf_vals, source_cdf, right=False).clamp(max=len(target_sorted) - 2)
+    x0 = cdf_vals[idx]
+    x1 = cdf_vals[idx + 1]
+    y0 = target_sorted[idx]
+    y1 = target_sorted[idx + 1]
+    t = (source_cdf - x0) / (x1 - x0 + eps)
+    matched = y0 + t * (y1 - y0)
+
+    return matched
+        
+
 def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
            stage="fine", view_args=None, G=None):
     """
@@ -215,6 +249,8 @@ def render_batch(
     viewspace_point_tensor_list = []
     norms = None
 
+    distances = []
+
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
         time = time*0. +viewpoint_camera.time
@@ -238,7 +274,8 @@ def render_batch(
         # Do the scaling and rotation activation after deformation
         rotations_final = pc.rotation_activation(rotations_final)
         
-        if (iteration % 100 == 0 and idx == 0) or pc.target_neighbours is None:
+        # As we take the NN from some random time step, lets re-calc it frequently
+        if (iteration % 10 == 0 and idx == 0) or pc.target_neighbours is None:
             pc.update_neighbours(means3D_final[pc.target_mask])
         
         screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
@@ -270,7 +307,7 @@ def render_batch(
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
 
-        rendered_image, radii, rendered_depth = rasterizer(
+        rendered_image, radii, Dt = rasterizer(
             means3D=means3D_final,
             means2D=means2D,
             shs=None,
@@ -314,15 +351,38 @@ def render_batch(
         elif stage == 'fine' :
             # norms
             norm_loss += pc.compute_normals_rigidity(norms=norms)
-            # Depth pred
-            depth_pseudo = viewpoint_camera.mask.cuda()
-            depth_mask = target_depth > 0
-            # depth_loss += local_triplet_ranking_loss(depth_pseudo, rendered_depth)
-    
-    
+            # distances.append(pc.compute_displacement_rigidity(means3D_final[pc.target_mask]))
+
+        # # Depth pred
+        # with torch.no_grad():
+        #     De = viewpoint_camera.depth.cuda().squeeze(0)
+        #     Demask = De > 0
+        #     De[Demask] = (De[Demask] - De[Demask].min())/ (De[Demask].max() - De[Demask].min())
+        
+        # Dt = Dt.squeeze(0)
+        # Dtmask = Dt > 0
+        # Dt[Dtmask] = (Dt[Dtmask] - Dt[Dtmask].min())/ (Dt[Dtmask].max() - Dt[Dtmask].min())
+        
+        # dt_vals = Dt[Dtmask].flatten()
+        # de_vals = De[Demask].flatten()
+        # min_len = min(len(dt_vals), len(de_vals))
+        # dt_vals = dt_vals[:min_len]
+        # de_vals = de_vals[:min_len]
+
+        # # Apply differentiable remapping
+        # Dt[Dtmask] = differentiable_cdf_match(dt_vals, de_vals)
+        # multiplier = (target_depth > 0).float().detach()+0.2
+        # depth_loss += ((multiplier*(Dt - De)).abs()).mean()
+       
+
         radii_list.append(radii.unsqueeze(0))
         visibility_filter_list.append((radii > 0).unsqueeze(0))
         viewspace_point_tensor_list.append(screenspace_points)
+    
+    # if stage == 'fine':
+    #     distance_stack = torch.cat(distances, dim=-1)
+    #     mean = distance_stack.mean(dim=-1).unsqueeze(-1)
+    #     covloss += (distance_stack - mean).abs().mean()
     
     return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss, covloss)
 
@@ -458,11 +518,27 @@ def render_depth(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tens
     """
     Render the depth at t = 0
     """
-    means3D = pc.get_xyz[pc.target_mask] 
-    scales = pc.get_scaling[pc.target_mask] 
-    rotation = pc.get_rotation[pc.target_mask] 
-    colors = pc.get_features[pc.target_mask] 
-    opacity = pc.get_hopac[pc.target_mask] 
+    means3D = pc.get_xyz
+    scales = pc.get_scaling
+    rotations = pc._rotation
+    colors = pc.get_color
+    opacity = pc.get_opacity
+    
+    time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
+
+
+    means3D, rotations, opacity, colors, extras = pc._deformation(
+        point=means3D, 
+        rotations=rotations,
+        scales=scales,
+        times_sel=time, 
+        h_emb=opacity,
+        shs=colors,
+        view_dir=viewpoint_camera.direction_normal(),
+        target_mask=pc.target_mask
+    )
+
+    rotation = pc.rotation_activation(rotations)
 
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
     try:
@@ -495,8 +571,8 @@ def render_depth(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tens
     return rasterizer(
         means3D=means3D,
         means2D=means2D,
-        shs=colors,
-        colors_precomp=None,
+        shs=None,
+        colors_precomp=colors,
         opacities=opacity,
         scales=scales,
         rotations=rotation,

@@ -324,6 +324,7 @@ class Neural3D_NDC_Dataset(Dataset):
         
         img = self.transform(img)
         extra = None
+        depth = None
         if self.get_mask:
             if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
                 camid = os.path.join(f'{self.root_dir}/static_masks',self.image_paths[index].split('/')[-3])
@@ -333,12 +334,11 @@ class Neural3D_NDC_Dataset(Dataset):
 
                 extra = self.transform(extra)[-1]
         # elif self.get_depth:
-        else:
-            if 'cam00' not in self.image_paths[index]:
-                extra = Image.open(self.image_paths[index].replace('images', 'depth'))
-                extra = self.transform(extra).float()/255.
+        if 'cam00' not in self.image_paths[index]:
+            depth = Image.open(self.image_paths[index].replace('images', 'depth'))
+            depth = self.transform(depth).float()/255.
 
-        return img, self.image_poses[index], self.image_times[index], extra
+        return img, self.image_poses[index], self.image_times[index], extra, depth
     
     
     def load_pose(self,index):

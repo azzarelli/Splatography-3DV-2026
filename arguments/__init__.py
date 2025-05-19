@@ -82,6 +82,11 @@ class ModelHiddenParams(ParamGroup):
         self.l1_time_planes = 0.0001  # TV loss of temporal grid
         self.opacity_lambda = 0.01  # TV loss of temporal grid
 
+        self.minview_weight=0.
+        self.tvtotal1_weight=0.
+        self.spsmoothness_weight=0.
+        self.minmotion_weight=0.
+        
         self.scene_config = {
                              'grid_dimensions': 2,
                              'input_coordinate_dim': 4,

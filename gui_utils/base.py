@@ -53,6 +53,7 @@ class GUIBase:
 
         # self.free_cams = [self.scene.get_pseudo_view() for i in range(self.N_pseudo)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
         self.current_cam_index = 0
+        self.original_cams = [copy.deepcopy(cam) for cam in self.free_cams]
         
         if self.gui:
             print('DPG loading ...')
@@ -166,14 +167,16 @@ class GUIBase:
                 def callback_toggle_show_full(sender):
                     self.show_scene_target = 0 
                     
-                
-                    
-                
-
+                def callback_toggle_reset_cam(sender):
+                    for i in range(len(self.free_cams)):
+                        self.free_cams[i] = copy.deepcopy(self.original_cams[i])
+                    self.current_cam_index = 0
+            
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="Target", callback=callback_toggle_show_target)
                     dpg.add_button(label="Scene", callback=callback_toggle_show_scene)
                     dpg.add_button(label="Full", callback=callback_toggle_show_full)
+                    dpg.add_button(label="Rst Fov", callback=callback_toggle_reset_cam)
                 
                 def callback_toggle_show_rgb(sender):
                     self.vis_mode = 'render'
@@ -183,8 +186,7 @@ class GUIBase:
                     self.vis_mode = 'alpha'
                 def callback_toggle_show_norms(sender):
                     self.vis_mode = 'norms'
-                    
-
+                
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="RGB", callback=callback_toggle_show_rgb)
                     dpg.add_button(label="Depth", callback=callback_toggle_show_depth)
@@ -265,7 +267,25 @@ class GUIBase:
                     min_value=0.,
                     callback=callback_toggle_w,
                 )
+                
+            def zoom_callback_fov(sender, app_data):
+                delta = app_data  # scroll: +1 = up (zoom in), -1 = down (zoom out)
+                cam = self.free_cams[self.current_cam_index]
 
+                zoom_scale = 0.95  # Smaller = faster zoom
+
+                # Scale FoV within limits
+                cam.FoVy *= zoom_scale if delta > 0 else 1 / zoom_scale
+                cam.FoVx *= zoom_scale if delta > 0 else 1 / zoom_scale
+
+                # Optional clamp to prevent weird values
+                cam.FoVy = np.clip(cam.FoVy, np.radians(10), np.radians(120))
+                cam.FoVx = np.clip(cam.FoVx, np.radians(10), np.radians(120))
+                cam.update_projections()
+                
+            with dpg.handler_registry():
+                dpg.add_mouse_wheel_handler(callback=zoom_callback_fov)
+            
         dpg.create_viewport(
             title=f"{self.runname}",
             width=self.W + 400,
@@ -326,7 +346,8 @@ class GUIBase:
 
                     if self.iteration > self.final_iter and self.stage == 'fine':
                         self.stage = 'done'
-                        exit()
+                        dpg.stop_dearpygui() 
+                        # exit()
 
                 # if self.view_test == True:
                 #     self.train_depth()
@@ -334,6 +355,7 @@ class GUIBase:
                 with torch.no_grad():
                     self.viewer_step()
                     dpg.render_dearpygui_frame()
+            dpg.destroy_context() 
         else:
             while self.stage != 'done':
                 if self.iteration % 100 == 0:
@@ -367,7 +389,6 @@ class GUIBase:
 
             cam = self.free_cams[self.current_cam_index]
             cam.time = self.time
-        
             buffer_image = render(
                     cam,
                     self.gaussians, 

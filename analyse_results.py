@@ -6,7 +6,11 @@ root = './output/dynerf/'
 folder = 'flame_salmon/'
 
 focal_word = 'covloss3'
-bench_marks = ['covloss2','covloss2','covloss','wavelevel']
+bench_marks = ['ABC_Angle0.1', 'ABC_Angle0.01','ABC_Angle0.001','ABC_Angle0.0001', 'ABC_Angle1e-05']
+# bench_marks = ['ABC_SP1e-05','ABC_SP0.0001','ABC_SP0.001', 'ABC_SP0.01','ABC_SP0.1']
+# bench_marks = ['ABC_TV1e-05', 'ABC_TV0.0001', 'ABC_TV0.001','ABC_TV0.01', 'ABC_TV0.1']
+
+# ['covloss6','covloss4','covloss3','covloss2','covloss2','covloss','wavelevel']
 
 # ,'pseudodepth1','tune','l1001norms','l10001norms','tv001norms', 'tv0005norms', 'w2norms','w4norms','1norms','01norms','001norms','0005norms','0025norms','005norms','sigW1']
 

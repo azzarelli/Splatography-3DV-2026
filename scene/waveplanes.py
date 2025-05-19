@@ -166,10 +166,12 @@ class WavePlaneField(nn.Module):
         for i in range(6):
             if i in [0,1,3]:
                 what = 'space'
+                res = [self.grid_config['resolution'][0],
+                    self.grid_config['resolution'][0]]
             else:
                 what = 'spacetime'
-            res = [self.grid_config['resolution'][0],
-                self.grid_config['resolution'][1]]
+                res = [self.grid_config['resolution'][0],
+                    self.grid_config['resolution'][1]]
             
             gridset = GridSet(
                 what=what,
@@ -239,6 +241,12 @@ class WavePlaneField(nn.Module):
             grid.update_J()
         print(f'Updating J to {self.grids[0].current_J}')
 
+    def waveplanes_list(self):
+        planes = []
+        for grid in self.grids:
+            planes.append(grid.grids)
+        return planes
+    
     def grids_(self, regularise_wavelet_coeff: bool = False, time_only: bool = False, notflat: bool = False):
         """Return the grids as a list of parameters for regularisation
         """

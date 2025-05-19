@@ -25,7 +25,7 @@ from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 from scene.deformation import deform_network
-from scene.regulation import compute_plane_smoothness
+from scene.regulation import compute_plane_smoothness,compute_plane_tv
 
 from torch_cluster import knn_graph
 
@@ -304,10 +304,7 @@ class GaussianModel:
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         # All channels except the 3 DC
-        for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
-            l.append('f_dc_{}'.format(i))
-        for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
-            l.append('f_rest_{}'.format(i))
+
         for i in range(self._colors.shape[1]):
             l.append('color_{}'.format(i))
         for i in range(self._opacity.shape[1]):
@@ -367,22 +364,6 @@ class GaussianModel:
         for idx, attr_name in enumerate(opac_names):
             opacities[:, idx] = np.asarray(plydata.elements[0][attr_name])
             
-        # opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
-        
-        features_dc = np.zeros((xyz.shape[0], 3, 1))
-        features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
-        features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
-        features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
-
-        extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
-        extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
-        assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
-        features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
-        for idx, attr_name in enumerate(extra_f_names):
-            features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
-        # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
-
         scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
         scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
         scales = np.zeros((xyz.shape[0], len(scale_names)))
@@ -403,9 +384,6 @@ class GaussianModel:
             
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._colors = nn.Parameter(torch.tensor(cols, dtype=torch.float, device="cuda").requires_grad_(True))
-        # self._p = nn.Parameter(torch.tensor(ps, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -535,8 +513,9 @@ class GaussianModel:
         grads_abs = self.xyz_gradient_accum_abs / self.denom
         grads_abs[grads_abs.isnan()] = 0.0
         
-        self.densify_and_clone(extent, grads=grads, grad_threshold=max_grad)
-        self.densify_and_split(extent, grads=grads_abs, grad_threshold=max_grad)
+        self.split_spikes(extent, grads=grads, grad_threshold=max_grad)
+        # self.densify_and_clone(extent, grads=grads_abs, grad_threshold=max_grad)
+        # self.densify_and_split(extent, grads=grads_abs, grad_threshold=max_grad)
     
     def densify_and_clone(self, scene_extent, grads,grad_threshold ):
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
@@ -595,7 +574,70 @@ class GaussianModel:
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
-    
+    def split_spikes(self,scene_extent, grads, grad_threshold, N=2):
+                # Get scaling and split gaussians where S_max is > 10* S_min
+        scaling = self.get_scaling
+        selected_pts_mask = scaling.max()
+        selected_pts_mask = (scaling.max(dim=1).values / scaling.min(dim=1).values.clamp(min=1e-8)) > 10
+  
+        selected_pts_mask = torch.logical_and(selected_pts_mask, self.target_mask)
+        
+        n_init_points = self.get_xyz.shape[0]
+        # Extract points that satisfy the gradient condition
+        padded_grad = torch.zeros((n_init_points), device="cuda")
+        padded_grad[:grads.shape[0]] = grads.squeeze()
+        selected_pts_mask1 = torch.where(padded_grad >= grad_threshold, True, False)
+        selected_pts_mask1 = torch.logical_and(selected_pts_mask1,
+                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        
+        # Only select non-target points for densification
+        selected_pts_mask = torch.logical_and(selected_pts_mask1, selected_pts_mask)
+                
+        new_rotation = self._rotation[selected_pts_mask]
+        new_colors = self._colors[selected_pts_mask]
+
+        # Update opacity
+        new_opacity = self._opacity[selected_pts_mask]
+        new_opacity[:, 0] = new_opacity[:, 0] *0.85
+        
+        # Update scaling
+        scales = scaling[selected_pts_mask]
+        _, max_indices = torch.max(scales, dim=1)  
+        mask = torch.zeros_like(scales, dtype=torch.bool, device=scales.device)
+        mask.scatter_(1, max_indices.unsqueeze(1), True)   
+        scales[mask] = scales[mask] * 0.5
+        scales[~mask] = scales[~mask] * 0.8 
+        new_scaling = self.scaling_inverse_activation(scales)
+
+        # Update position
+        normals = rotated_soft_axis_direction(new_rotation, scaling[selected_pts_mask], type='max')
+        normals = normals.contiguous().view(-1, 1, 3)
+        cov3x3 = build_cov_matrix_torch(self.get_covariance())[selected_pts_mask]
+        cov_inv = torch.linalg.inv(cov3x3) #.unsqueeze(1).repeat(1,3,1,1).view(-1, 3, 3)
+        lam = torch.bmm(torch.bmm(normals, cov_inv), normals.transpose(1, 2)).squeeze(-1)  # (N,1,1)
+        t = torch.sqrt(K_c / lam.clamp(min=1e-8))
+        # print(normals.shape, t.shape, self._xyz[selected_pts_mask].shape)
+        # exit()
+        x1 = self._xyz[selected_pts_mask] + t * normals.squeeze(1)
+        x2 = self._xyz[selected_pts_mask] - t * normals.squeeze(1)
+        
+        # Create the dupes
+        new_xyz = torch.cat([x1, x2], dim=0)
+        new_scaling = new_scaling.repeat(N,1)
+        new_colors = new_colors.repeat(N,1)
+        new_opacity = new_opacity.repeat(N,1)
+        new_rotation = new_rotation.repeat(N,1)
+        # print(new_colors.shape, new_opacity.shape, new_rotation.shape, new_scaling.shape, new_xyz.shape)
+        # exit()
+        # Update target mask
+        new_target_mask = self.target_mask[selected_pts_mask].repeat(N)
+        self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)            
+
+        self.densification_postfix(new_xyz,new_colors,new_opacity, new_scaling, new_rotation)
+
+        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
+        self.prune_points(prune_filter)
+
 
     def compute_topac_width(self, w, h, threshold=0.05):
         """ Implementing the function: t = m +- sqrt(-ln(0.05/h)/(w**2))
@@ -641,12 +683,16 @@ class GaussianModel:
         
     
     def reset_opacity(self):
+        print('resetting opacity')
         opacities_new = self.get_opacity
-        opacities_new[:,0] = opacities_new[:,0] * 0.01
+        opacities_new[:,0] = 0.01
+        opacities_new[:,1] = 0.05
+
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
-    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight):
+    def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight,
+                           minview_weight, tvtotal1_weight, spsmoothness_weight, minmotion_weight):
         tvtotal = 0
         l1total = 0
         tstotal = 0
@@ -660,11 +706,48 @@ class GaussianModel:
                     tstotal += compute_plane_smoothness(grid)
                     
                     l1total += torch.abs(1. - grid).mean()
+            # else:
+            #     for grid in grids: # space time
+            #         l1total += torch.abs(1. - grid).mean()
+        
+        # Order is Yh0 Yl1 Yl0
+        tvtotal1 = 0
+        spsmoothness = 0
+        minmotion = 0
+        minview = 0
+        for index, grids in enumerate(self._deformation.deformation_net.grid.waveplanes_list()):
+            if index in [0,1,3]: # space only
+                for idx, grid in enumerate(grids):
+                    # Total variation
+                    if idx == 0:
+                        tvtotal1 += compute_plane_tv(grid)
+                    
+                    # Spatial smoothness prioritizing coarse features
+                    elif idx == 1:
+                        spsmoothness += 0.6*grid.abs().mean()
+                    elif idx == 2:
+                        spsmoothness += 0.3*grid.abs().mean()
+                        
+            elif index in [2,4,5]: # space time
+                for idx, grid in enumerate(grids):
+                    # Min motion
+                    if idx == 0: 
+                        minmotion += grid.abs().mean()
+                    elif idx == 1:
+                        minmotion += 0.6 * grid.abs().mean()
+                    elif idx == 2:
+                        minmotion += 0.3 * grid.abs().mean()
             else:
-                for grid in grids: # space time
-                    l1total += torch.abs(1. - grid).mean()
-                
-        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total
+                for idx, grid in enumerate(grids):
+                    if idx == 0: 
+                        minview += grid.abs().mean()
+                    elif idx == 1:
+                        minview += 0.6 * grid.abs().mean()
+                    elif idx == 2:
+                        minview += 0.3 * grid.abs().mean()
+        
+        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + \
+            tvtotal1 * tvtotal1_weight + spsmoothness * spsmoothness_weight + minmotion * minmotion_weight + minview * minview_weight
 
     def update_target_mask(self, cam_list): 
         selected_pts_mask = self.target_mask
@@ -715,6 +798,9 @@ class GaussianModel:
         # print(((B[mask]-A[mask]).abs()).mean())
         return ((B[mask]-A[mask])**2).mean()
 
+    def get_waveplanes(self):
+        return self._deformation.deformation_net.grid.waveplanes_list()
+    
     def update_wavelevel(self):
         self._deformation.update_wavelevel()
     
@@ -722,21 +808,25 @@ class GaussianModel:
         # Maybe we can get NN by sampling every 0.25 time steps
         # getting the neighbours at each time step? Maybe by selecting the closest
         # points independant of time?
-        edge_index = knn_graph(points, k=2, batch=None, loop=False)
+        edge_index = knn_graph(points, k=5, batch=None, loop=False)
         self.target_neighbours = edge_index
 
     def update_neighbours(self,points):
-        edge_index = knn_graph(points, k=2, batch=None, loop=False)
+        edge_index = knn_graph(points, k=5, batch=None, loop=False)
         self.target_neighbours = edge_index
 
     def compute_normals_rigidity(self, norms):
         points = self._xyz[self.target_mask] 
         row, col = self.target_neighbours
         disances = torch.norm(points[row] - points[col], dim=1)
-        distance_weights = 1./disances.unsqueeze(-1) # 1. - torch.exp(- (0.00018/ (disances**2)))
+        distance_weights = 1./disances.unsqueeze(-1).detach() # 1. - torch.exp(- (0.00018/ (disances**2)))
         diff = ((distance_weights*(norms[row] - norms[col]).abs())).mean()
 
         return diff
+    
+    def compute_displacement_rigidity(self, position):
+        row, col = self.target_neighbours
+        return torch.norm(position[row] - position[col], dim=1).unsqueeze(1)
 
     def compute_rigidity_loss(self, iteration):
         points = self._xyz[self.target_mask] 
@@ -765,9 +855,9 @@ class GaussianModel:
         # rot1 = self.rotation_activation(self._rotation[self.target_mask] + drot[:, -1, :])
         # # Get the normalized direction of the smallest axis of each point
         # #  TODO: We should 
-        # norms0 = rotated_softmin_axis_direction(rot0,self.get_scaling[self.target_mask])
+        # norms0 = rotated_soft_axis_direction(rot0,self.get_scaling[self.target_mask])
         # # @ t = 1
-        # norms1 = rotated_softmin_axis_direction(rot1,self.get_scaling[self.target_mask])
+        # norms1 = rotated_soft_axis_direction(rot1,self.get_scaling[self.target_mask])
 
         # # angles between pairs of points
         # dot_A = torch.sum(norms0[row] * norms0[col], dim=1)  # (E,)
@@ -785,7 +875,7 @@ class GaussianModel:
         distance_mask = 0.1 > torch.norm(points[row] - points[col], dim=1)  # (E,)
         
         rot = self.rotation_activation(self._rotation[self.target_mask])
-        norms1 = rotated_softmin_axis_direction(rot, self.get_scaling[self.target_mask])
+        norms1 = rotated_soft_axis_direction(rot, self.get_scaling[self.target_mask])
         scales = self.get_scaling.min(dim=1).values
 
         # Surface direction, surface thickness
@@ -828,6 +918,9 @@ def compute_alpha_interval(d, cov6, alpha_threshold=0.1):
 
     return t_cutoff  # alpha < threshold when |t| > t_cutoff
 
+K_c = -2*torch.log(torch.tensor(0.6)).cuda()
+
+
 import torch.nn.functional as F
 def quaternion_rotate(q, v):
     q_vec = q[:, :3]
@@ -835,12 +928,15 @@ def quaternion_rotate(q, v):
     t = 2 * torch.cross(q_vec, v, dim=1)
     return v + q_w * t + torch.cross(q_vec, t, dim=1)
 
-def rotated_softmin_axis_direction(r, s, temperature=10.0):
+def rotated_soft_axis_direction(r, s, temperature=10.0, type='min'):
     # s: (N, 3), we want the direction of the smallest abs scale
     abs_s = torch.abs(s)
 
     # Step 1: Compute softmin weights (lower abs(s) => higher weight)
-    weights = F.softmax(-abs_s * temperature, dim=1)  # (N, 3)
+    if type == 'min':
+        weights = F.softmax(-abs_s * temperature, dim=1)  # (N, 3)
+    elif type == 'max':
+        weights = F.softmax(abs_s * temperature, dim=1)  # (N, 3)
 
     # Step 2: Basis axes: x, y, z
     basis = torch.eye(3, device=s.device).unsqueeze(0)  # (1, 3, 3)
@@ -851,7 +947,8 @@ def rotated_softmin_axis_direction(r, s, temperature=10.0):
     # Step 4: Rotate the direction
     rotated = quaternion_rotate(r, soft_axis)  # (N, 3)
 
-    return rotated        
+    return rotated
+
          
 def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
     device = xyz.device
@@ -898,6 +995,17 @@ def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
     # plt.show()
     # exit()
     return mask_values.long()
+
+def build_cov_matrix_torch(cov6):
+    N = cov6.shape[0]
+    cov = torch.zeros((N, 3, 3), device=cov6.device, dtype=cov6.dtype)
+    cov[:, 0, 0] = cov6[:, 0]  # σ_xx
+    cov[:, 0, 1] = cov[:, 1, 0] = cov6[:, 1]  # σ_xy
+    cov[:, 0, 2] = cov[:, 2, 0] = cov6[:, 2]  # σ_xz
+    cov[:, 1, 1] = cov6[:, 3]  # σ_yy
+    cov[:, 1, 2] = cov[:, 2, 1] = cov6[:, 4]  # σ_yz
+    cov[:, 2, 2] = cov6[:, 5]  # σ_zz
+    return cov
 
 def get_in_view_screenspace(camera, xyz: torch.Tensor) -> torch.Tensor:
     device = xyz.device

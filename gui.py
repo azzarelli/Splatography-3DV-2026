@@ -6,6 +6,8 @@ import random
 import os, sys
 import torch
 from random import randint
+from torchvision.utils import save_image
+
 from tqdm import tqdm
 import sys
 from scene import Scene, GaussianModel
@@ -271,7 +273,6 @@ class GUI(GUIBase):
         #     self.gaussians.update_wavelevel()
         
         
-          
         viewpoint_cams = self.get_batch_views
 
         # Generate scene based on an input camera from our current batch (defined by viewpoint_cams)
@@ -319,7 +320,9 @@ class GUI(GUIBase):
             # dyn_target_loss += self.gaussians.compute_rigidity_loss(self.iteration)
             
             planeloss = self.gaussians.compute_regulation(
-                self.hyperparams.time_smoothness_weight, self.hyperparams.l1_time_planes, self.hyperparams.plane_tv_weight
+                self.hyperparams.time_smoothness_weight, self.hyperparams.l1_time_planes, self.hyperparams.plane_tv_weight,
+                self.hyperparams.minview_weight, self.hyperparams.tvtotal1_weight, 
+                self.hyperparams.spsmoothness_weight, self.hyperparams.minmotion_weight
             )
             # max_gauss_ratio = 10
             # pg_loss = (
@@ -382,6 +385,35 @@ class GUI(GUIBase):
         
         with torch.no_grad():
             
+            # exit()
+            # Save snapshot of waveplanes
+            if self.iteration % 4000 == 0:
+                planes = self.gaussians.get_waveplanes()
+
+                for idx, plane_set in enumerate(planes):
+                    for idx_, plane in enumerate(plane_set):
+                        plane_save = plane.mean(0).mean(0)
+                        
+                        if plane_save.shape[0] != 3:
+                            plane_save = plane_save.unsqueeze(0).repeat(3,1,1)
+                        
+                        if idx in [0,1,3]:
+                            starter = 'P'
+                        elif idx in [2,4,5]:
+                            starter = 'T'
+                        else:
+                            starter = 'C'
+                            
+                        if idx_ == 0:
+                            ender = 'yl'
+                        elif idx_ == 1:
+                            ender = 'yh1'
+                        else:
+                            ender = 'yh0'
+                            
+                        plane_save = (plane_save - plane_save.min()) / (plane_save.max() - plane_save.min())
+                        save_image(plane_save, f'./output/planes/{starter}{idx}_{ender}_{self.stage}{self.iteration}.png')
+            
             radii = torch.cat(radii_list, 0).max(dim=0).values
             visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
             
@@ -394,12 +426,11 @@ class GUI(GUIBase):
             torch.cuda.synchronize()
             # Save scene when at the saving iteration
             if (self.iteration in self.saving_iterations) or (self.stage == 'coarse' and self.iteration == 2999):
-                pass
-                # print("\n[ITER {}] Saving Gaussians".format(self.iteration))
-                # self.scene.save(self.iteration, self.stage)
+                print("\n[ITER {}] Saving Gaussians".format(self.iteration))
+                self.scene.save(self.iteration, self.stage)
     
-                # print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
-                # torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
+                print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
+                torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
     
 
             self.timer.start()
@@ -414,21 +445,21 @@ class GUI(GUIBase):
                 self.iteration > self.opt.densify_from_iter and \
                 self.iteration < self.opt.densify_until_iter and \
                 self.iteration % self.opt.densification_interval == 0 and \
-                (self.gaussians.target_mask).sum() < 80000:
+                (self.gaussians.target_mask).sum() < 100000:
                     self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
+                    # self.gaussians.split_spikes()
 
             # Global pruning
             if  self.stage == 'fine' and \
                 self.iteration > self.opt.pruning_from_iter and \
                 self.iteration % self.opt.pruning_interval == 0 and \
-                (self.gaussians.target_mask).sum() > 90000:
+                (self.gaussians.target_mask).sum() > 100000:
                 size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
                 self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
             
             # if self.iteration == 1 and self.stage == 'fine':
             #     self.gaussians.prune_target(self.get_zero_cams)
-            
-                
+
             if self.iteration % self.opt.opacity_reset_interval == 0 and self.stage == 'fine':
                 self.gaussians.reset_opacity()
                 
@@ -449,82 +480,172 @@ class GUI(GUIBase):
     @torch.no_grad()
     def get_depth_alignment_data(self, i):
         import matplotlib.pyplot as plt
-
-        viewpoint_cams = self.scene.index_train((i*self.total_frames))
-        M = viewpoint_cams.mask.cuda()
+        # print((i*self.total_frames))
+        # exit()
+        i = 2
+        N = 20
+        viewpoint_cams = self.scene.index_train((i*self.total_frames+ N))
+        De = viewpoint_cams.mask.cuda().squeeze(0)
         I = viewpoint_cams.original_image.cuda()
-        De = self.scene.train_camera.dataset.get_depth_img(i)[0,:].cuda()
-        _, _, D  = render_depth(
+        # De = self.scene.train_camera.dataset.get_depth_img(i)[0,:].cuda()
+        R, _, Dt  = render_depth(
             viewpoint_cams, 
             self.gaussians, 
             self.pipe,
             self.background, 
             )
-        D = D.squeeze(0)*M
+        Dt = Dt.squeeze(0)\
         
-        D_mask  = D > 0.00001
-        De_mask = De > 0.00001
-        # D[D_mask] = (D[D_mask] - D[D_mask].min())/(D[D_mask].max()- D[D_mask].min())
+        def differentiable_cdf_match(source, target, eps=1e-5):
+            """
+            Remap 'source' values to match the CDF of 'target', using differentiable quantile mapping.
+            Works in older PyTorch versions (no torch.interp).
+            """
+            # Sort source and target
+            source_sorted, _ = torch.sort(source)
+            target_sorted, _ = torch.sort(target)
 
-        from depth.patches import reconstruct_image
-        H,W = D.shape[0], D.shape[1]
-        patch_size = 64
-        patches = minmax_normalize_nonzero(patchify(D.unsqueeze(0).unsqueeze(0), patch_size))
-        D = unpatchify(patches, (H,W), patch_size)*M
-        patches = minmax_normalize_nonzero(patchify(De.unsqueeze(0).unsqueeze(0), patch_size))
-        De = unpatchify(patches, (H,W), patch_size)*M
-        # # Find the means of depths discounting zero vals
-        # mDe = De[De_mask].mean()
-        # mD = D[D_mask].mean()
+            # Build uniform CDF positions
+            cdf_vals = torch.linspace(0.0, 1.0, len(source_sorted), device=source.device)
+
+            # Step 1: Get CDF values of 'source' values via inverse CDF
+            # Interpolate where each source value would sit in its own sorted list
+            idx = torch.searchsorted(source_sorted, source, right=False).clamp(max=len(cdf_vals) - 2)
+            x0 = source_sorted[idx]
+            x1 = source_sorted[idx + 1]
+            y0 = cdf_vals[idx]
+            y1 = cdf_vals[idx + 1]
+            t = (source - x0) / (x1 - x0 + eps)
+            source_cdf = y0 + t * (y1 - y0)
+
+            # Step 2: Map CDF to target values (i.e., inverse CDF of target)
+            idx = torch.searchsorted(cdf_vals, source_cdf, right=False).clamp(max=len(target_sorted) - 2)
+            x0 = cdf_vals[idx]
+            x1 = cdf_vals[idx + 1]
+            y0 = target_sorted[idx]
+            y1 = target_sorted[idx + 1]
+            t = (source_cdf - x0) / (x1 - x0 + eps)
+            matched = y0 + t * (y1 - y0)
+
+            return matched
         
-        # # Shift the depth discounting zero vals
-        # De_ = De.clone()
-        # De_[De_mask] = De_[De_mask] + (mD - mDe)
-
-        # M = M.bool()
-        # De_ = De_[M].view(-1, 1)
-        # D = D[M].view(-1, 1)
-
-        # # remove zeros        
-        # Demask = De_ > 0.01
+        # mask = Dt > 0
+        # Dt = Dt * mask
+        # De = De * mask
+        Dtmask = Dt > 0
+        Demask = De > 0
+        Dt[Dtmask] = (Dt[Dtmask] - Dt[Dtmask].min())/ (Dt[Dtmask].max() - Dt[Dtmask].min())
+        De[Demask] = (De[Demask] - De[Demask].min())/ (De[Demask].max() - De[Demask].min())
         
-        # De_ = De_[Demask].unsqueeze(-1)
-        # D = D[Demask].unsqueeze(-1)
-            
+        dt_vals = Dt[Dtmask].flatten()
+        de_vals = De[Demask].flatten()
+
+        # Optional: match length
+        min_len = min(len(dt_vals), len(de_vals))
+        dt_vals = dt_vals[:min_len]
+        de_vals = de_vals[:min_len]
+
+        # Apply differentiable remapping
+        dt_matched = differentiable_cdf_match(dt_vals, de_vals)
+
+        # Replace in Dt
+        Dt = Dt.clone()
+        Dt[Dtmask] = dt_matched
+
+        # Dtmask = Dt > 0
+        # Demask = De > 0
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+        # Dtmask = Dt > 0.01
+        # Demask = De > 0.01e
+        # dt_vals = Dt[Dtmask].flatten()
+
+        # # Compute 98th percentile (CDF > 0.98)
+        # dt_thresh = torch.quantile(dt_vals, 0.97)
+        # dt_thresh_low = torch.quantile(dt_vals, 0.01)
+        # # Dtmask = Dt > 0.1
+        # # Demask = De > 0.1
+        # # Clamp
+        # Dt_clamped = Dt.clone()
+        # Dt = torch.clamp(Dt_clamped, max=dt_thresh, min=dt_thresh_low)
+        # Dt = (Dt - Dt.min())/ (Dt.max() - Dt.min())
+        # # Dt[Dtmask] = (Dt[Dtmask] - Dt[Dtmask].min())/ (Dt[Dtmask].max() - Dt[Dtmask].min())
+        # Dtmask = Dt > 0
+ 
+
+        axs[0].hist(Dt[Dtmask].cpu().flatten().numpy(), bins=100)
+        axs[0].set_title("Dt Depth Value Distribution")
+        axs[0].set_xlabel("Depth")
+        axs[0].set_ylabel("Count")
+
+        axs[1].hist(De[Demask].cpu().flatten().numpy(), bins=100)
+        axs[1].set_title("De Depth Value Distribution")
+        axs[1].set_xlabel("Depth")
+        axs[1].set_ylabel("Count")
+
+        plt.tight_layout()
+        plt.show()
+        
+        # CDF
+        dt_vals = Dt[Dtmask].cpu().flatten().numpy()
+        de_vals = De[Demask].cpu().flatten().numpy()
+
+        # Sort and compute CDFs
+        dt_sorted = np.sort(dt_vals)
+        de_sorted = np.sort(de_vals)
+        dt_cdf = np.linspace(0, 1, len(dt_sorted))
+        de_cdf = np.linspace(0, 1, len(de_sorted))
+
+        # Plot CDFs
+        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+        axs[0].plot(dt_sorted, dt_cdf)
+        axs[0].set_title("Dt CDF")
+        axs[0].set_xlabel("Depth")
+        axs[0].set_ylabel("Cumulative Probability")
+
+        axs[1].plot(de_sorted, de_cdf)
+        axs[1].set_title("De CDF")
+        axs[1].set_xlabel("Depth")
+        axs[1].set_ylabel("Cumulative Probability")
+
+        plt.tight_layout()
+        plt.show()
+
+
+        # # Dt = torch.cat([Dt, De], dim=1)
         fig, axs = plt.subplots(1,2, figsize=(15, 5))
-        depthmaps = [D.cpu().numpy(), (De).cpu().numpy()]
+        depthmaps = [Dt.cpu().numpy(), (De).cpu().numpy()]
         for i, ax in enumerate(axs):
             print(depthmaps[i].shape)
-            im = ax.imshow(depthmaps[i], cmap='plasma')
-            ax.set_title(f'Depth Map {i+1}')
+            im = ax.imshow(depthmaps[i], cmap='gray')
+            # im = ax.imshow(Dt.cpu().numpy(), cmap='gray', vmin=Dt.median().item() - 1, vmax=Dt.median().item() + 1)
             ax.axis('off')
             fig.colorbar(im, ax=ax, shrink=0.6)
 
         plt.tight_layout()
         plt.show()
         
-        # D = D.cpu()
-        # De_ = De_.cpu()
-        # plt.figure(figsize=(5, 5))
-        # plt.scatter(D, De_, alpha=0.3, s=1)
-        # plt.plot([De_.min(), De_.max()],
-        #         [De_.min(), De_.max()], 'r--')
-        # plt.xlabel("D")
-        # plt.ylabel("De")
-        # plt.grid(True)
-        # plt.tight_layout()
-        # plt.show()
+        # Dt = Dt.cpu()
+        # De = De.cpu()
+        plt.figure(figsize=(5, 5))
+        plt.scatter(depthmaps[0], depthmaps[1], alpha=0.3, s=1)
+        plt.plot([ 0,  1],
+                [0,  1], 'r--')
+        plt.xlabel("D")
+        plt.ylabel("De")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
         
         # diff = (D-De_).abs()
         # A = D - mD
         # B = De_ - mD
-        plt.figure(figsize=(5, 5))
-        plt.scatter(D.cpu(), De.cpu(), alpha=0.3, s=1)
-        plt.xlabel("De with mean at 0")
-        plt.ylabel("ABS(D-DE)")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
+        # plt.figure(figsize=(5, 5))
+        # plt.scatter(D.cpu(), De.cpu(), alpha=0.3, s=1)
+        # plt.xlabel("De with mean at 0")
+        # plt.ylabel("ABS(D-DE)")
+        # plt.grid(True)
+        # plt.tight_layout()
+        # plt.show()
         exit()
         return torch.cat([D,De_], dim=-1)
     
@@ -532,15 +653,11 @@ class GUI(GUIBase):
 
         # Load initial dara
         print('Loading (t=0) for Depth')
-        self.scene.getTrainCameras().dataset.get_mask = True
-
-        
         # For each camera learn a seperate depth warp
         for i in range(4):
             # Set-up data 
             data = self.get_depth_alignment_data(i).detach()
             
-        self.scene.getTrainCameras().dataset.get_mask = False
 
     @torch.no_grad()
     def test_step(self):
@@ -783,12 +900,15 @@ if __name__ == "__main__":
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
-
-    # Start GUI server, configure and run training
+        
+    
     torch.autograd.set_detect_anomaly(True)
+    hyp = hp.extract(args)
+    initial_name = args.expname     
+    name = f'{initial_name}_Update1'
     gui = GUI(
         args=args, 
-        hyperparams=hp.extract(args), 
+        hyperparams=hyp, 
         dataset=lp.extract(args), 
         opt=op.extract(args), 
         pipe=pp.extract(args),
@@ -796,12 +916,117 @@ if __name__ == "__main__":
         saving_iterations=args.save_iterations,
         ckpt_start=args.start_checkpoint, 
         debug_from=args.debug_from, 
-        expname=args.expname,
+        expname=name,
         skip_coarse=args.skip_coarse,
         view_test=args.view_test
     )
-
-    
     gui.render()
+    del gui
+    torch.cuda.empty_cache()
+    # TV Reg
+    # hyp.plane_tv_weight = 0.
+    # for value in [0.1,0.01,0.001,0.0001,0.00001]:
+    #     name = f'{initial_name}_TV{value}'
+    #     hyp.tvtotal1_weight = value
+        
+    #     # Start GUI server, configure and run training
+    #     gui = GUI(
+    #         args=args, 
+    #         hyperparams=hyp, 
+    #         dataset=lp.extract(args), 
+    #         opt=op.extract(args), 
+    #         pipe=pp.extract(args),
+    #         testing_iterations=args.test_iterations, 
+    #         saving_iterations=args.save_iterations,
+    #         ckpt_start=args.start_checkpoint, 
+    #         debug_from=args.debug_from, 
+    #         expname=name,
+    #         skip_coarse=args.skip_coarse,
+    #         view_test=args.view_test
+    #     )
 
-    print("\nTraining complete.")
+        
+    #     gui.render()
+    #     del gui
+    #     torch.cuda.empty_cache()
+    #     print("\nTraining complete.")
+    
+    # # Spatial smoothness
+    # hyp.tvtotal1_weight = 0.
+    # for value in [0.1,0.01,0.001,0.0001,0.00001]:
+    #     name = f'{initial_name}_SP{value}'
+    #     hyp.spsmoothness_weight = value
+        
+    #     gui = GUI(
+    #         args=args, 
+    #         hyperparams=hyp, 
+    #         dataset=lp.extract(args), 
+    #         opt=op.extract(args), 
+    #         pipe=pp.extract(args),
+    #         testing_iterations=args.test_iterations, 
+    #         saving_iterations=args.save_iterations,
+    #         ckpt_start=args.start_checkpoint, 
+    #         debug_from=args.debug_from, 
+    #         expname=name,
+    #         skip_coarse=args.skip_coarse,
+    #         view_test=args.view_test
+    #     )
+    #     gui.render()
+    #     del gui
+    #     torch.cuda.empty_cache()
+    #     print("\nTraining complete.")
+    
+    # Minview Weight
+    # hyp.spsmoothness_weight = 0.
+    # hyp.plane_tv_weight = 0.0005
+    
+    # for value in [0.01,0.001,0.0001,0.00001]:
+    #     name = f'{initial_name}_Angle{value}'
+    #     hyp.minview_weight = value
+        
+    #     gui = GUI(
+    #         args=args, 
+    #         hyperparams=hyp, 
+    #         dataset=lp.extract(args), 
+    #         opt=op.extract(args), 
+    #         pipe=pp.extract(args),
+    #         testing_iterations=args.test_iterations, 
+    #         saving_iterations=args.save_iterations,
+    #         ckpt_start=args.start_checkpoint, 
+    #         debug_from=args.debug_from, 
+    #         expname=name,
+    #         skip_coarse=args.skip_coarse,
+    #         view_test=args.view_test
+    #     )
+    #     gui.render()
+    #     del gui
+    #     torch.cuda.empty_cache()
+    #     print("\nTraining complete.")
+    
+    # Mintemporal Weight
+    # hyp.minview_weight = 0.
+    # hyp.l1_time_planes = 0.
+    # hyp.time_smoothness_weight = 0.
+    
+    # for value in [0.0001,0.00001]:
+    #     name = f'{initial_name}_Temporal{value}'
+    #     hyp.minmotion_weight = value
+        
+    #     gui = GUI(
+    #         args=args, 
+    #         hyperparams=hyp, 
+    #         dataset=lp.extract(args), 
+    #         opt=op.extract(args), 
+    #         pipe=pp.extract(args),
+    #         testing_iterations=args.test_iterations, 
+    #         saving_iterations=args.save_iterations,
+    #         ckpt_start=args.start_checkpoint, 
+    #         debug_from=args.debug_from, 
+    #         expname=name,
+    #         skip_coarse=args.skip_coarse,
+    #         view_test=args.view_test
+    #     )
+    #     gui.render()
+    #     del gui
+    #     torch.cuda.empty_cache()
+    #     print("\nTraining complete.")
