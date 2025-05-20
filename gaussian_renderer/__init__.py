@@ -124,7 +124,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
                 opacity[:, 1] =  opacity[:, 1]*0. + view_args['set_w']
                 
 
-    means3D, rotations, opacity,colors, extras = pc._deformation(
+    means3D_, rotations, opacity,colors, extras = pc._deformation(
         point=means3D, 
         rotations=rotations,
         scales=scales,
@@ -135,6 +135,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         target_mask=pc.target_mask
     )
 
+
+    
     rotation = pc.rotation_activation(rotations)
 
     if view_args is not None:
@@ -162,9 +164,10 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
                 
             if view_args['full_opac']:
                 opacity = torch.ones_like(opacity).cuda()
-            
+                colors = (means3D - means3D_).abs()
+
     rendered_image, radii, rendered_depth = rasterizer(
-        means3D=means3D,
+        means3D=means3D_,
         means2D=means2D,
         shs=None,
         colors_precomp=colors,

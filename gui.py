@@ -229,7 +229,7 @@ class GUI(GUIBase):
                 self.viewpoint_stack = [[self.scene.index_train((i*self.total_frames)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
                 self.scene.getTrainCameras().dataset.get_mask = False
 
-                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=1, shuffle=self.random_loader,
+                self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
                                                     num_workers=32, collate_fn=list))
                 
     @property
@@ -244,7 +244,7 @@ class GUI(GUIBase):
         try:
             viewpoint_cams = next(self.loader)
         except StopIteration:
-            viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=1, shuffle=self.random_loader,
+            viewpoint_stack_loader = DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
                                                 num_workers=32, collate_fn=list)
             self.loader = iter(viewpoint_stack_loader)
             viewpoint_cams = next(self.loader)
@@ -675,6 +675,7 @@ class GUI(GUIBase):
                 viewpoint_cams.append(self.test_viewpoint_stack[randint(0,len(self.test_viewpoint_stack)-1)]) # TODO: perhaps ensuring varying view positions rather thn just random views
                 idx +=1
         else:
+            self.test_viewpoint_stack = self.scene.getTestCameras() #.copy()
             viewpoint_cams = self.test_viewpoint_stack
 
 
@@ -706,9 +707,9 @@ class GUI(GUIBase):
             mask = viewpoint_cam.gt_alpha_mask.cuda()
 
 
-            if (self.iteration == 500) or (self.iteration == 1000 or self.iteration == 2000):
-                if idx % 3 == 0:
-                    save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
+            # if (self.iteration == 500) or (self.iteration == 1000 or self.iteration == 2000):
+            #     if idx % 3 == 0:
+            save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
 
             image = image*mask
             gt_image = gt_image*mask
@@ -842,13 +843,19 @@ def save_gt_pred(gt, pred, iteration, idx, name):
             .numpy()
     )*255
 
-    image_array = np.hstack((gt, pred))
+    pred = pred.astype(np.uint8)
+    gt = gt.astype(np.uint8)
 
-    # image_array = image_array.astype(np.uint8)
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+    gt_bgr = cv2.cvtColor(gt, cv2.COLOR_RGB2BGR)
 
-    cv2.imwrite(f'debugging/{iteration}/{name}_{idx}.png', image_array)
+    # image_array = np.hstack((gt_bgr, pred_bgr))
 
-    return image_array
+    print(f'debugging/{iteration}_{name}_{idx}.png')
+    cv2.imwrite(f'debugging/{iteration}_{name}_{idx}.png', pred_bgr)
+
+    return pred_bgr
 
 SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
 def gaussian_integral(h, w, mu):
@@ -905,7 +912,7 @@ if __name__ == "__main__":
     torch.autograd.set_detect_anomaly(True)
     hyp = hp.extract(args)
     initial_name = args.expname     
-    name = f'{initial_name}_Update1'
+    name = f'{initial_name}'
     gui = GUI(
         args=args, 
         hyperparams=hyp, 
@@ -925,9 +932,9 @@ if __name__ == "__main__":
     torch.cuda.empty_cache()
     # TV Reg
     # hyp.plane_tv_weight = 0.
-    # for value in [0.1,0.01,0.001,0.0001,0.00001]:
+    # for value in [0.001,0.00075,0.00025,0.0001,]:
     #     name = f'{initial_name}_TV{value}'
-    #     hyp.tvtotal1_weight = value
+    #     hyp.plane_tv_weight = value
         
     #     # Start GUI server, configure and run training
     #     gui = GUI(

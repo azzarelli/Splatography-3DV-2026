@@ -353,7 +353,9 @@ class GUIBase:
 
                 # if self.view_test == True:
                 #     self.train_depth()
-                
+                # with torch.no_grad():
+                #     self.test_step()
+                #     exit()
                 with torch.no_grad():
                     self.viewer_step()
                     dpg.render_dearpygui_frame()

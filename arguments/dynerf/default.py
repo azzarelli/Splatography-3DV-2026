@@ -24,7 +24,7 @@ OptimizationParams = dict(
     dataloader=True,
     iterations=16000,
     coarse_iterations=2000,
-    batch_size=4, # Was 4
+    batch_size=2, # Was 4
 
     densify_from_iter=3000, #best at 3001
     densify_until_iter=10_000,

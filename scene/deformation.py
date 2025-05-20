@@ -147,10 +147,9 @@ class Deformation(nn.Module):
         # col_feature = self.query_spacetheta(rays_pts_emb, cos_theta, spacetime_feature, target_mask)
     
         xyz = rgb_to_xyz(shs_emb)
-        # gaussian_integral(w) *  self.rgb_deform(st_feature).view(-1, 3)
+        # gaussian_integral(w) *  self.rgb_deform(st_feature).view(-1, 3
         xyz[target_mask, 1] *= self.rgb_decoder(dyn_feature).squeeze(-1) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
         shs = xyz_to_rgb(xyz)
-        
         
         pts = rays_pts_emb + 0. #.clone()        
         pts[target_mask] += self.pos_coeffs(dyn_feature)
