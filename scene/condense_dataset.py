@@ -94,13 +94,6 @@ def decompose_dataset(datadir, rotation_correction, split='test', visualise_pose
 
     poses = {}
     for ii, c in enumerate(cam_names):
-        if ii == 0:
-            # We also may need the distortion parameters which we can get from the per-frame meta files
-            metadepth_fp = os.path.join(datadir, f'{split}/{c}/meta/000000.depth.json')
-            metacol_fp = os.path.join(datadir, f'{split}/{c}/meta/000000.color.json')
-
-            with open(metacol_fp, 'r') as f:
-                color_distortion = json.load(f)['imageMetadata']['intrinsics']['distortion']
 
         meta = calib['cameras'][c]
 
@@ -142,7 +135,6 @@ def decompose_dataset(datadir, rotation_correction, split='test', visualise_pose
         focal_depth = [meta['depth_intrinsics']['fx'], meta['depth_intrinsics']['fy']]
 
         K = np.array([[focal[0], 0, meta['colour_intrinsics']['ppx']], [0, focal[1], meta['colour_intrinsics']['ppy']], [0, 0, 1]])
-        grid = generate_undistortion_grid(K, color_distortion, W, H, device='cpu')
 
         poses[c] = {
             'H': H, 'W': W,
@@ -153,53 +145,10 @@ def decompose_dataset(datadir, rotation_correction, split='test', visualise_pose
             'T': T,
             'cx': meta['colour_intrinsics']['ppx'],
             'cy': meta['colour_intrinsics']['ppy'],
-            'grid': grid,
         }
 
 
-    return poses
-
-import matplotlib.pyplot as plt
-from torchvision.transforms import ToPILImage
-
-class DilationTransform:
-    def __init__(self, kernel_size=(10, 10)):
-        # Create a structuring element (kernel) for dilation
-        self.kernel = torch.ones(*kernel_size).unsqueeze(0).unsqueeze(0).cuda()  # 1x1xHxW kernel
-
-    def __call__(self, img):
-        img = img.unsqueeze(0).unsqueeze(0)  # [H, W] -> [1, 1, H, W]
-        dilated_img = F.conv2d(img, self.kernel, padding='same').squeeze(0).squeeze(0)
-
-        dilated_img[dilated_img > 0] = 255.
-
-        # To display the function
-        # self.display(img, dilated_img)
-
-        return dilated_img
-
-    def display(self, original_img, dilated_img):
-        original_img = ToPILImage()(original_img.squeeze(0).squeeze(0))
-        dilated_img = ToPILImage()(dilated_img)
-
-        plt.figure(figsize=(10, 5))
-
-        # Original Image
-        plt.subplot(1, 2, 1)
-        plt.title("Original Image")
-        plt.imshow(original_img)
-        plt.axis('off')
-
-        # Dilated Image
-        plt.subplot(1, 2, 2)
-        plt.title("Dilated Image")
-        plt.imshow(dilated_img)
-        plt.axis('off')
-
-        plt.tight_layout()
-        plt.show()
-        exit()
-
+    return poses, H, W
 
 
 class CondenseData(Dataset):
@@ -209,67 +158,93 @@ class CondenseData(Dataset):
             split='train',
             downsample=1.0
     ):
-        self.img_wh = (
-            int(2560 / downsample),
-            int(1440 / downsample),
-        )
 
-        # 4x upsample
-        self.depth_wh = (
-            int(640 /downsample),
-            int(576 /downsample),
-        )
-
-        self.root_dir = datadir
-        self.split = split
-        self.num_frames = 0
+        if split == 'train':
+            self.image_type_folder = "color_corrected"
+        elif split == 'test':
+            self.image_type_folder = "masks"
+            
         with open(os.path.join(datadir, f"rotation_correction.json")) as f:
             self.rotation_correction = json.load(f)
+            
+            
+        self.root_dir = datadir        
+        self.downsample = 2.0 #downsample
 
-        self.cam_infos = decompose_dataset(datadir, self.rotation_correction, split=split ) #, visualise_poses=True)
-        self.grids = []
+        self.split = split
+        self.num_frames = 0
 
+        self.cam_infos, self.H, self.W = decompose_dataset(datadir, self.rotation_correction, split=split ) #, visualise_poses=True)
+        self.new_w, self.new_h = int(self.W/ self.downsample), int(self.H/self.downsample)
+        
         self.transform = T.ToTensor()
-
 
         self.image_paths, self.image_poses, self.image_times, self.fovs = self.load_images_path(self.root_dir, self.split)
         self.pcd_paths = self.load_pcd_path()
 
-
-
         # Finally figure out idx of coarse image
         self.stage = 'coarse'
-        target = '000000'
-        self.coarse_idxs = [id for id, f in enumerate(self.image_paths) if target in f]
+        self.get_mask = False
+    
+    def load_image(self, directory):
+        img = cv2.imread(directory, cv2.IMREAD_COLOR)  # Skips alpha
+        if img is None:
+            raise FileNotFoundError(f"Image not found: {directory}")
 
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+        if self.downsample != 1.0:
+            img = cv2.resize(img, (self.new_w, self.new_h), interpolation=cv2.INTER_AREA)
+
+        img = img.astype(np.float32)
+        img *= 1.0 / 255.0  # in-place normalization
+
+        img = torch.from_numpy(img).permute(2, 0, 1)  # [C, H, W]
+
+        return img, None
+
+        
     def load_images_path(self, cam_folder, split,  stage='fine'):
         image_paths = []
         image_poses = []
         image_times = []
         FOVs = []
+        self.poses = []
+        
+        self.mask_idxs = []
+        static_mask_fps = os.listdir(os.path.join(self.root_dir, 'static_masks'))
+        
+        idxs = 0
         for cam_info in self.cam_infos:
             meta = self.cam_infos[cam_info]
-
+            
+            if f'{cam_info}.png' in static_mask_fps:
+                self.mask_idxs.append(idxs)
 
             R = meta['R']
             T = meta['T']
 
+            self.poses.append((R,T))
+            self.focal = meta['focal']
+
             fovx = meta['FovX']
             fovy = meta['FovY']
 
-            fp = os.path.join(cam_folder, f"{split}/{cam_info}/masks_denoised") #color_corrected/") # masks_final
-
-            time_max = len(os.listdir(fp))
+            fp = os.path.join(cam_folder, f"{split}/{cam_info}/{self.image_type_folder}")
+            list_dir = sorted(os.listdir(fp), key=lambda x: int(x.split('.')[0]))
+            time_max = len(list_dir)
             cnt = 0
-            for img_fp in os.listdir(fp):
+            for img_fp in list_dir:
                 img_fp_ = os.path.join(fp, img_fp)
                 image_paths.append(img_fp_)
                 image_poses.append((R, T))
-                image_times.append(float(int(img_fp.split('.')[0]) / time_max))
+                # Out time is out of 10
+                image_times.append(float(int(img_fp.split('.')[0]) / 10_000_000))
+
                 FOVs.append((fovx, fovy))
-                self.grids.append(cam_info)
+
                 cnt+= 1
+                idxs += 1
 
         self.num_frames = cnt
         return image_paths, image_poses, image_times, FOVs
@@ -283,29 +258,22 @@ class CondenseData(Dataset):
 
         return fps
 
-    def unditort_pred(self, img, index):
-        return F.grid_sample(img.unsqueeze(0),self.cam_infos[self.grids[index]]['grid'].cuda(), mode='nearest', align_corners=True)
-
-
     def __len__(self):
         return len(self.image_paths)
 
     def __getitem__(self, index):
-        if self.stage == 'fine':
-            path = self.image_paths[index]
-            pose = self.image_poses[index]
-            time = self.image_times[index]
-        elif self.stage == 'coarse':
-            idx = index % len(self.coarse_idxs)
-            path = self.image_paths[self.coarse_idxs[idx]]
-            assert '000000' in path, 'Not an initial frame'
-            pose = self.image_poses[self.coarse_idxs[idx]]
-            time = self.image_times[self.coarse_idxs[idx]]
-
-        img = Image.open(path)
-        # img = img.resize(self.img_wh, Image.LANCZOS)
-        img = self.transform(img)
-        return img, pose, time
+        mask = None
+        path = self.image_paths[index]
+        pose = self.image_poses[index]
+        time = self.image_times[index]
+        if self.split == 'train':
+            if self.get_mask:
+                camid = os.path.join(f'{self.root_dir}/static_masks', path.split('/')[-3])
+                camid = f'{camid}.png'
+                mask, _ = self.load_image(camid)
+                mask = (mask.sum(0) > 0).float()
+        img, _ = self.load_image(path)
+        return img, pose, time, mask
 
     def get_pcd_path(self, index):
         try:

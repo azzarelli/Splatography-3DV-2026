@@ -24,6 +24,9 @@ class GUIBase:
         self.W, self.H = self.scene.getTestCameras()[0].image_width, self.scene.getTestCameras()[0].image_height
         self.fov = (self.scene.getTestCameras()[0].FoVy, self.scene.getTestCameras()[0].FoVx)
 
+        if self.H > 800:
+            self.W = self.W
+            self.H = self.H 
         # Initialize the image buffer
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         
@@ -47,12 +50,17 @@ class GUIBase:
         
         self.N_pseudo = 3 
         if view_test:
-            self.free_cams = [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+            self.free_cams = [self.scene.getTestCameras()[0], self.scene.getTestCameras()[300]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
         else:
-            try:
-                self.free_cams = [self.scene.get_pseudo_view() for i in range(self.N_pseudo)]+ [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
-            except:
+            if self.scene.dataset_type == 'dynerf':
                 self.free_cams = [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+            else:
+                self.free_cams = [self.scene.getTestCameras()[i*300] for i in range(4)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+
+            # try:
+            #     self.free_cams = [self.scene.get_pseudo_view() for i in range(self.N_pseudo)]+ [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+            # except:
+            #     self.free_cams = [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
         # self.free_cams = [self.scene.get_pseudo_view() for i in range(self.N_pseudo)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
         self.current_cam_index = 0
         self.original_cams = [copy.deepcopy(cam) for cam in self.free_cams]
@@ -328,7 +336,7 @@ class GUIBase:
         reserved = torch.cuda.memory_reserved() / (1024 ** 2)  # Convert to MB
         print(
             f'[{self.stage} {self.iteration}] Time: {time:.2f} | Allocated Memory: {allocated:.2f} MB, Reserved Memory: {reserved:.2f} MB | CPU Memory Usage: {memory_mb:.2f} MB')
-
+    
     def render(self):
         if self.gui:
             while dpg.is_dearpygui_running():
@@ -341,10 +349,10 @@ class GUIBase:
                         self.train_step()
                         self.iteration += 1
 
-                    if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                        if self.stage == 'fine':
-                            with torch.no_grad():
-                                self.test_step()
+                    # if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
+                    #     if self.stage == 'fine':
+                    #         with torch.no_grad():
+                    #             self.test_step()
 
                     if self.iteration > self.final_iter and self.stage == 'fine':
                         self.stage = 'done'
@@ -407,7 +415,8 @@ class GUIBase:
                         'h_thresh':self.h_thresh,
                         "set_w":self.w_val,
                         "set_w_flag":self.set_w_flag,
-                        "viewer_status":self.switch_off_viewer_args
+                        "viewer_status":self.switch_off_viewer_args,
+                        "vis_mode":self.vis_mode,
                     }
             )
             
@@ -452,6 +461,11 @@ class GUIBase:
         else:
             dpg.set_value("_log_view_camera", f"Training Views")
 
+    def save_scene(self):
+        print("\n[ITER {}] Saving Gaussians".format(self.iteration))
+        self.scene.save(self.iteration, self.stage)
+        print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
+        torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
 
 
 def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:

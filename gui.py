@@ -130,7 +130,7 @@ class GUI(GUIBase):
         self.checkpoint = ckpt_start
         self.debug_from = debug_from
 
-        self.total_frames = 50
+        self.total_frames = 300
         
         self.results_dir = os.path.join(self.args.model_path, 'active_results')
         if ckpt_start is None:
@@ -148,12 +148,14 @@ class GUI(GUIBase):
         # Set the gaussian mdel and scene
         gaussians = GaussianModel(dataset.sh_degree, hyperparams)
         if ckpt_start is not None:
-            scene = Scene(dataset, gaussians, args.cam_config, load_iteration=ckpt_start, max_frames=self.total_frames)
+            scene = Scene(dataset, gaussians, args.cam_config, load_iteration=ckpt_start)
             self.stage = 'fine'
         else:
             if skip_coarse:
                 gaussians.active_sh_degree = dataset.sh_degree
-            scene = Scene(dataset, gaussians, args.cam_config, skip_coarse=self.skip_coarse, max_frames=self.total_frames)
+            scene = Scene(dataset, gaussians, args.cam_config, skip_coarse=self.skip_coarse)
+        
+        self.total_frames = scene.maxframes
         # Initialize DPG      
         super().__init__(use_gui, scene, gaussians, self.expname, view_test)
 
@@ -226,9 +228,9 @@ class GUI(GUIBase):
             if self.stage == 'coarse': 
                 print('Loading Coarse (t=0) dataset')
                 self.scene.getTrainCameras().dataset.get_mask = True
-                self.viewpoint_stack = [[self.scene.index_train((i*self.total_frames)) for i in range(4)]] * 100 # self.scene.getTrainCameras()
+                self.viewpoint_stack = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs] * 100
+                
                 self.scene.getTrainCameras().dataset.get_mask = False
-
                 self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
                                                     num_workers=32, collate_fn=list))
                 
@@ -249,8 +251,6 @@ class GUI(GUIBase):
             self.loader = iter(viewpoint_stack_loader)
             viewpoint_cams = next(self.loader)
         
-        if self.stage == 'coarse':
-            return viewpoint_cams[0]
         return viewpoint_cams
     
     def train_step(self):
@@ -271,8 +271,7 @@ class GUI(GUIBase):
         
         # if self.stage == 'fine' and self.iteration % 1000 == 0 and self.iteration > 1:
         #     self.gaussians.update_wavelevel()
-        
-        
+           
         viewpoint_cams = self.get_batch_views
 
         # Generate scene based on an input camera from our current batch (defined by viewpoint_cams)
@@ -299,24 +298,24 @@ class GUI(GUIBase):
 
         # scale_exp = self.gaussians.get_scaling
         # pg_loss = 0.01* (scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
-        
+        pg_loss = 0.
+
         if self.stage == 'coarse':
             planeloss = 0.
 
-            normloss += self.gaussians.compute_static_rigidity_loss(self.iteration)
+            # normloss += self.gaussians.compute_static_rigidity_loss(self.iteration)
             
-            max_gauss_ratio = 5
-            scale_exp = self.gaussians.get_scaling
-            pg_loss = (
-                torch.maximum(
-                    scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
-                    torch.tensor(max_gauss_ratio),
-                )
-                - max_gauss_ratio
-            ).mean()
+            # max_gauss_ratio = 5
+            # scale_exp = self.gaussians.get_scaling
+            # pg_loss = (
+            #     torch.maximum(
+            #         scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
+            #         torch.tensor(max_gauss_ratio),
+            #     )
+            #     - max_gauss_ratio
+            # ).mean()
             
         elif self.stage == 'fine':
-            pg_loss = 0.
             # dyn_target_loss += self.gaussians.compute_rigidity_loss(self.iteration)
             
             planeloss = self.gaussians.compute_regulation(
@@ -425,13 +424,8 @@ class GUI(GUIBase):
            
             torch.cuda.synchronize()
             # Save scene when at the saving iteration
-            if (self.iteration in self.saving_iterations) or (self.stage == 'coarse' and self.iteration == 1000):
-                print("\n[ITER {}] Saving Gaussians".format(self.iteration))
-                self.scene.save(self.iteration, self.stage)
-    
-                print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
-                torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
-    
+            if (self.iteration in self.saving_iterations) or (self.iteration == self.final_iter-1):
+                self.save_scene()
 
             self.timer.start()
             
@@ -607,7 +601,7 @@ class GUI(GUIBase):
         axs[1].set_xlabel("Depth")
         axs[1].set_ylabel("Cumulative Probability")
 
-        plt.tight_layout()
+        plt.tight_layout() 
         plt.show()
 
 
@@ -654,7 +648,7 @@ class GUI(GUIBase):
         # Load initial dara
         print('Loading (t=0) for Depth')
         # For each camera learn a seperate depth warp
-        for i in range(4):
+        for i in range(self.scene.num_cams):
             # Set-up data 
             data = self.get_depth_alignment_data(i).detach()
             
@@ -707,9 +701,9 @@ class GUI(GUIBase):
             mask = viewpoint_cam.gt_alpha_mask.cuda()
 
 
-            # if (self.iteration == 500) or (self.iteration == 1000 or self.iteration == 2000):
-            #     if idx % 3 == 0:
-            save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
+            if (self.iteration == 500) or (self.iteration == 1000 or self.iteration == 2000):
+                if idx % 100 == 0:
+                    save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
 
             image = image*mask
             gt_image = gt_image*mask
@@ -754,77 +748,6 @@ def setup_seed(seed):
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
 
-
-def pairwise_distances_func(gt, pred):
-    # Shapes: gt -> (N, 3), pred -> (M, 3)
-    gt_norm = torch.sum(gt**2, dim=1).unsqueeze(1)  # Shape: (N, 1)
-    pred_norm = torch.sum(pred**2, dim=1).unsqueeze(0)  # Shape: (1, M)
-    cross_term = torch.matmul(gt, pred.T)  # Shape: (N, M)
-    distances = torch.sqrt(gt_norm - 2 * cross_term + pred_norm)  # Shape: (N, M)
-    return distances
-
-def custom_pcd_loss(gt, pred, k= 4, threshold=0.01):
-    gt = torch.tensor(o3d.io.read_point_cloud(gt).points).float().cuda()
-    stability = 0.0000001
-    # print(pred.dtype, gt.dtype)
-    if gt.shape[0] < 5000:
-        # TODO: Decide on point-based regularisation
-        diff = gt[:, None, :] - pred[None, :, :]  # Shape: (N, M, 3)
-        pairwise_distances = torch.norm(diff, dim=2)  # Shape: (N, M)
-        distances, indices = torch.topk(pairwise_distances, k, dim=1, largest=False, sorted=True)
-        return F.relu(distances.mean(-1) - threshold).mean()
-
-    return None
-
-def nns(knn_indices, features):
-    # Gather neighbor features without for-loop
-    safe_indices = knn_indices.clone()
-    safe_indices[safe_indices == -1] = 0  # avoid indexing error
-    neighbor_features = features[safe_indices]  # (N, k, F)
-
-    # Mask out invalid neighbors
-    valid_mask = (knn_indices != -1).unsqueeze(-1)  # (N, k, 1)
-    neighbor_features = neighbor_features * valid_mask
-
-    # Mean of valid neighbor features
-    neighbor_sum = neighbor_features.sum(dim=1)
-    neighbor_count = valid_mask.sum(dim=1).clamp(min=1)
-    neighbor_mean = neighbor_sum / neighbor_count
-    
-    return neighbor_mean
-
-# from pytorch3d.ops import ball_query, knn_gather
-
-# def KNN_motion_features(positions, features):
-#     N, F = features.shape
-#     k = 4
-#     radius = 2
-    
-#     N, _ = positions.shape
-
-#     # PyTorch3D expects batched inputs
-#     device = positions.device
-#     N, _ = positions.shape
-
-#     # Add batch dimension
-#     pos = positions.unsqueeze(0)  # (1, N, 3)
-#     feat = features.unsqueeze(0)  # (1, N, F)
-
-#     # Get K nearest neighbors
-#     knn = knn_points(pos, pos, K=k+1)  # includes self as neighbor
-
-#     # Exclude the first neighbor (self)
-#     idx = knn.idx[:, :, 1:]  # (1, N, k)
-#     neighbor_feats = knn_gather(feat, idx)  # (1, N, k, F)
-
-#     # Compute mean of neighbors
-#     neighbor_mean = neighbor_feats.mean(dim=2)  # (1, N, F)
-
-#     # Difference between feature and neighborhood mean
-#     diff = feat - neighbor_mean  # (1, N, F)
-#     return (diff**2).mean()
-
-
 def save_gt_pred(gt, pred, iteration, idx, name):
     pred = (pred.permute(1, 2, 0)
         # .contiguous()
@@ -856,22 +779,6 @@ def save_gt_pred(gt, pred, iteration, idx, name):
     cv2.imwrite(f'debugging/{iteration}_{name}_{idx}.png', pred_bgr)
 
     return pred_bgr
-
-SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
-def gaussian_integral(h, w, mu):
-    """Returns high weight (0 to 1) for solid materials
-    
-        Notes on optimization:
-            We evaluate the function return 1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
-            However, as this tends to 0 when out point is solid, we will do:
-            return 1- (1 - (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)) = (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)
- 
-            Note, we may want to remove transparent materials and this can be done by 
-            h*(SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2), which returns a low weight for transparent materiasl
-    """
-    erf_term_1 = torch.erf(w * mu)
-    erf_term_2 = torch.erf(w * (mu - 1))
-    return ((SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2)).squeeze(-1)
 
 if __name__ == "__main__":
     # Set up command line argument parser

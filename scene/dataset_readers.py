@@ -70,7 +70,7 @@ def getNerfppNorm(cam_info):
         cam_centers.append(C2W[:3, 3:4])
 
     center, diagonal = get_center_and_diag(cam_centers)
-    radius = diagonal * 1.1
+    radius = diagonal #* 1.1
 
     translate = -center
     # breakpoint()
@@ -475,6 +475,7 @@ def readCondenseSceneInfo(datadir, eval):
     pcd = o3d.io.read_point_cloud(os.path.join(datadir, f'pcds/sparse/000000.ply'))
     xyz = np.asarray(pcd.points)
     colors = np.asarray(pcd.colors)
+
     # colors = np.random.random((xyz.shape[0], 3))
 
     pcd = BasicPointCloud(points=xyz, colors=colors, normals=np.zeros((xyz.shape[0], 3)))

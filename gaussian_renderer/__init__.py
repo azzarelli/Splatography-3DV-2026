@@ -109,8 +109,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     means2D = screenspace_points
     extras = None
 
-    means3D = pc.get_xyz
-    time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
+    means3D_ = pc.get_xyz
+    time = torch.tensor(viewpoint_camera.time).to(means3D_.device).repeat(means3D_.shape[0], 1)
     colors = pc.get_color
 
     opacity = pc.get_opacity.clone().detach()
@@ -124,8 +124,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
                 opacity[:, 1] =  opacity[:, 1]*0. + view_args['set_w']
                 
 
-    means3D_, rotations, opacity,colors, extras = pc._deformation(
-        point=means3D, 
+    means3D, rotations, opacity,colors, extras = pc._deformation(
+        point=means3D_, 
         rotations=rotations,
         scales=scales,
         times_sel=time, 
@@ -153,7 +153,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             elif show_mask == -1:
                 mask = torch.logical_and(~pc.target_mask, mask)
             
-   
             if mask is not None:
                 means3D = means3D[mask]
                 means2D = means2D[mask]
@@ -165,35 +164,36 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             if view_args['full_opac']:
                 opacity = torch.ones_like(opacity).cuda()
                 colors = (means3D - means3D_).abs()
+    else:
+        view_args= {'vis_mode':'render'}
 
-    rendered_image, radii, rendered_depth = rasterizer(
-        means3D=means3D_,
-        means2D=means2D,
-        shs=None,
-        colors_precomp=colors,
-        opacities=opacity,
-        scales=scales,
-        rotations=rotation,
-        cov3D_precomp=None)
-    
-    # rendered_image = linear_rgb_to_srgb(rendered_image)
-    norm = rotated_softmin_axis_direction(rotation, scales)
+    rendered_image, rendered_depth, norms = None, None, None
+    if view_args['vis_mode'] in ['render', 'depth']:
+        rendered_image, radii, rendered_depth = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=colors,
+            opacities=opacity,
+            scales=scales,
+            rotations=rotation,
+            cov3D_precomp=None)
+    elif view_args['vis_mode'] == 'norms':
+        # rendered_image = linear_rgb_to_srgb(rendered_image)
+        norms = rotated_softmin_axis_direction(rotation, scales)
 
-    norms, _, _ = rasterizer(
-        means3D=means3D,
-        means2D=means2D,
-        shs=None,
-        colors_precomp=norm,
-        opacities=opacity,
-        scales=scales,
-        rotations=rotation,
-        cov3D_precomp=None)
+        norms, _, _ = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=norms,
+            opacities=opacity,
+            scales=scales,
+            rotations=rotation,
+            cov3D_precomp=None)
     
     return {
         "render": rendered_image,
-        "viewspace_points": screenspace_points,
-        "visibility_filter": radii > 0,
-        "radii": radii,
         "depth": rendered_depth,
         'norms':norms, 'alpha':rendered_depth,
         "extras":extras # A dict containing mor point info
@@ -241,8 +241,6 @@ def render_batch(
     rotations = pc._rotation
     colors = pc.get_color
 
-    
-    
     L1 = 0.
     norm_loss = 0.
     depth_loss = 0.
@@ -272,13 +270,11 @@ def render_batch(
                 target_mask=pc.target_mask,
             )
         
-        
-        
         # Do the scaling and rotation activation after deformation
         rotations_final = pc.rotation_activation(rotations_final)
         
         # As we take the NN from some random time step, lets re-calc it frequently
-        if (iteration % 10 == 0 and idx == 0) or pc.target_neighbours is None:
+        if (iteration % 500 == 0 and idx == 0) or pc.target_neighbours is None:
             pc.update_neighbours(means3D_final[pc.target_mask])
         
         screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
@@ -337,8 +333,8 @@ def render_batch(
         radii[pc.target_mask] = target_radii
         
         gt_img = viewpoint_camera.original_image.cuda()
-        
-        L1 += l1_loss(rendered_image, gt_img)
+        # Avoid loss around the bordered of images (either way it should be too important)
+        L1 += l1_loss(rendered_image[:,100:-100,100:-100], gt_img[:,100:-100,100:-100])
         # weights = viewpoint_camera.weights.cuda().unsqueeze(0)
 
         # L1 += l1_loss(rendered_image, gt_img, weights)

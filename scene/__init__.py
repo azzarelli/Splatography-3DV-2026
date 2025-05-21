@@ -40,8 +40,16 @@ class Scene:
             print("Loading trained model at iteration {}".format(self.loaded_iter))
 
         
-        scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, num_cams, max_frames)
-        dataset_type="dynerf"
+        if os.path.exists(os.path.join(args.source_path, "rotation_correction.json")):
+            scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.resolution)
+            dataset_type="condense"
+            max_frames = 300
+            num_cams = 4
+        else:
+            scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, '4', max_frames)
+            dataset_type="dynerf"
+            max_frames = 50
+            num_cams = 4
         # if os.path.exists(os.path.join(args.source_path, "rotation_correction.json")):
         #     scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.eval)
         #     dataset_type = "condense"
@@ -66,12 +74,14 @@ class Scene:
         # else:
         #     assert False, "Could not recognize scene type!"
         self.maxtime = scene_info.maxtime
+        self.maxframes = max_frames
+        self.num_cams = num_cams
         self.dataset_type = dataset_type
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
 
-        self.train_camera = FourDGSdataset(scene_info.train_cameras, args, dataset_type, 'train', maxframes=max_frames)
-        self.test_camera = FourDGSdataset(scene_info.test_cameras, args, dataset_type, 'test', maxframes=max_frames)
+        self.train_camera = FourDGSdataset(scene_info.train_cameras, args, dataset_type, 'train', maxframes=max_frames, num_cams=num_cams)
+        self.test_camera = FourDGSdataset(scene_info.test_cameras, args, dataset_type, 'test', maxframes=max_frames, num_cams=num_cams)
         # self.video_camera = FourDGSdataset(scene_info.video_cameras, args, dataset_type)
 
         if skip_coarse:
@@ -100,8 +110,6 @@ class Scene:
         if not skip_coarse and load_iteration is None:
             with torch.no_grad():
                 self.train_camera.update_target(self.gaussians._xyz[~self.gaussians.target_mask].mean(dim=0).cpu())
-
-        
         
     def get_pseudo_view(self):
         """Generate a pseudo view with four known cameras 
@@ -124,6 +132,9 @@ class Scene:
     def getTrainCameras(self, scale=1.0):
         return self.train_camera
 
+    def getTrainCamerasZero(self, scale=1.0):
+        return self.train_camera
+    
     def index_train(self, index):
         return self.train_camera[index]
     

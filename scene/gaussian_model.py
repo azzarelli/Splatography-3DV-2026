@@ -189,28 +189,43 @@ class GaussianModel:
         # increase scene points as well
         # Remove unseen points
         # Remove points betwen 1 and  target view masks
-        dyn_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
-        scene_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
-        
-        for cam in cam_list:             
-            dyn_mask += get_in_view_dyn_mask(cam, fused_point_cloud).long()
-            scene_mask += get_in_view_screenspace(cam, fused_point_cloud).long()
-        
-        scene_mask = scene_mask > 0
-        target_mask = dyn_mask > (len(cam_list)-1)
-        dyn_mask = torch.logical_or(target_mask, dyn_mask ==0)
-        viable  = torch.logical_and(dyn_mask, scene_mask)
-        
-        fused_point_cloud = fused_point_cloud[viable]
-        fused_color = fused_color[viable]
-        target_mask = target_mask[viable]
+
+        if False: # This is for the dynerf dataset
+            dyn_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
+            scene_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
+            
+            for cam in cam_list:             
+                dyn_mask += get_in_view_dyn_mask(cam, fused_point_cloud).long()
+                scene_mask += get_in_view_screenspace(cam, fused_point_cloud).long()
+            
+            scene_mask = scene_mask > 0
+            target_mask = dyn_mask > (len(cam_list)-1)
+            dyn_mask = torch.logical_or(target_mask, dyn_mask ==0)
+            viable  = torch.logical_and(dyn_mask, scene_mask)
+        else:
+            target_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
+
+            # For the condense dataset we use the bounding box
+            # Just for the basssist test scene
+            CORNER_2 = [[-1.38048, -0.1863],[-0.7779, 1.6705], [1.1469, 1.1790], [0.5832, -0.7245]]
+            polygon = np.array(CORNER_2)  # shape (4, 2)
+            from matplotlib.path import Path
+            path = Path(polygon)
+            points_xy = fused_point_cloud[:, 1:].cpu().numpy()  # (N, 2)
+            # Create mask for points inside polygon
+            viable = torch.from_numpy(path.contains_points(points_xy)).cuda()
+            
+            
+        # fused_point_cloud = fused_point_cloud[viable]
+        # fused_color = fused_color[viable]
+        target_mask = viable #target_mask[viable]
 
         
-        while target_mask.sum() < 40000:
-            target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
-            fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
-            fused_color = torch.cat([fused_color,fused_color[target_mask]], dim=0)
-            target_mask = torch.cat([target_mask, target_mask[target_mask]])
+        # while target_mask.sum() < 40000:
+        #     target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
+        #     fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
+        #     fused_color = torch.cat([fused_color,fused_color[target_mask]], dim=0)
+        #     target_mask = torch.cat([target_mask, target_mask[target_mask]])
         
         self.target_mask = target_mask
         
@@ -224,7 +239,7 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
-        dist2 = torch.clamp_min(distCUDA2(fused_point_cloud), 0.0000001)
+        dist2 = torch.clamp_max(torch.clamp_min(distCUDA2(fused_point_cloud), 0.000000001), 1.)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
 
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
@@ -514,12 +529,12 @@ class GaussianModel:
         grads_abs[grads_abs.isnan()] = 0.0
         
         # self.split_spikes(extent, grads=grads, grad_threshold=max_grad)
-        self.densify_and_clone(extent, grads=grads_abs, grad_threshold=max_grad)
-        self.densify_and_split(extent, grads=grads_abs, grad_threshold=max_grad)
+        self.densify_and_clone(extent, grads=grads, grad_threshold=max_grad)
+        self.densify_and_split(extent, grads=grads, grad_threshold=max_grad)
     
     def densify_and_clone(self, scene_extent, grads,grad_threshold ):
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
-        
+        # print(torch.norm(grads, dim=-1).max())
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                             torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
 
@@ -711,43 +726,44 @@ class GaussianModel:
             #         l1total += torch.abs(1. - grid).mean()
         
         # Order is Yh0 Yl1 Yl0
-        tvtotal1 = 0
-        spsmoothness = 0
-        minmotion = 0
-        minview = 0
-        for index, grids in enumerate(self._deformation.deformation_net.grid.waveplanes_list()):
-            if index in [0,1,3]: # space only
-                for idx, grid in enumerate(grids):
-                    # Total variation
-                    if idx == 0:
-                        tvtotal1 += compute_plane_tv(grid)
+        # tvtotal1 = 0
+        # spsmoothness = 0
+        # minmotion = 0
+        # minview = 0
+        # for index, grids in enumerate(self._deformation.deformation_net.grid.waveplanes_list()):
+        #     if index in [0,1,3]: # space only
+        #         if tvtotal1_weight > 0. or spsmoothness_weight
+        #         for idx, grid in enumerate(grids):
+        #             # Total variation
+        #             if idx == 0:
+        #                 tvtotal1 += compute_plane_tv(grid)
                     
-                    # Spatial smoothness prioritizing coarse features
-                    elif idx == 1:
-                        spsmoothness += 0.6*grid.abs().mean()
-                    elif idx == 2:
-                        spsmoothness += 0.3*grid.abs().mean()
+        #             # Spatial smoothness prioritizing coarse features
+        #             elif idx == 1:
+        #                 spsmoothness += 0.6*grid.abs().mean()
+        #             elif idx == 2:
+        #                 spsmoothness += 0.3*grid.abs().mean()
                         
-            elif index in [2,4,5]: # space time
-                for idx, grid in enumerate(grids):
-                    # Min motion
-                    if idx == 0: 
-                        minmotion += grid.abs().mean()
-                    elif idx == 1:
-                        minmotion += 0.6 * grid.abs().mean()
-                    elif idx == 2:
-                        minmotion += 0.3 * grid.abs().mean()
-            else:
-                for idx, grid in enumerate(grids):
-                    if idx == 0: 
-                        minview += grid.abs().mean()
-                    elif idx == 1:
-                        minview += 0.6 * grid.abs().mean()
-                    elif idx == 2:
-                        minview += 0.3 * grid.abs().mean()
+        #     elif index in [2,4,5]: # space time
+        #         for idx, grid in enumerate(grids):
+        #             # Min motion
+        #             if idx == 0: 
+        #                 minmotion += grid.abs().mean()
+        #             elif idx == 1:
+        #                 minmotion += 0.6 * grid.abs().mean()
+        #             elif idx == 2:
+        #                 minmotion += 0.3 * grid.abs().mean()
+        #     else:
+        #         for idx, grid in enumerate(grids):
+        #             if idx == 0: 
+        #                 minview += grid.abs().mean()
+        #             elif idx == 1:
+        #                 minview += 0.6 * grid.abs().mean()
+        #             elif idx == 2:
+        #                 minview += 0.3 * grid.abs().mean()
         
-        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + \
-            tvtotal1 * tvtotal1_weight + spsmoothness * spsmoothness_weight + minmotion * minmotion_weight + minview * minview_weight
+        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total 
+            # tvtotal1 * tvtotal1_weight + spsmoothness * spsmoothness_weight + minmotion * minmotion_weight + minview * minview_weight
 
     def update_target_mask(self, cam_list): 
         selected_pts_mask = self.target_mask
@@ -975,22 +991,32 @@ def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
 
     # Only sample pixels for visible points
     valid_idx = visible_mask.nonzero(as_tuple=True)[0]
-
     if valid_idx.numel() > 0:
         px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
         py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
         mask = camera.mask.to(device)
         sampled_mask = mask[py_valid, px_valid]  # shape: [#valid]
         mask_values[valid_idx] = sampled_mask.bool()
+    
     # import matplotlib.pyplot as plt
-
-    # # Assuming tensor is named `tensor_wh` with shape [W, H]
-    # # Convert to [H, W] for display (matplotlib expects H first)
-    # mask[py_valid, px_valid] = 0.5
+    # Assuming tensor is named `tensor_wh` with shape [W, H]
+    # Convert to [H, W] for display (matplotlib expects H first)
+    # print(mask_values.shape)
+    # mask[:, :] *= 0.
+    # mask[py_valid, px_valid] = xyz[valid_idx,0]
     # print(py_valid.shape)
 
     # tensor_hw = mask.cpu()  # If it's on GPU
     # plt.imshow(tensor_hw, cmap='gray')
+    # plt.axis('off')
+    # plt.show()
+    # img = torch.zeros((camera.image_height, camera.image_width, 3), dtype=torch.float32, device=device)
+    # img[py_valid, px_valid, 0] = xyz[valid_idx, 0]  # X as Red
+    # img[py_valid, px_valid, 1] = xyz[valid_idx, 1]  # Y as Green
+    # img[py_valid, px_valid, 2] = xyz[valid_idx, 2]  # Z as Blue
+
+    # plt.imshow(img.cpu().numpy())
+    # plt.title("Visible Points Rendered as XYZ Composite")
     # plt.axis('off')
     # plt.show()
     # exit()

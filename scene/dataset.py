@@ -17,13 +17,18 @@ class FourDGSdataset(Dataset):
         args,
         dataset_type,
         split,
-        maxframes
+        maxframes,
+        num_cams
     ):
         self.dataset = dataset
         self.args = args
         self.dataset_type=dataset_type
         
-        self.zero_idxs = [i*maxframes for i in range(4)]
+        try:
+            self.zero_idxs = dataset.mask_idxs
+        except:
+            self.zero_idxs = [i*maxframes for i in range(num_cams)]
+            
         if dataset_type == 'train':
             print(f'Zero Indexs are: {self.zero_idxs}')
             
@@ -46,9 +51,6 @@ class FourDGSdataset(Dataset):
     
     def update_target(self, mean):
         self.mean = mean
-        
-        # self.mean = triangulate_from_rays(self.T_stack, torch.cat(self.rotations, dim=0)).cpu()
-
     
     def get_novel_view_from_config(self):
         """Return a novel view camera based off the initial training set (R,T)
@@ -68,7 +70,26 @@ class FourDGSdataset(Dataset):
         return random_cam
 
     def __getitem__(self, index):
-        if self.dataset_type != "PanopticSports":
+        if self.dataset_type == "condense":
+            image, w2c, time, mask = self.dataset[index]
+            R, T = w2c
+            FovX, FovY = self.dataset.load_fov(index)
+            rgb_cam = Camera(
+                colmap_id=index, R=R, T=T, FoVx=FovX, FoVy=FovY, image=image, gt_alpha_mask=None,
+                image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time,
+                mask=mask
+            )
+
+            # image, w2c, time = self.dataset.get_depth(index)
+            # R, T = w2c
+            # FovX, FovY = self.dataset.load_depth_fov(index)
+            # depth_cam = Camera(
+            #     colmap_id=index, R=R, T=T, FoVx=FovX, FoVy=FovY, image=image, gt_alpha_mask=None,
+            #     image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time
+            # )
+
+            return rgb_cam #, depth_cam
+        else:
             try:
                 image, w2c, time, mask, depth, weights = self.dataset[index]
                 R, T = w2c
@@ -91,9 +112,6 @@ class FourDGSdataset(Dataset):
                           depth=depth,
                           weights=weights
                       )
-        else:
-            return self.dataset[index]
-
 
     def __len__(self):
         
