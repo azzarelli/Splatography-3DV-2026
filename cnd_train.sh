@@ -18,18 +18,18 @@ if [ "$3" == "render" ]; then
 elif [ "$3" == "view" ]; then
   echo "Viewing..."
 
-  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /media/barry/56EA40DEEA40BBCD/DATA/Condense/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000 --start_checkpoint $4 --view-test
+  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /data/Condense_v2/scenes/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000 --start_checkpoint $4 --view-test
 elif [ "$3" == "ext" ]; then
   echo "Extending..."
 
-  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /media/barry/56EA40DEEA40BBCD/DATA/Condense/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000 --start_checkpoint 7000 
+  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /data/Condense_v2/scenes/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000 --start_checkpoint 7000 
 elif [ "$3" == "skip-coarse" ]; then
   echo "Skip Coarse..."
 
-  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /media/barry/56EA40DEEA40BBCD/DATA/Condense/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000 --skip-coarse $4
+  CUDA_LAUNCH_BLOCKING=1 python gui.py -s /data/Condense_v2/scenes/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000 --skip-coarse $4
 else
   echo "Training starting..."
 
-  TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 python gui.py -s /media/barry/56EA40DEEA40BBCD/DATA/Condense/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000
+  TORCH_USE_CUDA_DSA=1 CUDA_LAUNCH_BLOCKING=1 python gui.py -s /data/Condense_v2/scenes/$SAVEDIR/ --expname "Condense/$SAVEDIR/$EXP_NAME" --configs arguments/Condense/default.py --test_iterations 1000
 
 fi

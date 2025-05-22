@@ -27,7 +27,7 @@ import cv2
 from gaussian_renderer import render,render_batch,render_depth
 import json
 import open3d as o3d
-from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
+# from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
 from gui_utils.base import get_in_view_dyn_mask
 
 
@@ -707,6 +707,12 @@ class GUI(GUIBase):
 
             image = image*mask
             gt_image = gt_image*mask
+
+            # import matplotlib.pyplot as plt
+            # plt.imshow(gt_image.cpu().numpy().transpose(1,2,0))
+            # plt.axis('off')
+            # plt.show()
+            # exit()
             PSNR += psnr(image, gt_image)
 
             SSIM += ssim(image.unsqueeze(0), gt_image)

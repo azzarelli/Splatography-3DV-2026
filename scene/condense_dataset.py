@@ -162,7 +162,7 @@ class CondenseData(Dataset):
         if split == 'train':
             self.image_type_folder = "color_corrected"
         elif split == 'test':
-            self.image_type_folder = "masks"
+            self.image_type_folder = "scene_masks"
             
         with open(os.path.join(datadir, f"rotation_correction.json")) as f:
             self.rotation_correction = json.load(f)
@@ -187,21 +187,23 @@ class CondenseData(Dataset):
         self.get_mask = False
     
     def load_image(self, directory):
-        img = cv2.imread(directory, cv2.IMREAD_COLOR)  # Skips alpha
+        
+        img = cv2.imread(directory, cv2.IMREAD_UNCHANGED)
         if img is None:
             raise FileNotFoundError(f"Image not found: {directory}")
-
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
+        
+        if self.split == 'train':
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        elif self.split == 'test':
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+        
         if self.downsample != 1.0:
             img = cv2.resize(img, (self.new_w, self.new_h), interpolation=cv2.INTER_AREA)
 
-        img = img.astype(np.float32)
-        img *= 1.0 / 255.0  # in-place normalization
-
+        img = img.astype(np.float32) / 255.0 
         img = torch.from_numpy(img).permute(2, 0, 1)  # [C, H, W]
 
-        return img, None
+        return img
 
         
     def load_images_path(self, cam_folder, split,  stage='fine'):
@@ -270,9 +272,9 @@ class CondenseData(Dataset):
             if self.get_mask:
                 camid = os.path.join(f'{self.root_dir}/static_masks', path.split('/')[-3])
                 camid = f'{camid}.png'
-                mask, _ = self.load_image(camid)
+                mask = self.load_image(camid)
                 mask = (mask.sum(0) > 0).float()
-        img, _ = self.load_image(path)
+        img = self.load_image(path)
         return img, pose, time, mask
 
     def get_pcd_path(self, index):
@@ -286,3 +288,15 @@ class CondenseData(Dataset):
 
     def load_fov(self, index):
         return self.fovs[index]
+
+
+import matplotlib.pyplot as plt
+
+def show_rgb_image(tensor):
+    """
+    Displays an RGB image tensor of shape [3, H, W].
+    """
+    img = tensor.permute(1, 2, 0).cpu().numpy()  # Convert to [H, W, C] and to numpy
+    plt.imshow(img)
+    plt.axis('off')
+    plt.show()

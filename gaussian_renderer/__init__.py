@@ -119,24 +119,32 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     rotations = pc._rotation
 
     if view_args is not None:
-        if view_args['viewer_status']:
-            if view_args['set_w_flag']:
-                opacity[:, 1] =  opacity[:, 1]*0. + view_args['set_w']
-                
+        if view_args['finecoarse_flag']:
+            means3D, rotations, opacity,colors, extras = pc._deformation(
+                point=means3D_, 
+                rotations=rotations,
+                scales=scales,
+                times_sel=time, 
+                h_emb=opacity,
+                shs=colors,
+                view_dir=viewpoint_camera.direction_normal(),
+                target_mask=pc.target_mask
+            )
+        else:
+            means3D, extras = means3D_, None
 
-    means3D, rotations, opacity,colors, extras = pc._deformation(
-        point=means3D_, 
-        rotations=rotations,
-        scales=scales,
-        times_sel=time, 
-        h_emb=opacity,
-        shs=colors,
-        view_dir=viewpoint_camera.direction_normal(),
-        target_mask=pc.target_mask
-    )
+    else:
+        means3D, rotations, opacity,colors, extras = pc._deformation(
+            point=means3D_, 
+            rotations=rotations,
+            scales=scales,
+            times_sel=time, 
+            h_emb=opacity,
+            shs=colors,
+            view_dir=viewpoint_camera.direction_normal(),
+            target_mask=pc.target_mask
+        )
 
-
-    
     rotation = pc.rotation_activation(rotations)
 
     if view_args is not None:

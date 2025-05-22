@@ -91,16 +91,16 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
         
+        self.gt_alpha_mask = None
         if image is not None:
             if image.shape[0] == 4:
                 self.gt_alpha_mask = image[-1,:]
-                image = image[:-1, :]                
-            self.original_image = image
-            # breakpoint()
-            # .to(self.data_device)
-            self.image_width = self.original_image.shape[2]
-            self.image_height = self.original_image.shape[1]
+                image = image[:-1, :]
 
+        self.original_image = image
+
+        self.image_width = self.original_image.shape[2]
+        self.image_height = self.original_image.shape[1]
 
         self.depth = depth
         self.mask = mask

@@ -43,7 +43,7 @@ class GUIBase:
         # Set-up the camera for visualization
         self.show_scene_target = 0
 
-        
+        self.finecoarse_flag = True        
         self.switch_off_viewer = False
         self.switch_off_viewer_args = False
         self.full_opacity = False
@@ -72,6 +72,150 @@ class GUIBase:
     
     def __del__(self):
         dpg.destroy_context()
+
+    
+    def track_cpu_gpu_usage(self, time):
+        # Print GPU and CPU memory usage
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        memory_mb = memory_info.rss / (1024 ** 2)  # Convert to MB
+
+        allocated = torch.cuda.memory_allocated() / (1024 ** 2)  # Convert to MB
+        reserved = torch.cuda.memory_reserved() / (1024 ** 2)  # Convert to MB
+        print(
+            f'[{self.stage} {self.iteration}] Time: {time:.2f} | Allocated Memory: {allocated:.2f} MB, Reserved Memory: {reserved:.2f} MB | CPU Memory Usage: {memory_mb:.2f} MB')
+    
+    def render(self):
+        if self.gui:
+            while dpg.is_dearpygui_running():
+                if self.iteration > self.final_iter and self.stage == 'coarse':
+                    self.stage = 'fine'
+                    self.init_taining()
+
+                if self.view_test == False:
+                    if self.iteration <= self.final_iter:
+                        self.train_step()
+                        self.iteration += 1
+
+                    # self.test_step()
+
+                    if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
+                        if self.stage == 'fine':
+                            self.test_step()
+
+                    if self.iteration > self.final_iter and self.stage == 'fine':
+                        self.stage = 'done'
+                        dpg.stop_dearpygui() 
+                        # exit()
+
+                # if self.view_test == True:
+                #     self.train_depth()
+                # with torch.no_grad():
+                #     self.test_step()
+                #     exit()
+                with torch.no_grad():
+                    self.viewer_step()
+                    dpg.render_dearpygui_frame()
+            dpg.destroy_context() 
+        else:
+            while self.stage != 'done':
+                if self.iteration % 100 == 0:
+                    print(f'[{self.stage}] {self.iteration}')
+                if self.iteration > self.final_iter and self.stage == 'coarse':
+                    self.stage = 'fine'
+                    self.init_taining()
+
+                if self.iteration <= self.final_iter:
+                    self.train_step()
+                    self.iteration += 1
+
+
+                if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
+                    if self.stage == 'fine':
+                        self.test_step()
+
+                if self.iteration > self.final_iter and self.stage == 'fine':
+                    self.stage = 'done'
+                    exit()
+                    
+    @torch.no_grad()
+    def viewer_step(self):
+        
+        if self.switch_off_viewer == False:
+            # self.viewpoint_stack = self.scene.getTrainCameras()
+            
+            # self.scene.getTrainCameras().dataset.get_mask = True
+            # dyn_mask =  self.get_target_mask()
+            # self.scene.getTrainCameras().dataset.get_mask = False
+
+            cam = self.free_cams[self.current_cam_index]
+            cam.time = self.time
+            buffer_image = render(
+                    cam,
+                    self.gaussians, 
+                    self.pipe, 
+                    self.background, 
+                    stage=self.stage,
+                    view_args={
+                        'show_mask':self.show_scene_target,
+                        'full_opac':self.full_opacity,
+                        'w_thresh':self.w_thresh,
+                        'dx_thresh': self.show_dynamic,
+                        'h_thresh':self.h_thresh,
+                        "set_w":self.w_val,
+                        "set_w_flag":self.set_w_flag,
+                        "viewer_status":self.switch_off_viewer_args,
+                        "vis_mode":self.vis_mode,
+                        "finecoarse_flag":self.finecoarse_flag,
+                    }
+            )
+            
+            try:
+                buffer_image = buffer_image[self.vis_mode]
+            except:
+                print(f'Mode "{self.vis_mode}" does not work')
+                buffer_image = buffer_image['render']
+                
+            if buffer_image.shape[0] == 1:
+                buffer_image = (buffer_image - buffer_image.min())/(buffer_image.max() - buffer_image.min())
+                buffer_image = buffer_image.repeat(3,1,1)
+            
+            buffer_image = torch.nn.functional.interpolate(
+                buffer_image.unsqueeze(0),
+                size=(self.H,self.W),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0)
+
+            self.buffer_image = (
+                buffer_image.permute(1, 2, 0)
+                .contiguous()
+                .clamp(0, 1)
+                .contiguous()
+                .detach()
+                .cpu()
+                .numpy()
+            )
+
+        buffer_image = self.buffer_image
+
+        dpg.set_value(
+            "_texture", buffer_image
+        )  # buffer must be contiguous, else seg fault!
+        
+        # Add _log_view_camera
+        if self.current_cam_index < self.N_pseudo:
+            dpg.set_value("_log_view_camera", f"Random Novel Views")
+        elif self.current_cam_index == self.N_pseudo:
+            dpg.set_value("_log_view_camera", f"Test Views")
+        else:
+            dpg.set_value("_log_view_camera", f"Training Views")
+
+    def save_scene(self):
+        print("\n[ITER {}] Saving Gaussians".format(self.iteration))
+        self.scene.save(self.iteration, self.stage)
+        print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
+        torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
 
     def register_dpg(self):
         
@@ -126,6 +270,9 @@ class GUIBase:
                 dpg.add_text("Infer time: ")
                 dpg.add_text("no data", tag="_log_infer_time")
 
+            # ----------------
+            #  Loss Functions
+            # ----------------
             with dpg.group():
                 if self.view_test is False:
                     dpg.add_text("Training info:")
@@ -145,18 +292,21 @@ class GUIBase:
                 dpg.add_text("no data", tag="_log_psnr_test")
                 dpg.add_text("no data", tag="_log_ssim")
 
-            
-            # rendering options
+            # ----------------
+            #  Control Functions
+            # ----------------
             with dpg.collapsing_header(label="Rendering", default_open=True):
                 def callback_toggle_show_rgb(sender):
                     self.switch_off_viewer = ~self.switch_off_viewer
                 def callback_toggle_use_controls(sender):
                     self.switch_off_viewer_args = ~self.switch_off_viewer_args
-                     
+                def callback_toggle_finecoarse(sender):
+                    self.finecoarse_flag = False if self.finecoarse_flag else True
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="Viewer On/Off", callback=callback_toggle_show_rgb)
                     dpg.add_button(label="Controls On/Off", callback=callback_toggle_use_controls)
-                    
+                    dpg.add_button(label="Fine/Coarse", callback=callback_toggle_finecoarse)
+
                      
                 def callback_toggle_reset_cam(sender):
                     self.current_cam_index = 0
@@ -326,147 +476,6 @@ class GUIBase:
 
         dpg.show_viewport()
         
-    def track_cpu_gpu_usage(self, time):
-        # Print GPU and CPU memory usage
-        process = psutil.Process()
-        memory_info = process.memory_info()
-        memory_mb = memory_info.rss / (1024 ** 2)  # Convert to MB
-
-        allocated = torch.cuda.memory_allocated() / (1024 ** 2)  # Convert to MB
-        reserved = torch.cuda.memory_reserved() / (1024 ** 2)  # Convert to MB
-        print(
-            f'[{self.stage} {self.iteration}] Time: {time:.2f} | Allocated Memory: {allocated:.2f} MB, Reserved Memory: {reserved:.2f} MB | CPU Memory Usage: {memory_mb:.2f} MB')
-    
-    def render(self):
-        if self.gui:
-            while dpg.is_dearpygui_running():
-                if self.iteration > self.final_iter and self.stage == 'coarse':
-                    self.stage = 'fine'
-                    self.init_taining()
-
-                if self.view_test == False:
-                    if self.iteration <= self.final_iter:
-                        self.train_step()
-                        self.iteration += 1
-
-                    # if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                    #     if self.stage == 'fine':
-                    #         with torch.no_grad():
-                    #             self.test_step()
-
-                    if self.iteration > self.final_iter and self.stage == 'fine':
-                        self.stage = 'done'
-                        dpg.stop_dearpygui() 
-                        # exit()
-
-                # if self.view_test == True:
-                #     self.train_depth()
-                # with torch.no_grad():
-                #     self.test_step()
-                #     exit()
-                with torch.no_grad():
-                    self.viewer_step()
-                    dpg.render_dearpygui_frame()
-            dpg.destroy_context() 
-        else:
-            while self.stage != 'done':
-                if self.iteration % 100 == 0:
-                    print(f'[{self.stage}] {self.iteration}')
-                if self.iteration > self.final_iter and self.stage == 'coarse':
-                    self.stage = 'fine'
-                    self.init_taining()
-
-                if self.iteration <= self.final_iter:
-                    self.train_step()
-                    self.iteration += 1
-
-
-                if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                    if self.stage == 'fine':
-                        self.test_step()
-
-                if self.iteration > self.final_iter and self.stage == 'fine':
-                    self.stage = 'done'
-                    exit()
-                    
-    @torch.no_grad()
-    def viewer_step(self):
-        
-        if self.switch_off_viewer == False:
-            # self.viewpoint_stack = self.scene.getTrainCameras()
-            
-            # self.scene.getTrainCameras().dataset.get_mask = True
-            # dyn_mask =  self.get_target_mask()
-            # self.scene.getTrainCameras().dataset.get_mask = False
-
-            cam = self.free_cams[self.current_cam_index]
-            cam.time = self.time
-            buffer_image = render(
-                    cam,
-                    self.gaussians, 
-                    self.pipe, 
-                    self.background, 
-                    stage=self.stage,
-                    view_args={
-                        'show_mask':self.show_scene_target,
-                        'full_opac':self.full_opacity,
-                        'w_thresh':self.w_thresh,
-                        'dx_thresh': self.show_dynamic,
-                        'h_thresh':self.h_thresh,
-                        "set_w":self.w_val,
-                        "set_w_flag":self.set_w_flag,
-                        "viewer_status":self.switch_off_viewer_args,
-                        "vis_mode":self.vis_mode,
-                    }
-            )
-            
-            try:
-                buffer_image = buffer_image[self.vis_mode]
-            except:
-                print(f'Mode "{self.vis_mode}" does not work')
-                buffer_image = buffer_image['render']
-                
-            if buffer_image.shape[0] == 1:
-                buffer_image = (buffer_image - buffer_image.min())/(buffer_image.max() - buffer_image.min())
-                buffer_image = buffer_image.repeat(3,1,1)
-            
-            buffer_image = torch.nn.functional.interpolate(
-                buffer_image.unsqueeze(0),
-                size=(self.H,self.W),
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze(0)
-
-            self.buffer_image = (
-                buffer_image.permute(1, 2, 0)
-                .contiguous()
-                .clamp(0, 1)
-                .contiguous()
-                .detach()
-                .cpu()
-                .numpy()
-            )
-
-        buffer_image = self.buffer_image
-
-        dpg.set_value(
-            "_texture", buffer_image
-        )  # buffer must be contiguous, else seg fault!
-        
-        # Add _log_view_camera
-        if self.current_cam_index < self.N_pseudo:
-            dpg.set_value("_log_view_camera", f"Random Novel Views")
-        elif self.current_cam_index == self.N_pseudo:
-            dpg.set_value("_log_view_camera", f"Test Views")
-        else:
-            dpg.set_value("_log_view_camera", f"Training Views")
-
-    def save_scene(self):
-        print("\n[ITER {}] Saving Gaussians".format(self.iteration))
-        self.scene.save(self.iteration, self.stage)
-        print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
-        torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
-
 
 def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
     device = xyz.device
