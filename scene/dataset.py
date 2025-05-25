@@ -71,24 +71,25 @@ class FourDGSdataset(Dataset):
 
     def __getitem__(self, index):
         if self.dataset_type == "condense":
-            image, w2c, time, mask = self.dataset[index]
+            image, w2c, time, mask, depth, cxfx = self.dataset[index]
             R, T = w2c
             FovX, FovY = self.dataset.load_fov(index)
             rgb_cam = Camera(
                 colmap_id=index, R=R, T=T, FoVx=FovX, FoVy=FovY, image=image, gt_alpha_mask=None,
                 image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time,
-                mask=mask
+                mask=mask,
+                depth=depth,
+                cxfx=cxfx
             )
 
-            # image, w2c, time = self.dataset.get_depth(index)
+            # image, w2c, time,fov = self.dataset.get_depth(index)
             # R, T = w2c
-            # FovX, FovY = self.dataset.load_depth_fov(index)
             # depth_cam = Camera(
-            #     colmap_id=index, R=R, T=T, FoVx=FovX, FoVy=FovY, image=image, gt_alpha_mask=None,
+            #     colmap_id=index, R=R, T=T, FoVx=fov[0], FoVy=fov[1], image=image, gt_alpha_mask=None,
             #     image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time
             # )
 
-            return rgb_cam #, depth_cam
+            return rgb_cam#, depth_cam
         else:
             try:
                 image, w2c, time, mask, depth, weights = self.dataset[index]

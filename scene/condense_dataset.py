@@ -132,9 +132,8 @@ def decompose_dataset(datadir, rotation_correction, split='test', visualise_pose
         H = meta['colour_intrinsics']['height']
         W = meta['colour_intrinsics']['width']
         focal = [meta['colour_intrinsics']['fx'], meta['colour_intrinsics']['fy']]
-        focal_depth = [meta['depth_intrinsics']['fx'], meta['depth_intrinsics']['fy']]
 
-        K = np.array([[focal[0], 0, meta['colour_intrinsics']['ppx']], [0, focal[1], meta['colour_intrinsics']['ppy']], [0, 0, 1]])
+        # K = np.array([[focal[0], 0, meta['colour_intrinsics']['ppx']], [0, focal[1], meta['colour_intrinsics']['ppy']], [0, 0, 1]])
 
         poses[c] = {
             'H': H, 'W': W,
@@ -145,6 +144,17 @@ def decompose_dataset(datadir, rotation_correction, split='test', visualise_pose
             'T': T,
             'cx': meta['colour_intrinsics']['ppx'],
             'cy': meta['colour_intrinsics']['ppy'],
+            
+            'depth':{
+                'H': meta['depth_intrinsics']['height'], 'W': meta['depth_intrinsics']['width'],
+                'focal': (meta['depth_intrinsics']['fx'], meta['depth_intrinsics']['fy']),
+                'FovX': focal2fov(meta['depth_intrinsics']['fx'], meta['depth_intrinsics']['width']),
+                'FovY': focal2fov(meta['depth_intrinsics']['fy'], meta['depth_intrinsics']['height']),
+                'R': R_d,
+                'T': T_d,
+                'cx': meta['depth_intrinsics']['ppx'],
+                'cy': meta['depth_intrinsics']['ppy'],
+            }
         }
 
 
@@ -166,10 +176,10 @@ class CondenseData(Dataset):
             
         with open(os.path.join(datadir, f"rotation_correction.json")) as f:
             self.rotation_correction = json.load(f)
-            
+             
             
         self.root_dir = datadir        
-        self.downsample = 2.0 #downsample
+        self.downsample = downsample
 
         self.split = split
         self.num_frames = 0
@@ -179,7 +189,7 @@ class CondenseData(Dataset):
         
         self.transform = T.ToTensor()
 
-        self.image_paths, self.image_poses, self.image_times, self.fovs = self.load_images_path(self.root_dir, self.split)
+        self.image_paths, self.image_poses, self.image_times, self.fovs,self.image_centers = self.load_images_path(self.root_dir, self.split)
         self.pcd_paths = self.load_pcd_path()
 
         # Finally figure out idx of coarse image
@@ -205,11 +215,21 @@ class CondenseData(Dataset):
 
         return img
 
+    def depth_image(self, directory):
+        
+        img = cv2.imread(directory, cv2.IMREAD_UNCHANGED)
+        img = torch.from_numpy(img.astype(np.float32)) # [C, H, W]
+
+        return img
         
     def load_images_path(self, cam_folder, split,  stage='fine'):
         image_paths = []
         image_poses = []
         image_times = []
+        image_centers = []
+        
+        
+
         FOVs = []
         self.poses = []
         
@@ -223,10 +243,7 @@ class CondenseData(Dataset):
             if f'{cam_info}.png' in static_mask_fps:
                 self.mask_idxs.append(idxs)
 
-            R = meta['R']
-            T = meta['T']
-
-            self.poses.append((R,T))
+            self.poses.append((meta['R'],meta['T']))
             self.focal = meta['focal']
 
             fovx = meta['FovX']
@@ -239,17 +256,45 @@ class CondenseData(Dataset):
             for img_fp in list_dir:
                 img_fp_ = os.path.join(fp, img_fp)
                 image_paths.append(img_fp_)
-                image_poses.append((R, T))
-                # Out time is out of 10
+                image_poses.append((meta['R'], meta['T']))
                 image_times.append(float(int(img_fp.split('.')[0]) / 10_000_000))
 
                 FOVs.append((fovx, fovy))
-
+                image_centers.append((meta['cx'], meta['cy'], meta['focal'][0], meta['focal'][1]))
+    
                 cnt+= 1
                 idxs += 1
+        
+        depth_paths = []
+        depth_poses = []
+        depth_times = []
+        depth_FOVs = []
+        for cam_info in self.cam_infos:
+            meta = self.cam_infos[cam_info]
 
+            fovx = meta['FovX']
+            fovy = meta['FovY']
+
+            fp = os.path.join(cam_folder, f"{split}/{cam_info}/{self.image_type_folder.replace('color_corrected', 'depth_corrected')}")
+            list_dir = sorted(os.listdir(fp), key=lambda x: int(x.split('.')[0]))
+            cnt = 0
+            for img_fp in list_dir:
+                img_fp_ = os.path.join(fp, img_fp)
+                depth_paths.append(img_fp_)
+                depth_poses.append((meta['R'], meta['T']))
+                depth_times.append(float(int(img_fp.split('.')[0]) / 10_000_000))
+
+                depth_FOVs.append((fovx, fovy))
+                
         self.num_frames = cnt
-        return image_paths, image_poses, image_times, FOVs
+        
+        self.depth_data = {
+            "paths":depth_paths,
+            "poses":depth_poses,
+            "times":depth_times,
+            "fovs":depth_FOVs
+        }
+        return image_paths, image_poses, image_times, FOVs, image_centers
 
     def load_pcd_path(self):
         fp = os.path.join(self.root_dir, f"pcds/sparse/")
@@ -265,9 +310,11 @@ class CondenseData(Dataset):
 
     def __getitem__(self, index):
         mask = None
+        depth = None
         path = self.image_paths[index]
         pose = self.image_poses[index]
         time = self.image_times[index]
+        centers = self.image_centers[index] 
         if self.split == 'train':
             if self.get_mask:
                 camid = os.path.join(f'{self.root_dir}/static_masks', path.split('/')[-3])
@@ -275,7 +322,17 @@ class CondenseData(Dataset):
                 mask = self.load_image(camid)
                 mask = (mask.sum(0) > 0).float()
         img = self.load_image(path)
-        return img, pose, time, mask
+        depth = self.load_image(path.replace('color_corrected', 'depth_mono'))
+        return img, pose, time, mask, depth, centers
+    
+    def get_depth(self, index):
+        path = self.depth_data['paths'][index]
+        pose = self.depth_data['poses'][index]
+        time = self.depth_data['times'][index]
+        fov = self.depth_data['fovs'][index]
+
+        img = self.depth_image(path)
+        return img, pose, time, fov
 
     def get_pcd_path(self, index):
         try:

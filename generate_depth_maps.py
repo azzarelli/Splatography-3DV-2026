@@ -18,16 +18,21 @@ depth_model = DepthAnythingV2(**{**model_configs[encoder], 'max_depth': 1.})
 depth_model.load_state_dict(torch.load(f'submodules/DAV2/checkpoints/depth_anything_v2_metric_hypersim_{encoder}.pth', map_location='cpu'))
 depth_model = depth_model.cuda().eval()
 
-cam_list = ['cam01', 'cam10', 'cam11', 'cam20']
+fp_root = '/media/barry/56EA40DEEA40BBCD/DATA/Condense/'
+scene = 'Bassist/'
+
+root = f'{fp_root}{scene}train/'
+
+cam_list = os.listdir(root)
 for cam_name in cam_list:
-    root = f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/{cam_name}/images/'
-    destination = f'/media/barry/56EA40DEEA40BBCD/DATA/dynerf/flame_steak/{cam_name}/depth/'
+    cam_root = f'{fp_root}{scene}train/{cam_name}/color_corrected'
+    destination = f'{fp_root}{scene}train/{cam_name}/depth_mono'
 
     if not os.path.exists(destination):
         os.mkdir(destination)
 
-    for f in tqdm.tqdm(os.listdir(root)):
-        img_fp = os.path.join(root, f)
+    for f in tqdm.tqdm(os.listdir(cam_root)):
+        img_fp = os.path.join(cam_root, f)
         img_dest = os.path.join(destination, f)
         img = Image.open(img_fp)
         img = np.array(img) / 255.    

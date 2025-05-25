@@ -66,12 +66,29 @@ def getProjectionMatrix_(znear, zfar, fovX, fovY, ppx, ppy, image_width, image_h
 
     return P
 
+def getProjectionMatrixFromIntrinsics(fx, fy, cx, cy, width, height, znear, zfar):
+    P = torch.zeros(4, 4)
+
+    # Map intrinsics to normalized device coordinates
+    P[0, 0] = 2 * fx / width
+    P[0, 2] = 1 - 2 * cx / width
+    P[1, 1] = 2 * fy / height
+    P[1, 2] = 2 * cy / height - 1
+
+    # Depth (Z)
+    P[2, 2] = zfar / (zfar - znear)
+    P[2, 3] = (-znear * zfar) / (zfar - znear)
+    P[3, 2] = 1.0
+
+    return P
+
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", time = 0,
                  mask = None, depth:bool=False,
-                 weights=None
+                 weights=None,
+                 cxfx=None
                  ):
         super(Camera, self).__init__()
 
@@ -83,7 +100,7 @@ class Camera(nn.Module):
         self.FoVy = FoVy
         self.image_name = image_name
         self.time = time
-
+        
         try:
             self.data_device = torch.device(data_device)
         except Exception as e:
@@ -99,8 +116,12 @@ class Camera(nn.Module):
 
         self.original_image = image
 
-        self.image_width = self.original_image.shape[2]
-        self.image_height = self.original_image.shape[1]
+        try:
+            self.image_width = self.original_image.shape[2]
+            self.image_height = self.original_image.shape[1]
+        except:
+            self.image_width = self.original_image.shape[1]
+            self.image_height = self.original_image.shape[0]
 
         self.depth = depth
         self.mask = mask
@@ -110,18 +131,39 @@ class Camera(nn.Module):
 
         self.trans = trans
         self.scale = scale
+        
+        if cxfx is None:
+            self.cx =  self.image_width / 2.0
+            self.cy = self.image_height / 2.0
+            fx = 0.5 * self.image_width / np.tan(self.FoVx * 0.5)
+            fy = 0.5 * self.image_height / np.tan(self.FoVy * 0.5)
+        else:
+            self.cx = cxfx[0]
+            self.cy = cxfx[1]
+            fx = cxfx[2]
+            fy = cxfx[3]
+            
+        self.focal_x = fx
+        self.focal_y = fy
+        # Construct intrinsics matrix
+        self.intrinsics = torch.tensor([
+            [fx, 0, self.cx],
+            [0, fy, self.cy],
+            [0,  0,      1]
+        ], dtype=torch.float32)
+
 
         self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1)
 
+        # self.projection_matrix = getProjectionMatrixFromIntrinsics(fx, fy, self.cx, self.cy, self.image_width, self.image_height, self.znear, self.zfar).transpose(0, 1)
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx,
                                                       fovY=self.FoVy).transpose(0, 1)
-
         # .cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
 
     @torch.no_grad()
-    def direction_normal(self):
+    def direction_normal(self): 
         R_c2w = self.world_view_transform[:3, :3].T
         # Camera looks along [0, 0, -1] in its local space
         direction = torch.tensor([0.0, 0.0, -1.0], device=R_c2w.device)

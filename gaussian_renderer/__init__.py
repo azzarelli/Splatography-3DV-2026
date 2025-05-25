@@ -15,6 +15,12 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 # from diff_gauss import GaussianRasterizationSettings, GaussianRasterizer
 import torch.nn.functional as F
 from scene.gaussian_model import GaussianModel
+# from gaussian_renderer.pytorch_render import GaussRenderer
+
+# from gsplat.rendering import rasterization
+
+# RENDER = GaussRenderer()
+
 def quaternion_rotate(q, v):
     q_vec = q[:, :3]
     q_w = q[:, 3].unsqueeze(1)
@@ -38,6 +44,7 @@ def rotated_softmin_axis_direction(r, s, temperature=10.0):
     rotated = quaternion_rotate(r, soft_axis)  # (N, 3)
 
     return rotated
+
 
 def differentiable_cdf_match(source, target, eps=1e-5):
     """
@@ -74,7 +81,7 @@ def differentiable_cdf_match(source, target, eps=1e-5):
         
 
 def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
-           stage="fine", view_args=None, G=None):
+           stage="fine", view_args=None, G=None, kernel_size=0.1):
     """
     Render the scene.
     """
@@ -85,7 +92,11 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         screenspace_points.retain_grad()
     except:
         pass
-
+    
+    subpixel_offset = None
+    if subpixel_offset is None:
+        subpixel_offset = torch.zeros((int(viewpoint_camera.image_height), int(viewpoint_camera.image_width), 2), dtype=torch.float32, device="cuda")
+        
     # Set up rasterization configuration
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
@@ -94,6 +105,8 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         image_width=int(viewpoint_camera.image_width),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
+        kernel_size=kernel_size,
+        subpixel_offset=subpixel_offset,
         bg=bg_color,
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform.cuda(),
@@ -115,7 +128,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
 
     opacity = pc.get_opacity.clone().detach()
 
-    scales = pc.get_scaling
+    scales = pc.get_scaling_with_3D_filter
     rotations = pc._rotation
 
     if view_args is not None:
@@ -132,9 +145,10 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             )
         else:
             means3D, extras = means3D_, None
+            opacity = pc.get_coarse_opacity_with_3D_filter
 
     else:
-        means3D, rotations, opacity,colors, extras = pc._deformation(
+        means3D, rotations, opacity, colors, extras = pc._deformation(
             point=means3D_, 
             rotations=rotations,
             scales=scales,
@@ -175,9 +189,18 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     else:
         view_args= {'vis_mode':'render'}
 
+    # print(.shape, means3D.shape)
     rendered_image, rendered_depth, norms = None, None, None
-    if view_args['vis_mode'] in ['render', 'depth']:
-        rendered_image, radii, rendered_depth = rasterizer(
+    if view_args['vis_mode'] in ['render']:
+        # rendered_image, alphas, meta = rasterization(
+        #     means3D, rotation, scales, opacity, 
+        #     viewpoint_camera.world_view_transform, 
+        #     viewpoint_camera.intrinsics,
+        #     viewpoint_camera.image_width, 
+        #     viewpoint_camera.image_height
+        # )
+        
+        rendered_image, _ = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=None,
@@ -186,11 +209,25 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             scales=scales,
             rotations=rotation,
             cov3D_precomp=None)
+        
+    elif view_args['vis_mode'] == 'depth':
+        X = viewpoint_camera.camera_center.cuda().unsqueeze(0)
+        depths = torch.norm(means3D-X, dim=-1).unsqueeze(-1)
+        depths= (depths - depths.min())/ (depths.max() - depths.min())
+        rendered_image, _ = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=depths.repeat(1,3),
+            opacities=opacity,
+            scales=scales,
+            rotations=rotation,
+            cov3D_precomp=None)
     elif view_args['vis_mode'] == 'norms':
         # rendered_image = linear_rgb_to_srgb(rendered_image)
         norms = rotated_softmin_axis_direction(rotation, scales)
 
-        norms, _, _ = rasterizer(
+        rendered_image, _ = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=None,
@@ -199,11 +236,41 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             scales=scales,
             rotations=rotation,
             cov3D_precomp=None)
+    elif view_args['vis_mode'] == 'xyz':
+        rendered_image, _ = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=means3D,
+            opacities=opacity,
+            scales=scales,
+            rotations=rotation,
+            cov3D_precomp=None)
+    elif view_args['vis_mode'] == 'dxyz_1':
+        residual = torch.norm(means3D-means3D_, dim=-1).unsqueeze(-1).repeat(1,3)
+        rendered_image, _ = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=residual,
+            opacities=opacity,
+            scales=scales,
+            rotations=rotation,
+            cov3D_precomp=None)
+    elif view_args['vis_mode'] == 'dxyz_3':
+        residual = (means3D-means3D_).abs()
+        rendered_image, _ = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=residual,
+            opacities=opacity,
+            scales=scales,
+            rotations=rotation,
+            cov3D_precomp=None)
     
     return {
         "render": rendered_image,
-        "depth": rendered_depth,
-        'norms':norms, 'alpha':rendered_depth,
         "extras":extras # A dict containing mor point info
         # 'norms':rendered_norm, 'alpha':rendered_alpha
         }
@@ -236,47 +303,145 @@ def linear_rgb_to_srgb(linear_rgb: torch.Tensor) -> torch.Tensor:
     srgb[above] = 1.055 * (linear_rgb[above] ** (1/2.4)) - 0.055
     return srgb
 
+def get_edges(mask):
+    # Assume mask is float32 (0.0 or 1.0), shape (H, W)
+    mask = mask.unsqueeze(0).float()  # (1, 1, H, W)
+
+    laplacian_kernel = torch.tensor([[[[0, 1, 0],
+                                       [1, -4, 1],
+                                       [0, 1, 0]]]], dtype=mask.dtype, device=mask.device)
+
+    edge = F.conv2d(mask, laplacian_kernel, padding=1).abs()
+    edge = edge.squeeze(0).squeeze(0)  # back to (H, W)
+
+    mask_ =  (edge > 0).float()
+    mask_ = mask_.unsqueeze(0).unsqueeze(0)
+    
+    kernel_size=3
+    dilated = F.max_pool2d(mask_, kernel_size=kernel_size, stride=1, padding=kernel_size//2)
+    edge_region =  dilated.squeeze(0).squeeze(0)
+
+    surrounding = (edge_region - mask_).clamp(0, 1)
+
+    # Interior mask
+    interior = (mask - mask_).clamp(0, 1)
+    return interior.squeeze(0).squeeze(0)
+
 from utils.loss_utils import l1_loss, l1_loss_masked,local_triplet_ranking_loss
-def render_batch(
+def render_coarse_batch(
     viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
-    stage="fine", iteration=0):
+    stage="fine", iteration=0,kernel_size=0.1):
     """
     Render the scene.
     """
-    extras = {}
     means3D = pc.get_xyz    
-    scales = pc.get_scaling
+    scales = pc.get_scaling_with_3D_filter
+    rotations = pc.rotation_activation(pc._rotation)
+    colors = pc.get_color
+    opacity_final = pc.get_fine_opacity_with_3D_filter(pc.get_hopac)
+    
+    L1 = 0.
+
+    subpixel_offset = None
+    if subpixel_offset is None:
+        subpixel_offset = torch.zeros((int(viewpoint_cams[0].image_height), int(viewpoint_cams[0].image_width), 2), dtype=torch.float32, device="cuda")
+        
+    for idx, viewpoint_camera in enumerate(viewpoint_cams):
+        screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
+        try:
+            screenspace_points.retain_grad()
+        except:
+            pass
+
+        means2D = screenspace_points
+        
+        # Set up rasterization configuration
+        tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+        tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+        raster_settings = GaussianRasterizationSettings(
+            image_height=int(viewpoint_camera.image_height),
+            image_width=int(viewpoint_camera.image_width),
+            tanfovx=tanfovx,
+            tanfovy=tanfovy,
+            kernel_size=kernel_size,
+            subpixel_offset=subpixel_offset,
+
+            bg=bg_color,
+            scale_modifier=scaling_modifier,
+            viewmatrix=viewpoint_camera.world_view_transform.cuda(),
+            projmatrix=viewpoint_camera.full_proj_transform.cuda(),
+            sh_degree=pc.active_sh_degree,
+            campos=viewpoint_camera.camera_center.cuda(),
+            prefiltered=False,
+            debug=pipe.debug
+        )
+
+        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+        
+        # Set raddii for non-targets to 0
+        rgb, _ = rasterizer(
+            means3D=means3D[~pc.target_mask],
+            means2D=means2D[~pc.target_mask],
+            shs=None,
+            colors_precomp=colors[~pc.target_mask],
+            opacities=opacity_final[~pc.target_mask],
+            scales=scales[~pc.target_mask],
+            rotations=rotations[~pc.target_mask],
+            cov3D_precomp=None
+        )
+        
+        # Train the backgroudn
+        gt_img = viewpoint_camera.original_image.cuda()
+        mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
+        inv_mask = 1. - mask.float() 
+        gt = gt_img * inv_mask
+        # Blue gt and fill mask regions with this
+        kernel_size = 51
+        kernel = torch.ones((3, 1, kernel_size, kernel_size), dtype=gt.dtype, device=gt.device)
+        kernel /= kernel_size * kernel_size
+
+        # Apply depthwise convolution (groups=3 for 3 channels)
+        blurred = F.conv2d(gt.unsqueeze(0) , kernel, padding=kernel_size//2, groups=3).squeeze(0)
+        mask = mask.unsqueeze(0).repeat(3,1,1)
+        gt[mask] = blurred[mask]
+
+        L1 += l1_loss(rgb, gt)
+    
+    return  L1
+
+def render_coarse_batch_target(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
+    stage="fine", iteration=0,kernel_size=0.1):
+    """
+    Render the scene.
+    """
+    means3D = pc.get_xyz    
+    scales = pc.get_scaling_with_3D_filter
     rotations = pc._rotation
     colors = pc.get_color
 
     L1 = 0.
-    norm_loss = 0.
-    depth_loss = 0.
-    covloss = 0.
-    radii_list = []
-    visibility_filter_list = []
-    viewspace_point_tensor_list = []
-    norms = None
-
-    distances = []
-
+    
+    subpixel_offset = None
+    if subpixel_offset is None:
+        subpixel_offset = torch.zeros((int(viewpoint_cams[0].image_height), int(viewpoint_cams[0].image_width), 2), dtype=torch.float32, device="cuda")
+        
+        
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
         time = time*0. +viewpoint_camera.time
         
-        if "coarse" in stage:
-            means3D_final, rotations_final, opacity_final, colors_final = means3D, rotations, pc.get_hopac, colors
-        elif "fine" in stage:
-            means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
-                point=means3D, 
-                rotations=rotations,
-                scales = scales,
-                times_sel=time, 
-                h_emb=pc.get_opacity,
-                shs=colors,
-                view_dir=viewpoint_camera.direction_normal(),
-                target_mask=pc.target_mask,
-            )
+        means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
+            point=means3D, 
+            rotations=rotations,
+            scales = scales,
+            times_sel=time, 
+            h_emb=pc.get_opacity,
+            shs=colors,
+            view_dir=viewpoint_camera.direction_normal(),
+            target_mask=pc.target_mask,
+        )
+        
+        opacity_final = pc.get_fine_opacity_with_3D_filter(opacity_final)
         
         # Do the scaling and rotation activation after deformation
         rotations_final = pc.rotation_activation(rotations_final)
@@ -301,6 +466,109 @@ def render_batch(
             image_width=int(viewpoint_camera.image_width),
             tanfovx=tanfovx,
             tanfovy=tanfovy,
+            kernel_size=kernel_size,
+            subpixel_offset=subpixel_offset,
+            bg=bg_color,
+            scale_modifier=scaling_modifier,
+            viewmatrix=viewpoint_camera.world_view_transform.cuda(),
+            projmatrix=viewpoint_camera.full_proj_transform.cuda(),
+            sh_degree=pc.active_sh_degree,
+            campos=viewpoint_camera.camera_center.cuda(),
+            prefiltered=False,
+            debug=pipe.debug
+        )
+
+        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+        
+        rgb, _ = rasterizer(
+            means3D=means3D_final[pc.target_mask],
+            means2D=means2D[pc.target_mask],
+            shs=None,
+            colors_precomp=colors_final[pc.target_mask],
+            opacities=opacity_final[pc.target_mask],
+            scales=scales[pc.target_mask],
+            rotations=rotations_final[pc.target_mask],
+            cov3D_precomp=None
+        )
+                
+        gt = viewpoint_camera.original_image.cuda()
+        mask = viewpoint_camera.mask.cuda()# > 0. # invert binary mask
+        L1 += l1_loss(rgb, gt*mask)
+    return  L1
+
+
+
+def render_batch(
+    viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
+    stage="fine", iteration=0,kernel_size=0.1):
+    """
+    Render the scene.
+    """
+    extras = {}
+    means3D = pc.get_xyz    
+    scales = pc.get_scaling_with_3D_filter
+    rotations = pc._rotation
+    colors = pc.get_color
+
+    L1 = 0.
+    norm_loss = 0.
+    depth_loss = 0.
+    covloss = 0.
+    radii_list = []
+    visibility_filter_list = []
+    viewspace_point_tensor_list = []
+    norms = None
+
+    distances = []
+    
+    subpixel_offset = None
+    if subpixel_offset is None:
+        subpixel_offset = torch.zeros((int(viewpoint_cams[0].image_height), int(viewpoint_cams[0].image_width), 2), dtype=torch.float32, device="cuda")
+        
+        
+    time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
+    for idx, viewpoint_camera in enumerate(viewpoint_cams):
+        time = time*0. +viewpoint_camera.time
+
+        means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
+            point=means3D, 
+            rotations=rotations,
+            scales = scales,
+            times_sel=time, 
+            h_emb=pc.get_opacity,
+            shs=colors,
+            view_dir=viewpoint_camera.direction_normal(),
+            target_mask=pc.target_mask,
+        )
+        
+        opacity_final = pc.get_fine_opacity_with_3D_filter(opacity_final)
+        
+        # Do the scaling and rotation activation after deformation
+        rotations_final = pc.rotation_activation(rotations_final)
+        
+        # As we take the NN from some random time step, lets re-calc it frequently
+        if (iteration % 250 == 0 and idx == 0) or pc.target_neighbours is None:
+            pc.update_neighbours(means3D_final[pc.target_mask])
+        
+        screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
+        try:
+            screenspace_points.retain_grad()
+        except:
+            pass
+
+        means2D = screenspace_points
+        
+        # Set up rasterization configuration
+        tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+        tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+        raster_settings = GaussianRasterizationSettings(
+            image_height=int(viewpoint_camera.image_height),
+            image_width=int(viewpoint_camera.image_width),
+            tanfovx=tanfovx,
+            tanfovy=tanfovy,
+            kernel_size=kernel_size,
+            subpixel_offset=subpixel_offset,
+
             bg=bg_color,
             scale_modifier=scaling_modifier,
             viewmatrix=viewpoint_camera.world_view_transform.cuda(),
@@ -313,8 +581,7 @@ def render_batch(
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-
-        rendered_image, radii, Dt = rasterizer(
+        rendered_image, radii = rasterizer(
             means3D=means3D_final,
             means2D=means2D,
             shs=None,
@@ -327,7 +594,7 @@ def render_batch(
         # Set raddii for non-targets to 0
         radii = radii * 0
         
-        target_rgb, target_radii, target_depth = rasterizer(
+        target_rgb, target_radii = rasterizer(
             means3D=means3D_final[pc.target_mask],
             means2D=means2D[pc.target_mask],
             shs=None,
@@ -336,30 +603,56 @@ def render_batch(
             scales=scales[pc.target_mask],
             rotations=rotations_final[pc.target_mask],
             cov3D_precomp=None
-            )
-
+        )
+        
         radii[pc.target_mask] = target_radii
         
         gt_img = viewpoint_camera.original_image.cuda()
         # Avoid loss around the bordered of images (either way it should be too important)
-        L1 += l1_loss(rendered_image[:,100:-100,100:-100], gt_img[:,100:-100,100:-100])
-        # weights = viewpoint_camera.weights.cuda().unsqueeze(0)
-
-        # L1 += l1_loss(rendered_image, gt_img, weights)
-
-        # covloss += pc.compute_covariance_loss(
-        #     means3D_final[pc.target_mask],
-        #     rotations_final[pc.target_mask],
-        #     scales[pc.target_mask]
-        # )
         
-        if stage == 'coarse':
-            mask = viewpoint_camera.mask.cuda()
-            L1 += l1_loss(target_rgb, gt_img*mask)
+        
+        # targe_mask = (target_depth > 0.).float().unsqueeze(0)
+        # kernel = torch.ones((1, 1, 3, 3)).cuda()
+        # dilated = F.conv2d(targe_mask, kernel, padding=1)
+        # dilated = (dilated > 0).float()  # Binarize
+        # dilated = (dilated.squeeze(0).squeeze(0) > 0)
+        
+        # L1 += 0.9*(rendered_image[:, dilated] - gt_img[:, dilated]).abs().mean() #loss(rendered_image[:,100:-100,100:-100], gt_img[:,100:-100,100:-100])
+        # L1 += 0.1*(rendered_image[:, ~dilated] - gt_img[:, ~dilated]).abs().mean() #loss(rendered_image[:,100:-100,100:-100], gt_img[:,100:-100,100:-100])
+        
+        
+        # background_image, _, background_depth = rasterizer(
+        #     means3D=means3D_final[~pc.target_mask],
+        #     means2D=means2D[~pc.target_mask],
+        #     shs=None,
+        #     colors_precomp=colors_final[~pc.target_mask],
+        #     opacities=opacity_final[~pc.target_mask],
+        #     scales=scales[~pc.target_mask],
+        #     rotations=rotations_final[~pc.target_mask],
+        #     cov3D_precomp=None
+        # )
+
+        
+
+        # weights = viewpoint_camera.weights.cuda().unsqueeze(0)
+        L1 += l1_loss(rendered_image[:,70:-70,70:-70], gt_img[:,70:-70,70:-70])
+        norm_loss += pc.compute_normals_rigidity(norms=norms)
+        # L1 += l1_loss(rendered_image, gt_img)
+        
+        # with torch.no_grad():
+        #     mono_depth = viewpoint_camera.depth.cuda().mean(0)
+        #     depth_grad_x = (mono_depth[:,:-1] - mono_depth[:,1:]).abs()
+        #     depth_grad_y = (mono_depth[:-1,:] - mono_depth[1:,:]).abs()
             
-        elif stage == 'fine' :
-            # norms
-            norm_loss += pc.compute_normals_rigidity(norms=norms)
+        #     weight_x = -torch.exp(-10 * depth_grad_x) + 1.
+        #     weight_y = -torch.exp(-10 * depth_grad_y) + 1.
+            
+        # grad_x = 1. - (rendered_image[:, :,:-1] - rendered_image[:, :,1:]).abs()
+        # grad_y = 1. - (rendered_image[:, :-1,:] - rendered_image[:, 1:, :]).abs()
+        
+        # depth_loss += 0.2*((weight_x*grad_x).mean() + (weight_y*grad_y).mean())
+            
+        # elif stage == 'fine' :
             # distances.append(pc.compute_displacement_rigidity(means3D_final[pc.target_mask]))
 
         # # Depth pred
@@ -393,7 +686,7 @@ def render_batch(
     #     mean = distance_stack.mean(dim=-1).unsqueeze(-1)
     #     covloss += (distance_stack - mean).abs().mean()
     
-    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss, covloss)
+    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss, covloss, (None, target_rgb))
 
 
 def masked_mean(patches):

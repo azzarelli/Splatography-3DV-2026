@@ -94,6 +94,7 @@ class Deformation(nn.Module):
         self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size,16* 3))
         self.rgb_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.scale_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
         # intial rgb, temporal rgb, rotation
         self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
@@ -162,6 +163,9 @@ class Deformation(nn.Module):
         feat_exp = torch.exp(-w * (t-mu)**2)
         opacity = opacity.clone()
         opacity[target_mask] = feat_exp # h_emb[target_mask] * feat_exp
+ 
+        # scales = scale_emb + 0.
+        # scales[target_mask] += self.scale_deform(dyn_feature)
 
 
         if False:

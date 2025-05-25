@@ -473,6 +473,7 @@ def readCondenseSceneInfo(datadir, eval):
 
     print(f"Generating point cloud...")
     pcd = o3d.io.read_point_cloud(os.path.join(datadir, f'pcds/sparse/000000.ply'))
+    pcd, ind = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=2.0)
     xyz = np.asarray(pcd.points)
     colors = np.asarray(pcd.colors)
 

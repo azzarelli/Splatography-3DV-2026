@@ -58,8 +58,6 @@ class GaussianModel:
         self._colors = torch.empty(0)
 
         self._deformation = deform_network(args)
-        self._features_dc = torch.empty(0)
-        self._features_rest = torch.empty(0)
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self.max_radii2D = torch.empty(0)
@@ -81,11 +79,10 @@ class GaussianModel:
             self._xyz,
             self._deformation.state_dict(),
             self._colors,
-            self._features_dc,
-            self._features_rest,
             self._scaling,
             self._rotation,
             self._opacity,
+            self.filter_3D,
             self.max_radii2D,
             self.xyz_gradient_accum,
             self.xyz_gradient_accum_abs ,
@@ -100,11 +97,10 @@ class GaussianModel:
         self._xyz,
         deform_state,
         self._colors,
-        self._features_dc,
-        self._features_rest,
         self._scaling,
         self._rotation,
         self._opacity,
+        self.filter_3D,
         self.max_radii2D,
         xyz_gradient_accum,
         xyz_gradient_accum_abs,
@@ -132,6 +128,25 @@ class GaussianModel:
         return self.scaling_activation(self._scaling)
 
     @property
+    def get_scaling_with_3D_filter(self):
+        scales = self.get_scaling
+        
+        scales = torch.square(scales) + torch.square(self.filter_3D)
+        scales = torch.sqrt(scales)
+        return scales
+    
+    def get_fine_opacity_with_3D_filter(self, opacity):
+        scales = self.get_scaling
+        
+        scales_square = torch.square(scales)
+        det1 = scales_square.prod(dim=1)
+        
+        scales_after_square = scales_square + torch.square(self.filter_3D) 
+        det2 = scales_after_square.prod(dim=1) 
+        coef = torch.sqrt(det1 / det2)
+        return opacity * coef[..., None]
+    
+    @property
     def get_rotation(self):
         return self.rotation_activation(self._rotation)
 
@@ -139,15 +154,24 @@ class GaussianModel:
     def get_xyz(self):
         return self._xyz
 
-    @property
-    def get_features(self):
-        features_dc = self._features_dc
-        features_rest = self._features_rest
-        return torch.cat((features_dc, features_rest), dim=1)
 
     @property
     def get_opacity(self):
         return self._opacity
+    
+    @property
+    def get_coarse_opacity_with_3D_filter(self):
+        opacity = torch.sigmoid(self.get_opacity[:, 0]).unsqueeze(-1)
+        # apply 3D filter
+        scales = self.get_scaling
+        
+        scales_square = torch.square(scales)
+        det1 = scales_square.prod(dim=1)
+        
+        scales_after_square = scales_square + torch.square(self.filter_3D) 
+        det2 = scales_after_square.prod(dim=1) 
+        coef = torch.sqrt(det1 / det2)
+        return opacity * coef[..., None]
     
     @property
     def get_hopac(self):
@@ -162,12 +186,6 @@ class GaussianModel:
     @property
     def get_dyn_coefs(self):
         return self._deformation.get_dyn_coefs(self.get_xyz[self.target_mask],self.get_scaling[self.target_mask])
-
-
-    def opacity_integral(self, w,h,mu):
-        print("missing opac integral in  gaussing class")
-        exit()
-        return gaussian_integral(w)
     
     @property
     def dynamic_point_prob(self):
@@ -180,6 +198,56 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
+    @torch.no_grad()
+    def compute_3D_filter(self, cameras):
+        #TODO consider focal length and image width
+        xyz = self.get_xyz
+        distance = torch.ones((xyz.shape[0]), device=xyz.device) * 100000.0
+        valid_points = torch.zeros((xyz.shape[0]), device=xyz.device, dtype=torch.bool)
+        
+        # we should use the focal length of the highest resolution camera
+        focal_length = 0.
+        for camera in cameras:
+
+            # transform points to camera space
+            R = torch.tensor(camera.R, device=xyz.device, dtype=torch.float32)
+            T = torch.tensor(camera.T, device=xyz.device, dtype=torch.float32)
+             # R is stored transposed due to 'glm' in CUDA code so we don't neet transopse here
+            xyz_cam = xyz @ R + T[None, :]
+            
+            xyz_to_cam = torch.norm(xyz_cam, dim=1)
+            
+            # project to screen space
+            valid_depth = xyz_cam[:, 2] > 0.1
+            
+            
+            x, y, z = xyz_cam[:, 0], xyz_cam[:, 1], xyz_cam[:, 2]
+            z = torch.clamp(z, min=0.001)
+            
+            x = x / z * camera.focal_x + camera.image_width / 2.0
+            y = y / z * camera.focal_y + camera.image_height / 2.0
+            
+            # in_screen = torch.logical_and(torch.logical_and(x >= 0, x < camera.image_width), torch.logical_and(y >= 0, y < camera.image_height))
+            
+            # use similar tangent space filtering as in the paper
+            in_screen = torch.logical_and(torch.logical_and(x >= -0.15 * camera.image_width, x <= camera.image_width * 1.15), torch.logical_and(y >= -0.15 * camera.image_height, y <= 1.15 * camera.image_height))
+            
+        
+            valid = torch.logical_and(valid_depth, in_screen)
+            
+            # distance[valid] = torch.min(distance[valid], xyz_to_cam[valid])
+            distance[valid] = torch.min(distance[valid], z[valid])
+            valid_points = torch.logical_and(torch.logical_or(valid_points, valid), self.target_mask)
+            if focal_length < camera.focal_x:
+                focal_length = camera.focal_x
+        
+        distance[~valid_points] = distance[valid_points].max()
+        
+        #TODO remove hard coded value
+        #TODO box to gaussian transform
+        filter_3D = distance / focal_length * (0.2 ** 0.5)
+        self.filter_3D = filter_3D[..., None]
+        
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, time_line: int, cam_list=None):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
@@ -216,10 +284,49 @@ class GaussianModel:
             viable = torch.from_numpy(path.contains_points(points_xy)).cuda()
             
             
-        # fused_point_cloud = fused_point_cloud[viable]
-        # fused_color = fused_color[viable]
-        target_mask = viable #target_mask[viable]
+        # Downsample background gaussians
+        pcds = fused_point_cloud[~viable].cpu().numpy().astype(np.float64)
+        cols = fused_color[~viable].cpu().numpy().astype(np.float64)
 
+        # Create Open3D point cloud
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pcds)
+        pcd.colors = o3d.utility.Vector3dVector(cols)
+
+        # Voxel size controls the granularity
+        voxel_size = 0.05  # Adjust based on your data scale
+        downsampled_pcd = pcd.voxel_down_sample(voxel_size)
+
+        # Convert back to PyTorch tensor
+        ds_pcd = torch.tensor(np.asarray(downsampled_pcd.points), dtype=fused_point_cloud.dtype).cuda()
+        ds_cols = torch.tensor(np.asarray(downsampled_pcd.colors), dtype=fused_color.dtype).cuda()
+        
+        # for cam in cam_list:
+        #     ds_pcd, ds_cols = populate_background(cam, ds_pcd, ds_cols)
+        
+        # Re-sample point cloud
+        target = fused_point_cloud[viable]
+        target_col = fused_color[viable]
+        
+        # for cam in cam_list:
+        #     target, target_col = get_in_view_dyn_mask(cam, target, target_col)
+            
+            # points_xy = target[:, 1:].cpu().numpy()  # (N, 2)
+            # # Create mask for points inside polygon
+            # viable = torch.from_numpy(path.contains_points(points_xy)).cuda()
+            
+            # target = target[viable]
+            # target_col = target_col[viable]
+        
+        # for cam in cam_list:
+        #     target, target_col = refilter_pcd(cam, target, target_col)
+            
+        fused_point_cloud = torch.cat([ds_pcd, target], dim=0)
+        fused_color = torch.cat([ds_cols, target_col], dim=0)
+        target_mask = torch.zeros((fused_color.shape[0], 1)).cuda()
+        target_mask[ds_cols.shape[0]:, :] = 1
+        target_mask = (target_mask > 0.).squeeze(-1)
+    
         
         # while target_mask.sum() < 40000:
         #     target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
@@ -229,8 +336,9 @@ class GaussianModel:
         
         self.target_mask = target_mask
         
-        xyz_min = fused_point_cloud[target_mask].min(0).values - .1
-        xyz_max = fused_point_cloud[target_mask].max(0).values + .1
+        # Prune background down to 100k
+        xyz_min = fused_point_cloud[target_mask].min(0).values - .01
+        xyz_max = fused_point_cloud[target_mask].max(0).values + .01
 
         self._deformation.deformation_net.set_aabb(xyz_max, xyz_min)
         
@@ -238,8 +346,11 @@ class GaussianModel:
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
-        print("Number of points at initialisation : ", fused_point_cloud.shape[0])
-        dist2 = torch.clamp_max(torch.clamp_min(distCUDA2(fused_point_cloud), 0.000000001), 1.)
+        # fused_color[~target_mask] = fused_color[~target_mask] + torch.clamp(torch.rand(fused_color[~target_mask].shape[0], 3).cuda()*0.1, 0., 1.)
+        
+        dist2 = torch.clamp_min(distCUDA2(fused_point_cloud[target_mask]), 0.00000000001)
+        dist2_else = torch.clamp_min(distCUDA2(fused_point_cloud[~target_mask]), 0.00000000001)
+        dist2 = torch.cat([dist2_else, dist2], dim=0)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
 
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
@@ -257,13 +368,11 @@ class GaussianModel:
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._colors = nn.Parameter(fused_color.requires_grad_(True))
         self._deformation = self._deformation.to("cuda")
-        self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-        
+
         # self.active_sh_degree = 0
     
     def training_setup(self, training_args):
@@ -276,8 +385,6 @@ class GaussianModel:
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': list(self._deformation.get_mlp_parameters()), 'lr': training_args.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
             {'params': list(self._deformation.get_grid_parameters()), 'lr': training_args.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
-            # {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
-            # {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},            
             {'params': [self._colors], 'lr': training_args.feature_lr, "name": "color"},            
@@ -329,7 +436,6 @@ class GaussianModel:
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
 
-        
         return l
     
     # def compute_deformation(self,time):
@@ -479,9 +585,6 @@ class GaussianModel:
         self._xyz = optimizable_tensors["xyz"]
         self._opacity = optimizable_tensors["opacity"]
         self._colors = optimizable_tensors["color"]
-
-        # self._features_dc = optimizable_tensors["f_dc"]
-        # self._features_rest = optimizable_tensors["f_rest"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
                 
@@ -504,8 +607,6 @@ class GaussianModel:
 
         self._xyz = optimizable_tensors["xyz"]
         self._opacity = optimizable_tensors["opacity"]
-        # self._features_dc = optimizable_tensors["f_dc"]
-        # self._features_rest = optimizable_tensors["f_rest"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         self._colors = optimizable_tensors["color"]
@@ -521,6 +622,28 @@ class GaussianModel:
                                                              keepdim=True)
         self.denom[update_filter] += 1
     
+    def densify_coarse(self, cam, data):
+        # Densify regions in the rgb with fine details/frequencies based on target depth and rgb
+        depth, rgb = data # 1,H,W : 3,H,W
+        target_xyz = self._xyz[self.target_mask]
+        
+        print(depth.shape, rgb.shape)
+        # Get new xyz
+        new_xyz, new_colors = ash(cam, target_xyz, depth.squeeze(0))
+        new_rotation = torch.ones((new_xyz.shape[0],4)).cuda() * self._rotation[self.target_mask][0]
+        random_index = torch.randint(0, self._scaling[self.target_mask].size(0), (1,)).item()
+        new_scaling = torch.ones((new_xyz.shape[0],3)).cuda() * self._scaling[self.target_mask][random_index]
+        new_opacity = torch.ones((new_xyz.shape[0],3)).cuda()
+        new_opacity[:, 0] = torch.logit(new_opacity[:, 0])
+        # Set w = 0.01 : As w_t = sig(w)*200, we need to set w = logit(w_t/200)
+        new_opacity[:, 1] = (new_opacity[:, 1]*.01)
+        # Finally set mu to 0 as the start of the traniing
+        new_opacity[:, 2] = torch.logit(new_opacity[:, 2]*0.)
+        
+        new_target_mask = torch.ones((new_xyz.shape[0])).cuda().bool()
+        self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
+        self.densification_postfix(new_xyz, new_colors,new_opacity, new_scaling, new_rotation)
+        
     def densify(self, max_grad, extent):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
@@ -538,12 +661,11 @@ class GaussianModel:
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                             torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
 
+
         # Only clone points in the scene not the target
         selected_pts_mask = torch.logical_and(selected_pts_mask, self.target_mask)
         
         new_xyz = self._xyz[selected_pts_mask]
-        # new_features_dc = self._features_dc[selected_pts_mask]
-        # new_features_rest = self._features_rest[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
@@ -575,8 +697,6 @@ class GaussianModel:
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        # new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        # new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         new_colors = self._colors[selected_pts_mask].repeat(N,1)
         
@@ -653,7 +773,6 @@ class GaussianModel:
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
-
     def compute_topac_width(self, w, h, threshold=0.05):
         """ Implementing the function: t = m +- sqrt(-ln(0.05/h)/(w**2))
                         
@@ -666,7 +785,7 @@ class GaussianModel:
                         
         """
         return torch.sqrt(-torch.log(threshold / h) / (w ** 2))
-        
+
     def prune(self, h_thresold, extent, max_screen_size,):
         """
         
@@ -695,8 +814,7 @@ class GaussianModel:
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
-        
-    
+          
     def reset_opacity(self):
         print('resetting opacity')
         opacities_new = self.get_opacity
@@ -765,36 +883,6 @@ class GaussianModel:
         return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total 
             # tvtotal1 * tvtotal1_weight + spsmoothness * spsmoothness_weight + minmotion * minmotion_weight + minview * minview_weight
 
-    def update_target_mask(self, cam_list): 
-        selected_pts_mask = self.target_mask
-        
-        noise = torch.randn_like(self._xyz[selected_pts_mask]) * 0.01 
-        new_xyz = self._xyz[selected_pts_mask] + noise
-        new_colors = self._colors[selected_pts_mask]
-        new_scaling = self._scaling[selected_pts_mask]
-        new_rotation = self._rotation[selected_pts_mask]
-        new_opacities = self._opacity[selected_pts_mask]
-        
-        # Update target mask
-        new_target_mask = self.target_mask[selected_pts_mask]
-        
-        dyn_mask = torch.zeros_like(new_xyz[:, 0],dtype=torch.long, device=self.get_xyz.device)
-        for cam in cam_list:             
-            dyn_mask += get_in_view_dyn_mask(cam, new_xyz).long()
-
-        target_add  = dyn_mask > (len(cam_list)-1)
-        
-        new_xyz = new_xyz[target_add]
-        new_colors = new_colors[target_add]
-        new_scaling = new_scaling[target_add]
-        new_rotation = new_rotation[target_add]
-        new_opacities = new_opacities[target_add]
-        new_target_mask = new_target_mask[target_add]
-        
-        self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
-
-        self.densification_postfix(new_xyz, new_colors,new_opacities, new_scaling, new_rotation)
-
     def compute_covariance_loss(self, xyz, rotation, scaling):
         # row, col = knn_graph(xyz, k=2, batch=None, loop=False)
         row, col  = self.target_neighbours
@@ -837,7 +925,6 @@ class GaussianModel:
         disances = torch.norm(points[row] - points[col], dim=1)
         distance_weights = 1./disances.unsqueeze(-1).detach() # 1. - torch.exp(- (0.00018/ (disances**2)))
         diff = ((distance_weights*(norms[row] - norms[col]).abs())).mean()
-
         return diff
     
     def compute_displacement_rigidity(self, position):
@@ -935,8 +1022,6 @@ def compute_alpha_interval(d, cov6, alpha_threshold=0.1):
     return t_cutoff  # alpha < threshold when |t| > t_cutoff
 
 K_c = -2*torch.log(torch.tensor(0.6)).cuda()
-
-
 import torch.nn.functional as F
 def quaternion_rotate(q, v):
     q_vec = q[:, :3]
@@ -965,18 +1050,70 @@ def rotated_soft_axis_direction(r, s, temperature=10.0, type='min'):
 
     return rotated
 
-         
-def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
+import torch.nn.functional as F
+def min_pool_nonzero(depth_map, patch_size):
+    """
+    Computes patch-wise minimum non-zero depth, then upsamples back to original size.
+
+    Args:
+        depth_map (Tensor): [H, W], depth values with 0 = missing
+        patch_size (int): size of square patches
+
+    Returns:
+        Tensor: [H, W] with min depth per patch, upsampled to original size
+    """
+    H, W = depth_map.shape
+
+    # Replace zeros with large value so they don't interfere with min
+    masked = depth_map.clone()
+    masked[masked == 0] = float('inf')
+
+    # Trim to be divisible by patch size
+    H_trim, W_trim = H - H % patch_size, W - W % patch_size
+    masked = masked[:H_trim, :W_trim]
+
+    # Reshape into patches
+    reshaped = masked.view(H_trim // patch_size, patch_size, W_trim // patch_size, patch_size)
+    patches = reshaped.permute(0, 2, 1, 3).reshape(H_trim // patch_size, W_trim // patch_size, -1)
+
+    # Min per patch
+    patch_min, _ = patches.min(dim=-1)
+    patch_min[patch_min == float('inf')] = 0  # Restore 0 for all-zero patches
+
+    # Upsample to original resolution
+    patch_min = patch_min.unsqueeze(0).unsqueeze(0)  # [1, 1, H', W']
+    upsampled = F.interpolate(patch_min, size=(H, W), mode='nearest')
+    
+    return upsampled.squeeze(0).squeeze(0) 
+
+def backproject_depth_to_xyz(depth_map, camera):
+    H, W = depth_map.shape
+    y, x = torch.meshgrid(
+        torch.arange(H, device=depth_map.device),
+        torch.arange(W, device=depth_map.device),
+        indexing='ij'
+    )
+    
+    fx = fy = 0.5 * H / np.tan(camera.FoVy / 2)  # estimated from FOV and image size
+    fx  = 0.5 * W / np.tan(camera.FoVx / 2)  # estimated from FOV and image size
+    cx = camera.image_width / 2
+    cy = camera.image_height / 2
+
+    z = depth_map
+    x3d = (x - cx) * z / fx
+    y3d = (y - cy) * z / fy
+    xyz = torch.stack([x3d, y3d, z], dim=-1)  # [H, W, 3]
+
+    valid = z > 0
+    return xyz[valid], y[valid], x[valid]
+
+def populate_background(camera, xyz, col) -> torch.Tensor:
     device = xyz.device
     N = xyz.shape[0]
 
-    # Convert to homogeneous coordinates
     xyz_h = torch.cat([xyz, torch.ones((N, 1), device=device)], dim=-1)  # (N, 4)
-
-    # Apply full projection (world → clip space)
     proj_xyz = xyz_h @ camera.full_proj_transform.to(device)  # (N, 4)
 
-    # Homogeneous divide to get NDC coordinates
     ndc = proj_xyz[:, :3] / proj_xyz[:, 3:4]  # (N, 3)
 
     # Visibility check
@@ -987,40 +1124,296 @@ def get_in_view_dyn_mask(camera, xyz: torch.Tensor) -> torch.Tensor:
     # Compute pixel coordinates
     px = (((ndc[:, 0] + 1) / 2) * camera.image_width).long()
     py = (((ndc[:, 1] + 1) / 2) * camera.image_height).long()    # Init mask values
-    mask_values = torch.zeros(N, dtype=torch.bool, device=device)
 
     # Only sample pixels for visible points
     valid_idx = visible_mask.nonzero(as_tuple=True)[0]
-    if valid_idx.numel() > 0:
-        px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
-        py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
-        mask = camera.mask.to(device)
-        sampled_mask = mask[py_valid, px_valid]  # shape: [#valid]
-        mask_values[valid_idx] = sampled_mask.bool()
+    px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
+    py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
     
-    # import matplotlib.pyplot as plt
-    # Assuming tensor is named `tensor_wh` with shape [W, H]
-    # Convert to [H, W] for display (matplotlib expects H first)
-    # print(mask_values.shape)
-    # mask[:, :] *= 0.
-    # mask[py_valid, px_valid] = xyz[valid_idx,0]
-    # print(py_valid.shape)
+    # Get mask
+    mask = camera.mask.to(device)  # (H, W)
+    sampled_mask = mask[py_valid, px_valid] 
+    
+    mask_valid = sampled_mask.bool()
+    final_idx = valid_idx[mask_valid]
+    img = torch.zeros_like(mask).cuda()
+    img[py_valid, px_valid]  = proj_xyz[valid_idx,3]
+    pcd_mask = min_pool_nonzero(img, 50) > 0. # Get a mask where 1 includes dilater regions to not sample new pcds
+    uniform_depth = torch.zeros_like(pcd_mask).cuda() # H,W
+    stride = 25
+    uniform_depth[::stride, ::stride] = proj_xyz[valid_idx,3].max() # Set the max depth w.r.t camera
+    uniform_depth[pcd_mask] = 0. # Apply the blur mask to avoid selecting samples within the field
+    
+    # Reproject local points into global space
+    py, px = torch.nonzero(uniform_depth > 0, as_tuple=True)
+    depths = uniform_depth[py, px]
+    
+    x_ndc = (px.float() / camera.image_width) * 2 - 1
+    y_ndc = (py.float() / camera.image_height) * 2 - 1
+    clip_coords = torch.stack([x_ndc * depths, y_ndc * depths, depths, depths], dim=-1)  # (N, 4)
+    
+    world_coords_h = clip_coords @ torch.inverse(camera.full_proj_transform.to(device)).T  # (N, 4)
+    world_coords = world_coords_h[:, :3] / world_coords_h[:, 3:4]  # convert to 3D
+    
+    xyz_new = torch.cat([xyz, world_coords], dim=0)
+    col_new = torch.cat([col, torch.rand(world_coords.shape[0], 3).cuda()], dim=0)
+    return xyz_new, col_new
+    # img = min_pool_nonzero(img, 25)
+    import matplotlib.pyplot as plt
+    
+    imgs = [img, pcd_mask, uniform_depth,]  # Replace these with your actual image tensors
 
-    # tensor_hw = mask.cpu()  # If it's on GPU
+    fig, axes = plt.subplots(1, len(imgs), figsize=(8, 8))  # 2 rows, 2 columns
+    for ax, img in zip(axes.flat, imgs):
+        ax.imshow(img.cpu(), cmap='gray')
+        ax.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+    exit()
+
+    plt.imshow(mask.cpu(), cmap='hot')
+    plt.title("Local Variation (RGB)")
+    plt.colorbar()
+    plt.show()
+    exit()
+    return mask_values.long()
+
+def get_in_view_dyn_mask(camera, xyz, col) -> torch.Tensor:
+    device = xyz.device
+    N = xyz.shape[0]
+
+    xyz_h = torch.cat([xyz, torch.ones((N, 1), device=device)], dim=-1)  # (N, 4)
+    proj_xyz = xyz_h @ camera.full_proj_transform.to(device)  # (N, 4)
+
+    ndc = proj_xyz[:, :3] / proj_xyz[:, 3:4]  # (N, 3)
+
+    # Visibility check
+    in_front = proj_xyz[:, 2] > 0
+    in_ndc_bounds = (ndc[:, 0].abs() <= 1) & (ndc[:, 1].abs() <= 1) & (ndc[:, 2].abs() <= 1)
+    visible_mask = in_ndc_bounds & in_front
+    
+    # Compute pixel coordinates
+    px = (((ndc[:, 0] + 1) / 2) * camera.image_width).long()
+    py = (((ndc[:, 1] + 1) / 2) * camera.image_height).long()    # Init mask values
+
+    # Only sample pixels for visible points
+    valid_idx = visible_mask.nonzero(as_tuple=True)[0]
+    px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
+    py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
+    
+    mask = camera.mask.to(device)  # (H, W)
+    sampled_mask = mask[py_valid, px_valid] 
+    
+    mask_valid = sampled_mask.bool()
+    final_idx = valid_idx[mask_valid]
+
+    # Get filtered 3D points and colors
+    xyz_in_mask = xyz[final_idx]
+    col_in_mask = col[final_idx]
+    proj_z = proj_xyz[final_idx, 2]
+    # return xyz_in_mask, col_in_mask
+    
+    img = camera.original_image.permute(1,2,0).cuda()
+
+    depth_img = torch.zeros((camera.image_height, camera.image_width), device=device)
+    depth_img[py_valid[mask_valid], px_valid[mask_valid]] = proj_z
+     
+    # Take minimum distance w.r.t patch (avoid placing background)
+    # depth_img = min_pool_nonzero(depth_img, 15) # * mask - multiplication is pointsless as the variance is already mask
+    # import matplotlib.pyplot as plt
+    # tensor_hw = depth_img.cpu()  # If it's on GPU
     # plt.imshow(tensor_hw, cmap='gray')
     # plt.axis('off')
     # plt.show()
-    # img = torch.zeros((camera.image_height, camera.image_width, 3), dtype=torch.float32, device=device)
-    # img[py_valid, px_valid, 0] = xyz[valid_idx, 0]  # X as Red
-    # img[py_valid, px_valid, 1] = xyz[valid_idx, 1]  # Y as Green
-    # img[py_valid, px_valid, 2] = xyz[valid_idx, 2]  # Z as Blue
 
-    # plt.imshow(img.cpu().numpy())
-    # plt.title("Visible Points Rendered as XYZ Composite")
+    img = img.permute(2,0,1) * mask
+    kernel_size=27
+    C=3
+    padding = kernel_size // 2
+    weight = torch.ones((C, 1, kernel_size, kernel_size), dtype=img.dtype, device=img.device)
+    weight /= kernel_size * kernel_size
+
+    mean = F.conv2d(img, weight, padding=padding, groups=C) # local mean
+    mean_of_squares = F.conv2d(img ** 2, weight, padding=padding, groups=C) # local mean of squares 
+    variance = mean_of_squares - mean ** 2 # Variance E[x^2] - (E[x])^2
+
+    # Mask variance and normalize it
+    variance = variance * mask
+    variance = (variance - variance.min())/(variance.max() - variance.min())
+    import matplotlib.pyplot as plt
+    tensor_hw = variance.permute(1,2,0).mean(-1).cpu() > 0.001  # If it's on GPU
+    plt.imshow(tensor_hw, cmap='gray')
+    plt.axis('off')
+    plt.show()
+    
+    stride = 5
+    mask = torch.zeros_like(variance).cuda()
+    mask[::stride, ::stride] = variance[::stride, ::stride]
+    
+    new_xyz = (mask > 0.001)
+    depths_ = torch.where(new_xyz, depth_img, 0.)
+    depths = torch.zeros_like(depth_img).cuda()
+    depths[new_xyz] = depths_[new_xyz]
+    
+    new_xyz_from_depth, py_valid, px_valid = backproject_depth_to_xyz(depths, camera)
+
+    # Step 2: Get RGB at those (py, px)
+    # Shape of original image: [3, H, W]
+    img = camera.original_image.cuda()
+    rgb = img[:, py_valid, px_valid].permute(1, 0) 
+    
+    # Concatenate
+    final_xyz = torch.cat([xyz_in_mask, new_xyz_from_depth], dim=0)  # [N+M, 3]
+    print(final_xyz.shape)
+    final_rgb = torch.cat([col_in_mask, rgb], dim=0)  # [N+M, 3]
+    return final_xyz, final_rgb
+    import matplotlib.pyplot as plt
+
+    tensor_hw = depths.cpu()  # If it's on GPU
+    plt.imshow(tensor_hw, cmap='gray')
+    plt.axis('off')
+    plt.show()
+    exit()
+    
+    import matplotlib.pyplot as plt
+    plt.imshow(mask.cpu(), cmap='hot')
+    plt.title("Local Variation (RGB)")
+    plt.colorbar()
+    plt.show()
+    exit()
+    return mask_values.long()
+
+def ash(camera, xyz, depth) -> torch.Tensor:
+    camera = camera[0]
+    device = xyz.device
+    N = xyz.shape[0]
+
+    xyz_h = torch.cat([xyz, torch.ones((N, 1), device=device)], dim=-1)  # (N, 4)
+    proj_xyz = xyz_h @ camera.full_proj_transform.to(device)  # (N, 4)
+
+    ndc = proj_xyz[:, :3] / proj_xyz[:, 3:4]  # (N, 3)
+
+    # Visibility check
+    in_front = proj_xyz[:, 2] > 0
+    in_ndc_bounds = (ndc[:, 0].abs() <= 1) & (ndc[:, 1].abs() <= 1) & (ndc[:, 2].abs() <= 1)
+    visible_mask = in_ndc_bounds & in_front
+    
+    # Compute pixel coordinates
+    px = (((ndc[:, 0] + 1) / 2) * camera.image_width).long()
+    py = (((ndc[:, 1] + 1) / 2) * camera.image_height).long()    # Init mask values
+
+    # Only sample pixels for visible points
+    valid_idx = visible_mask.nonzero(as_tuple=True)[0]
+    px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
+    py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
+    
+    mask = camera.mask.to(device)  # (H, W)
+    sampled_mask = mask[py_valid, px_valid] 
+    
+    mask_valid = sampled_mask.bool()
+    final_idx = valid_idx[mask_valid]
+
+    # Get filtered 3D points and colors
+    xyz_in_mask = xyz[final_idx]
+    proj_z = proj_xyz[final_idx, 2]
+    # return xyz_in_mask, col_in_mask
+    
+    img = camera.original_image.permute(1,2,0).cuda()
+
+
+    # tensor_hw = depth_img.cpu()  # If it's on GPU
+    # plt.imshow(tensor_hw, cmap='gray')
     # plt.axis('off')
     # plt.show()
-    # exit()
+
+    img = img.permute(2,0,1) * mask
+    kernel_size=5
+    C=3
+    padding = kernel_size // 2
+    weight = torch.ones((C, 1, kernel_size, kernel_size), dtype=img.dtype, device=img.device)
+    weight /= kernel_size * kernel_size
+
+    mean = F.conv2d(img, weight, padding=padding, groups=C) # local mean
+    mean_of_squares = F.conv2d(img ** 2, weight, padding=padding, groups=C) # local mean of squares 
+    variance = mean_of_squares - mean ** 2 # Variance E[x^2] - (E[x])^2
+
+    # Mask variance and normalize it
+    variance = variance.mean(0) * mask
+    variance = (variance - variance.min())/(variance.max() - variance.min())
+    
+    stride = 5
+    mask = torch.zeros_like(variance).cuda()
+    mask[::stride, ::stride] = variance[::stride, ::stride]
+    
+    new_xyz = (mask > 0.0001)
+    print('sum:', new_xyz.sum())
+    depth_img = depth
+    depths_ = torch.where(new_xyz, depth_img, 0.)
+    depths = torch.zeros_like(depth_img).cuda()
+    depths[new_xyz] = depths_[new_xyz]
+    
+    new_xyz_from_depth, py_valid, px_valid = backproject_depth_to_xyz(depths, camera)
+
+    # Step 2: Get RGB at those (py, px)
+    # Shape of original image: [3, H, W]
+    img = camera.original_image.cuda()
+    rgb = img[:, py_valid, px_valid].permute(1, 0) 
+
+    return new_xyz_from_depth, rgb
+    import matplotlib.pyplot as plt
+
+    tensor_hw = (depth_img)
+    tensor_hw[camera.mask.to(device) > 0] *= .5
+    plt.imshow(new_xyz.cpu(), cmap='gray')
+    plt.axis('off')
+    plt.show()
+    exit()
+    
+    import matplotlib.pyplot as plt
+    plt.imshow(mask.cpu(), cmap='hot')
+    plt.title("Local Variation (RGB)")
+    plt.colorbar()
+    plt.show()
+    exit()
     return mask_values.long()
+
+
+
+def refilter_pcd(camera, xyz, col) -> torch.Tensor:
+    device = xyz.device
+    N = xyz.shape[0]
+
+    xyz_h = torch.cat([xyz, torch.ones((N, 1), device=device)], dim=-1)  # (N, 4)
+    proj_xyz = xyz_h @ camera.full_proj_transform.to(device)  # (N, 4)
+
+    ndc = proj_xyz[:, :3] / proj_xyz[:, 3:4]  # (N, 3)
+
+    # Visibility check
+    in_front = proj_xyz[:, 2] > 0
+    in_ndc_bounds = (ndc[:, 0].abs() <= 1) & (ndc[:, 1].abs() <= 1) & (ndc[:, 2].abs() <= 1)
+    visible_mask = in_ndc_bounds & in_front
+    
+    # Compute pixel coordinates
+    px = (((ndc[:, 0] + 1) / 2) * camera.image_width).long()
+    py = (((ndc[:, 1] + 1) / 2) * camera.image_height).long()    # Init mask values
+
+    # Only sample pixels for visible points
+    valid_idx = visible_mask.nonzero(as_tuple=True)[0]
+    px_valid = px[valid_idx].clamp(0, camera.image_width - 1)
+    py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
+    
+    mask = camera.mask.to(device)  # (H, W)
+    sampled_mask = mask[py_valid, px_valid] 
+    
+    mask_valid = sampled_mask.bool()
+    final_idx = valid_idx[mask_valid]
+
+    # Get filtered 3D points and colors
+    xyz_in_mask = xyz[final_idx]
+    col_in_mask = col[final_idx]
+    proj_z = proj_xyz[final_idx, 2]
+    return xyz_in_mask, col_in_mask
 
 def build_cov_matrix_torch(cov6):
     N = cov6.shape[0]

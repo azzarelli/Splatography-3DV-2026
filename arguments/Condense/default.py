@@ -4,7 +4,7 @@ ModelHiddenParams = dict(
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
      'resolution': [512, 150],
-     'wavelevel':2
+     'wavelevel':3
     },
 
     net_width = 128,
@@ -26,14 +26,14 @@ OptimizationParams = dict(
     coarse_iterations=3000,
     batch_size=2, # Was 4
 
-    densify_from_iter=0, #best at 3001
+    densify_from_iter=3000, #best at 3001
     densify_until_iter=10_000,
     densification_interval=100,
     densify_grad_threshold=0.001,
     opacity_reset_interval=3000,    
 
     pruning_interval=100,
-    pruning_from_iter=0,
+    pruning_from_iter=3000,
     lambda_dssim = 0., #0.1,
     
     feature_lr=0.001

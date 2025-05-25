@@ -25,8 +25,8 @@ class GUIBase:
         self.fov = (self.scene.getTestCameras()[0].FoVy, self.scene.getTestCameras()[0].FoVx)
 
         if self.H > 800:
-            self.W = self.W
-            self.H = self.H 
+            self.W = self.W//2
+            self.H = self.H //2
         # Initialize the image buffer
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         
@@ -94,7 +94,13 @@ class GUIBase:
 
                 if self.view_test == False:
                     if self.iteration <= self.final_iter:
-                        self.train_step()
+                        # Train the background seperately
+                        self.train_background_step()
+
+                        if self.stage == 'coarse':
+                            self.train_foreground_step()
+                        else:
+                            self.train_step()
                         self.iteration += 1
 
                     # self.test_step()
@@ -171,14 +177,14 @@ class GUIBase:
             )
             
             try:
-                buffer_image = buffer_image[self.vis_mode]
+                buffer_image = buffer_image["render"]
             except:
                 print(f'Mode "{self.vis_mode}" does not work')
                 buffer_image = buffer_image['render']
                 
-            if buffer_image.shape[0] == 1:
-                buffer_image = (buffer_image - buffer_image.min())/(buffer_image.max() - buffer_image.min())
-                buffer_image = buffer_image.repeat(3,1,1)
+            # if buffer_image.shape[0] == 1:
+            #     buffer_image = (buffer_image - buffer_image.min())/(buffer_image.max() - buffer_image.min())
+            #     buffer_image = buffer_image.repeat(3,1,1)
             
             buffer_image = torch.nn.functional.interpolate(
                 buffer_image.unsqueeze(0),
@@ -303,8 +309,8 @@ class GUIBase:
                 def callback_toggle_finecoarse(sender):
                     self.finecoarse_flag = False if self.finecoarse_flag else True
                 with dpg.group(horizontal=True):
-                    dpg.add_button(label="Viewer On/Off", callback=callback_toggle_show_rgb)
-                    dpg.add_button(label="Controls On/Off", callback=callback_toggle_use_controls)
+                    dpg.add_button(label="Render On/Off", callback=callback_toggle_show_rgb)
+                    dpg.add_button(label="Ctrl On/Off", callback=callback_toggle_use_controls)
                     dpg.add_button(label="Fine/Coarse", callback=callback_toggle_finecoarse)
 
                      
@@ -342,16 +348,25 @@ class GUIBase:
                     self.vis_mode = 'render'
                 def callback_toggle_show_depth(sender):
                     self.vis_mode = 'depth'
-                def callback_toggle_show_alpha(sender):
-                    self.vis_mode = 'alpha'
                 def callback_toggle_show_norms(sender):
                     self.vis_mode = 'norms'
                 
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="RGB", callback=callback_toggle_show_rgb)
                     dpg.add_button(label="Depth", callback=callback_toggle_show_depth)
-                    dpg.add_button(label="Alpha", callback=callback_toggle_show_alpha)
                     dpg.add_button(label="Normls", callback=callback_toggle_show_norms)
+                
+                def callback_toggle_show_xyz(sender):
+                    self.vis_mode = 'xyz'
+                def callback_toggle_show_dxyz1(sender):
+                    self.vis_mode = 'dxyz_1'
+                def callback_toggle_show_dxyz3(sender):
+                    self.vis_mode = 'dxyz_3' 
+                    
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="XYZ", callback=callback_toggle_show_xyz)
+                    dpg.add_button(label="dX1", callback=callback_toggle_show_dxyz1)
+                    dpg.add_button(label="dX3", callback=callback_toggle_show_dxyz3)
                 
                 def callback_toggle_show_fullopac(sender):
                     self.full_opacity = ~self.full_opacity
