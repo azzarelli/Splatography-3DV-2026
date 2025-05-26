@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from scene.gaussian_model import GaussianModel
 # from gaussian_renderer.pytorch_render import GaussRenderer
 
-# from gsplat.rendering import rasterization
+from gsplat.rendering import rasterization
 
 # RENDER = GaussRenderer()
 
@@ -79,6 +79,50 @@ def differentiable_cdf_match(source, target, eps=1e-5):
 
     return matched
         
+from torch_cluster import knn
+def compute_alpha_interval(A, B, cov6A, cov6B, alpha_threshold=0.1):
+    """
+    A is the target point
+    B is the outer point
+    """
+    # Step 1: Unpack 6D compact covariances into full 3x3 matrices
+    N = cov6A.shape[0]
+    device = cov6A.device
+    covA = torch.zeros((N, 3, 3), device=cov6A.device, dtype=cov6A.dtype)
+    covA[:, 0, 0] = cov6A[:, 0]
+    covA[:, 1, 1] = cov6A[:, 1]
+    covA[:, 2, 2] = cov6A[:, 2]
+    covA[:, 0, 1] = covA[:, 1, 0] = cov6A[:, 3]
+    covA[:, 0, 2] = covA[:, 2, 0] = cov6A[:, 4]
+    covA[:, 1, 2] = covA[:, 2, 1] = cov6A[:, 5]
+    N = cov6B.shape[0]
+    covB = torch.zeros((N, 3, 3), device=cov6A.device, dtype=cov6A.dtype)
+    covB[:, 0, 0] = cov6B[:, 0]
+    covB[:, 1, 1] = cov6B[:, 1]
+    covB[:, 2, 2] = cov6B[:, 2]
+    covB[:, 0, 1] = covB[:, 1, 0] = cov6B[:, 3]
+    covB[:, 0, 2] = covB[:, 2, 0] = cov6B[:, 4]
+    covB[:, 1, 2] = covB[:, 2, 1] = cov6B[:, 5]
+    # Add small regularization for stability
+    # eps = 1e-6
+    # cov[:, range(3), range(3)] += eps
+    covA_inv = torch.linalg.inv(covA)
+    covB_inv = torch.linalg.inv(covB)
+    
+    # Step 2: Compute λ = d^T @ Σ⁻¹ @ d (Mahalanobis squared along direction d)
+    d_AB = torch.nn.functional.normalize(A-B, dim=1).unsqueeze(1)  #.unsqueeze(1)  # (N, 1, 3)
+    λB = torch.bmm(torch.bmm(d_AB, covB_inv), d_AB.transpose(1, 2)).squeeze(-1).squeeze(-1).clamp(min=1e-10)  # (N,)    
+    c = -2.0 * torch.log(torch.tensor(0.05, device=device, dtype=torch.float)) # LHS of alpha distance function
+    t = torch.sqrt(c / λB).clamp(min=1e-10).unsqueeze(-1) # (N,) the distance along A-B where t is 0.01 - we want to select the positive one (by default)
+    B_ = B + t*d_AB.squeeze(1)
+    
+    
+    # For the ray B-A the t w.r.t A is 1-t (for the first intersection along the ray) and 1 + t (for the second)
+    d_BA = torch.nn.functional.normalize(B_- A, dim=1)  #.unsqueeze(1)  # (N, 1, 3)
+    
+    λA = torch.bmm(torch.bmm(d_BA.unsqueeze(1), covA_inv), d_BA.unsqueeze(1).transpose(1, 2)).squeeze(-1).squeeze(-1).clamp(min=1e-10).unsqueeze(-1)  # (N,)
+    alpha = torch.exp(-0.5* λA) # * t_BA.pow(2))
+    return alpha
 
 def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
            stage="fine", view_args=None, G=None, kernel_size=0.1):
@@ -192,83 +236,151 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     # print(.shape, means3D.shape)
     rendered_image, rendered_depth, norms = None, None, None
     if view_args['vis_mode'] in ['render']:
-        # rendered_image, alphas, meta = rasterization(
-        #     means3D, rotation, scales, opacity, 
-        #     viewpoint_camera.world_view_transform, 
-        #     viewpoint_camera.intrinsics,
-        #     viewpoint_camera.image_width, 
-        #     viewpoint_camera.image_height
-        # )
+        rendered_image, alpha, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1), colors,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
+    elif view_args['vis_mode'] == 'alpha':
+        _, rendered_image, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1), colors,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            render_mode='RGB',
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = (rendered_image - rendered_image.min())/ (rendered_image.max() - rendered_image.min())
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1).repeat(3,1,1)
+    elif view_args['vis_mode'] == 'D':
+        rendered_image, _, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1), colors,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            render_mode='D',
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = (rendered_image - rendered_image.min())/ (rendered_image.max() - rendered_image.min())
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1).repeat(3,1,1)
         
-        rendered_image, _ = rasterizer(
-            means3D=means3D,
-            means2D=means2D,
-            shs=None,
-            colors_precomp=colors,
-            opacities=opacity,
-            scales=scales,
-            rotations=rotation,
-            cov3D_precomp=None)
-        
-    elif view_args['vis_mode'] == 'depth':
-        X = viewpoint_camera.camera_center.cuda().unsqueeze(0)
-        depths = torch.norm(means3D-X, dim=-1).unsqueeze(-1)
-        depths= (depths - depths.min())/ (depths.max() - depths.min())
-        rendered_image, _ = rasterizer(
-            means3D=means3D,
-            means2D=means2D,
-            shs=None,
-            colors_precomp=depths.repeat(1,3),
-            opacities=opacity,
-            scales=scales,
-            rotations=rotation,
-            cov3D_precomp=None)
+    elif view_args['vis_mode'] == 'ED':
+        rendered_image, _, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1), colors,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            render_mode='ED',
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = (rendered_image - rendered_image.min())/ (rendered_image.max() - rendered_image.min())
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1).repeat(3,1,1)
     elif view_args['vis_mode'] == 'norms':
         # rendered_image = linear_rgb_to_srgb(rendered_image)
         norms = rotated_softmin_axis_direction(rotation, scales)
 
-        rendered_image, _ = rasterizer(
-            means3D=means3D,
-            means2D=means2D,
-            shs=None,
-            colors_precomp=norms,
-            opacities=opacity,
-            scales=scales,
-            rotations=rotation,
-            cov3D_precomp=None)
+        rendered_image, _, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1),norms,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
+
     elif view_args['vis_mode'] == 'xyz':
-        rendered_image, _ = rasterizer(
-            means3D=means3D,
-            means2D=means2D,
-            shs=None,
-            colors_precomp=means3D,
-            opacities=opacity,
-            scales=scales,
-            rotations=rotation,
-            cov3D_precomp=None)
+        rendered_image, _, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1),means3D,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
     elif view_args['vis_mode'] == 'dxyz_1':
         residual = torch.norm(means3D-means3D_, dim=-1).unsqueeze(-1).repeat(1,3)
-        rendered_image, _ = rasterizer(
-            means3D=means3D,
-            means2D=means2D,
-            shs=None,
-            colors_precomp=residual,
-            opacities=opacity,
-            scales=scales,
-            rotations=rotation,
-            cov3D_precomp=None)
+        rendered_image, _, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1),residual,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
     elif view_args['vis_mode'] == 'dxyz_3':
         residual = (means3D-means3D_).abs()
-        rendered_image, _ = rasterizer(
-            means3D=means3D,
-            means2D=means2D,
-            shs=None,
-            colors_precomp=residual,
-            opacities=opacity,
-            scales=scales,
-            rotations=rotation,
-            cov3D_precomp=None)
-    
+        rendered_image, _, _ = rasterization(
+            means3D, rotation, scales, opacity.squeeze(-1),residual,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
+    elif view_args['vis_mode'] == 'extra':
+        # get the nearest xyz neighbours 
+        x = means3D
+        K=3
+        edge_index = knn(x, x, k=K)
+        row, col = edge_index
+        # 1. Get features of the neighbors
+        neighbors = x[col]  # shape: (N*K, 3)
+        # 2. Build index matrix to reshape into (N, K, 3)
+        sorted_row, perm = row.sort(stable=True)
+        sorted_col = col[perm]
+        neighbors = x[sorted_col]  # (N*K, 3), sorted by query index
+        neighbors = neighbors.view(means3D.shape[0],K ,3)
+        cov6A = pc.covariance_activation(scales.detach(), 1, rotation.detach())
+        cov6B = cov6A[sorted_col].view(means3D.shape[0],K ,6)
+        
+        # colors = colors[sorted_col].view(means3D.shape[0],K ,3)[:,1, :]
+
+        for k in range(K):
+            if k == 0:
+                alpha = compute_alpha_interval(x, neighbors[:, 1, :], cov6A, cov6B[:, 1, :]) #.repeat(1,3) #.unsqueeze(-1)
+            else:
+                alpha += compute_alpha_interval(x, neighbors[:, 1, :], cov6A, cov6B[:, 1, :]) #.repeat(1,3) #.unsqueeze(-1)
+
+        alpha = alpha / K
+        rendered_image, alpha, _ = rasterization(
+            means3D, rotation, scales, alpha.squeeze(-1), colors,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
+        
     return {
         "render": rendered_image,
         "extras":extras # A dict containing mor point info
@@ -342,53 +454,20 @@ def render_coarse_batch(
     
     L1 = 0.
 
-    subpixel_offset = None
-    if subpixel_offset is None:
-        subpixel_offset = torch.zeros((int(viewpoint_cams[0].image_height), int(viewpoint_cams[0].image_width), 2), dtype=torch.float32, device="cuda")
-        
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
-        screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
-        try:
-            screenspace_points.retain_grad()
-        except:
-            pass
 
-        means2D = screenspace_points
-        
-        # Set up rasterization configuration
-        tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-        tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-        raster_settings = GaussianRasterizationSettings(
-            image_height=int(viewpoint_camera.image_height),
-            image_width=int(viewpoint_camera.image_width),
-            tanfovx=tanfovx,
-            tanfovy=tanfovy,
-            kernel_size=kernel_size,
-            subpixel_offset=subpixel_offset,
-
-            bg=bg_color,
-            scale_modifier=scaling_modifier,
-            viewmatrix=viewpoint_camera.world_view_transform.cuda(),
-            projmatrix=viewpoint_camera.full_proj_transform.cuda(),
-            sh_degree=pc.active_sh_degree,
-            campos=viewpoint_camera.camera_center.cuda(),
-            prefiltered=False,
-            debug=pipe.debug
+        rgb, _, _ = rasterization(
+            means3D[~pc.target_mask], rotations[~pc.target_mask], scales[~pc.target_mask], 
+            opacity_final[~pc.target_mask].squeeze(-1),colors[~pc.target_mask],
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
         )
-
-        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
-        
-        # Set raddii for non-targets to 0
-        rgb, _ = rasterizer(
-            means3D=means3D[~pc.target_mask],
-            means2D=means2D[~pc.target_mask],
-            shs=None,
-            colors_precomp=colors[~pc.target_mask],
-            opacities=opacity_final[~pc.target_mask],
-            scales=scales[~pc.target_mask],
-            rotations=rotations[~pc.target_mask],
-            cov3D_precomp=None
-        )
+        rgb = rgb.squeeze(0).permute(2,0,1)
         
         # Train the backgroudn
         gt_img = viewpoint_camera.original_image.cuda()
@@ -450,46 +529,18 @@ def render_coarse_batch_target(viewpoint_cams, pc: GaussianModel, pipe, bg_color
         if (iteration % 500 == 0 and idx == 0) or pc.target_neighbours is None:
             pc.update_neighbours(means3D_final[pc.target_mask])
         
-        screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0.
-        try:
-            screenspace_points.retain_grad()
-        except:
-            pass
-
-        means2D = screenspace_points
-        
-        # Set up rasterization configuration
-        tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-        tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-        raster_settings = GaussianRasterizationSettings(
-            image_height=int(viewpoint_camera.image_height),
-            image_width=int(viewpoint_camera.image_width),
-            tanfovx=tanfovx,
-            tanfovy=tanfovy,
-            kernel_size=kernel_size,
-            subpixel_offset=subpixel_offset,
-            bg=bg_color,
-            scale_modifier=scaling_modifier,
-            viewmatrix=viewpoint_camera.world_view_transform.cuda(),
-            projmatrix=viewpoint_camera.full_proj_transform.cuda(),
-            sh_degree=pc.active_sh_degree,
-            campos=viewpoint_camera.camera_center.cuda(),
-            prefiltered=False,
-            debug=pipe.debug
+        rgb, _, _ = rasterization(
+            means3D_final[pc.target_mask], rotations_final[pc.target_mask], scales[pc.target_mask], 
+            opacity_final[pc.target_mask].squeeze(-1),colors_final[pc.target_mask],
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
         )
-
-        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
-        
-        rgb, _ = rasterizer(
-            means3D=means3D_final[pc.target_mask],
-            means2D=means2D[pc.target_mask],
-            shs=None,
-            colors_precomp=colors_final[pc.target_mask],
-            opacities=opacity_final[pc.target_mask],
-            scales=scales[pc.target_mask],
-            rotations=rotations_final[pc.target_mask],
-            cov3D_precomp=None
-        )
+        rgb = rgb.squeeze(0).permute(2,0,1)
                 
         gt = viewpoint_camera.original_image.cuda()
         mask = viewpoint_camera.mask.cuda()# > 0. # invert binary mask

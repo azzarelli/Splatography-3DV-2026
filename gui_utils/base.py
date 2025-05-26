@@ -105,9 +105,9 @@ class GUIBase:
 
                     # self.test_step()
 
-                    if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                        if self.stage == 'fine':
-                            self.test_step()
+                    # if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
+                    #     if self.stage == 'fine':
+                    #         self.test_step()
 
                     if self.iteration > self.final_iter and self.stage == 'fine':
                         self.stage = 'done'
@@ -185,7 +185,6 @@ class GUIBase:
             # if buffer_image.shape[0] == 1:
             #     buffer_image = (buffer_image - buffer_image.min())/(buffer_image.max() - buffer_image.min())
             #     buffer_image = buffer_image.repeat(3,1,1)
-            
             buffer_image = torch.nn.functional.interpolate(
                 buffer_image.unsqueeze(0),
                 size=(self.H,self.W),
@@ -347,14 +346,19 @@ class GUIBase:
                 def callback_toggle_show_rgb(sender):
                     self.vis_mode = 'render'
                 def callback_toggle_show_depth(sender):
-                    self.vis_mode = 'depth'
+                    self.vis_mode = 'D'
+                def callback_toggle_show_edepth(sender):
+                    self.vis_mode = 'ED'
                 def callback_toggle_show_norms(sender):
                     self.vis_mode = 'norms'
-                
+                def callback_toggle_show_alpha(sender):
+                    self.vis_mode = 'alpha'
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="RGB", callback=callback_toggle_show_rgb)
-                    dpg.add_button(label="Depth", callback=callback_toggle_show_depth)
-                    dpg.add_button(label="Normls", callback=callback_toggle_show_norms)
+                    dpg.add_button(label="D", callback=callback_toggle_show_depth)
+                    dpg.add_button(label="ED", callback=callback_toggle_show_edepth)
+                    dpg.add_button(label="Norms", callback=callback_toggle_show_norms)
+                    dpg.add_button(label="Alpha", callback=callback_toggle_show_alpha)
                 
                 def callback_toggle_show_xyz(sender):
                     self.vis_mode = 'xyz'
@@ -367,6 +371,11 @@ class GUIBase:
                     dpg.add_button(label="XYZ", callback=callback_toggle_show_xyz)
                     dpg.add_button(label="dX1", callback=callback_toggle_show_dxyz1)
                     dpg.add_button(label="dX3", callback=callback_toggle_show_dxyz3)
+                
+                def callback_toggle_show_extra(sender):
+                    self.vis_mode = 'extra' 
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Extra", callback=callback_toggle_show_extra)
                 
                 def callback_toggle_show_fullopac(sender):
                     self.full_opacity = ~self.full_opacity
