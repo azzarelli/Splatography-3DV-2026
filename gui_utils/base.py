@@ -95,9 +95,8 @@ class GUIBase:
                 if self.view_test == False:
                     if self.iteration <= self.final_iter:
                         # Train the background seperately
-                        self.train_background_step()
-
                         if self.stage == 'coarse':
+                            self.train_background_step()
                             self.train_foreground_step()
                         else:
                             self.train_step()

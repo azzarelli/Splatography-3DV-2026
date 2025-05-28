@@ -224,6 +224,9 @@ class GUI(GUIBase):
                 self.viewpoint_stack = self.scene.getTrainCameras()
                 self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
                                                     num_workers=8, collate_fn=list))
+                
+                viewpoint_stack = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs] * 100
+                self.filter_3D_stack = viewpoint_stack.copy()
                 # self.scene.getTrainCameras().dataset.get_mask = False
             if self.stage == 'coarse': 
                 print('Loading Coarse (t=0) dataset')
@@ -279,6 +282,8 @@ class GUI(GUIBase):
             self.coarse_loader = iter(viewpoint_stack_loader)
             viewpoint_cams = next(self.coarse_loader)
 
+        
+        
         L1 = torch.tensor(0.).cuda()
         L1 = render_coarse_batch(
             viewpoint_cams, 
@@ -410,6 +415,10 @@ class GUI(GUIBase):
         #     self.gaussians.update_wavelevel()
            
         viewpoint_cams = self.get_batch_views
+        # print(self.iteration)
+        if self.iteration == 1:
+            self.gaussians.dupelicate()
+            self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
 
         # Generate scene based on an input camera from our current batch (defined by viewpoint_cams)
         radii_list = []
@@ -426,12 +435,11 @@ class GUI(GUIBase):
             stage=self.stage,
             iteration=self.iteration
         )
-        
+
         depthloss, normloss, covloss, target_depth = extra_losses
         
-        
-        hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
-        wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+        # hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+        # wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
 
         # scale_exp = self.gaussians.get_scaling
         # pg_loss = 0.01* (scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
@@ -478,16 +486,17 @@ class GUI(GUIBase):
 
         loss = L1 +  planeloss + \
             depthloss +\
-                hopacloss + wopacloss +\
-                   normloss + \
+                normloss + \
                        pg_loss + \
                            covloss
+                # hopacloss + wopacloss +\
+                   
         # print( planeloss ,depthloss,hopacloss ,wopacloss ,normloss ,pg_loss,covloss)
         with torch.no_grad():
             if self.gui:
                     dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                     dpg.set_value("_log_loss", f"Loss: {L1.item()} | Planes {planeloss} ")
-                    dpg.set_value("_log_opacs", f"h/w: {hopacloss}  |  {wopacloss} ")
+                    # dpg.set_value("_log_opacs", f"h/w: {hopacloss}  |  {wopacloss} ")
                     dpg.set_value("_log_depth", f"PhysG: {pg_loss} ")
                     dpg.set_value("_log_dynscales", f"Norms : {normloss} ")
                     dpg.set_value("_log_knn", f"Depth: {depthloss} | cov {covloss} ")
@@ -499,17 +508,6 @@ class GUI(GUIBase):
                 self.track_cpu_gpu_usage(0.1)
             # Error if loss becomes nan
             if torch.isnan(loss).any():
-                # if torch.isnan(pg_loss):
-                #     print("PG loss is nan!")
-                # if torch.isnan(opacloss):
-                #     print("Opac loss is nan!")
-                # if torch.isnan(dyn_scale_loss):
-                #     print("Dyn loss is nan!")
-                # if torch.isnan(dyn_target_loss):
-                #     print("Dyn target loss is nan!")
-                        
-                # # if torch.isnan(dyn_scale_loss):
-                # #     print("Dyn Scale is nan!")
                     
                 print("loss is nan, end training, reexecv program now.")
                 os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -521,42 +519,12 @@ class GUI(GUIBase):
         self.iter_end.record()
         
         with torch.no_grad():
+            # radii = torch.cat(radii_list, 0).max(dim=0).values
+            # visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
             
-            # exit()
-            # Save snapshot of waveplanes
-            # if self.iteration % 4000 == 0:
-            #     planes = self.gaussians.get_waveplanes()
-
-            #     for idx, plane_set in enumerate(planes):
-            #         for idx_, plane in enumerate(plane_set):
-            #             plane_save = plane.mean(0).mean(0)
-                        
-            #             if plane_save.shape[0] != 3:
-            #                 plane_save = plane_save.unsqueeze(0).repeat(3,1,1)
-                        
-            #             if idx in [0,1,3]:
-            #                 starter = 'P'
-            #             elif idx in [2,4,5]:
-            #                 starter = 'T'
-            #             else:
-            #                 starter = 'C'
-                            
-            #             if idx_ == 0:
-            #                 ender = 'yl'
-            #             elif idx_ == 1:
-            #                 ender = 'yh1'
-            #             else:
-            #                 ender = 'yh0'
-                            
-            #             plane_save = (plane_save - plane_save.min()) / (plane_save.max() - plane_save.min())
-            #             save_image(plane_save, f'./output/planes/{starter}{idx}_{ender}_{self.stage}{self.iteration}.png')
-            
-            radii = torch.cat(radii_list, 0).max(dim=0).values
-            visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
-            
-            viewspace_point_tensor_grad = torch.zeros_like(viewspace_point_tensor_list[0])
-            for idx in range(0, len(viewspace_point_tensor_list)):
-                viewspace_point_tensor_grad = viewspace_point_tensor_grad + viewspace_point_tensor_list[idx].grad
+            # viewspace_point_tensor_grad = torch.zeros_like(viewspace_point_tensor_list[0])
+            # for idx in range(0, len(viewspace_point_tensor_list)):
+            #     viewspace_point_tensor_grad = viewspace_point_tensor_grad + viewspace_point_tensor_list[idx].grad
             
             self.timer.pause() # log and save
            
@@ -568,28 +536,28 @@ class GUI(GUIBase):
             self.timer.start()
             
             # Keep track of max radii in image-space for pruning
-            self.gaussians.max_radii2D[visibility_filter] = torch.max(self.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
+            # self.gaussians.max_radii2D[visibility_filter] = torch.max(self.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+            # self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
 
             # Densification for scene
-            densify_threshold = self.opt.densify_grad_threshold
-            if  self.stage == 'fine' and \
-                self.iteration > self.opt.densify_from_iter and \
-                self.iteration < self.opt.densify_until_iter and \
-                self.iteration % self.opt.densification_interval == 0 and \
-                (self.gaussians.target_mask).sum() < 100000:
-                    self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
-                    self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-                    # self.gaussians.split_spikes()
+            # densify_threshold = self.opt.densify_grad_threshold
+            # if  self.stage == 'fine' and \
+            #     self.iteration > self.opt.densify_from_iter and \
+            #     self.iteration < self.opt.densify_until_iter and \
+            #     self.iteration % self.opt.densification_interval == 0 and \
+            #     (self.gaussians.target_mask).sum() < 100000:
+            #         self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
+            #         self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+            #         # self.gaussians.split_spikes()
 
-            # Global pruning
-            if  self.stage == 'fine' and \
-                self.iteration > self.opt.pruning_from_iter and \
-                self.iteration % self.opt.pruning_interval == 0 and \
-                (self.gaussians.target_mask).sum() > 100000:
-                size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-                self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
-                self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+            # # Global pruning
+            # if  self.stage == 'fine' and \
+            #     self.iteration > self.opt.pruning_from_iter and \
+            #     self.iteration % self.opt.pruning_interval == 0 and \
+            #     (self.gaussians.target_mask).sum() > 100000:
+            #     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
+            #     self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
+            #     self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
             
             if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
                 self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
@@ -617,188 +585,6 @@ class GUI(GUIBase):
             #     cam_list= self.get_zero_cams
             #     self.gaussians.update_target_mask(cam_list)
             #     self.final_iter += 1000
-        
-    @torch.no_grad()
-    def get_depth_alignment_data(self, i):
-        import matplotlib.pyplot as plt
-        # print((i*self.total_frames))
-        # exit()
-        i = 2
-        N = 20
-        viewpoint_cams = self.scene.index_train((i*self.total_frames+ N))
-        De = viewpoint_cams.mask.cuda().squeeze(0)
-        I = viewpoint_cams.original_image.cuda()
-        # De = self.scene.train_camera.dataset.get_depth_img(i)[0,:].cuda()
-        R, _, Dt  = render_depth(
-            viewpoint_cams, 
-            self.gaussians, 
-            self.pipe,
-            self.background, 
-            )
-        Dt = Dt.squeeze(0)\
-        
-        def differentiable_cdf_match(source, target, eps=1e-5):
-            """
-            Remap 'source' values to match the CDF of 'target', using differentiable quantile mapping.
-            Works in older PyTorch versions (no torch.interp).
-            """
-            # Sort source and target
-            source_sorted, _ = torch.sort(source)
-            target_sorted, _ = torch.sort(target)
-
-            # Build uniform CDF positions
-            cdf_vals = torch.linspace(0.0, 1.0, len(source_sorted), device=source.device)
-
-            # Step 1: Get CDF values of 'source' values via inverse CDF
-            # Interpolate where each source value would sit in its own sorted list
-            idx = torch.searchsorted(source_sorted, source, right=False).clamp(max=len(cdf_vals) - 2)
-            x0 = source_sorted[idx]
-            x1 = source_sorted[idx + 1]
-            y0 = cdf_vals[idx]
-            y1 = cdf_vals[idx + 1]
-            t = (source - x0) / (x1 - x0 + eps)
-            source_cdf = y0 + t * (y1 - y0)
-
-            # Step 2: Map CDF to target values (i.e., inverse CDF of target)
-            idx = torch.searchsorted(cdf_vals, source_cdf, right=False).clamp(max=len(target_sorted) - 2)
-            x0 = cdf_vals[idx]
-            x1 = cdf_vals[idx + 1]
-            y0 = target_sorted[idx]
-            y1 = target_sorted[idx + 1]
-            t = (source_cdf - x0) / (x1 - x0 + eps)
-            matched = y0 + t * (y1 - y0)
-
-            return matched
-        
-        # mask = Dt > 0
-        # Dt = Dt * mask
-        # De = De * mask
-        Dtmask = Dt > 0
-        Demask = De > 0
-        Dt[Dtmask] = (Dt[Dtmask] - Dt[Dtmask].min())/ (Dt[Dtmask].max() - Dt[Dtmask].min())
-        De[Demask] = (De[Demask] - De[Demask].min())/ (De[Demask].max() - De[Demask].min())
-        
-        dt_vals = Dt[Dtmask].flatten()
-        de_vals = De[Demask].flatten()
-
-        # Optional: match length
-        min_len = min(len(dt_vals), len(de_vals))
-        dt_vals = dt_vals[:min_len]
-        de_vals = de_vals[:min_len]
-
-        # Apply differentiable remapping
-        dt_matched = differentiable_cdf_match(dt_vals, de_vals)
-
-        # Replace in Dt
-        Dt = Dt.clone()
-        Dt[Dtmask] = dt_matched
-
-        # Dtmask = Dt > 0
-        # Demask = De > 0
-        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
-        # Dtmask = Dt > 0.01
-        # Demask = De > 0.01e
-        # dt_vals = Dt[Dtmask].flatten()
-
-        # # Compute 98th percentile (CDF > 0.98)
-        # dt_thresh = torch.quantile(dt_vals, 0.97)
-        # dt_thresh_low = torch.quantile(dt_vals, 0.01)
-        # # Dtmask = Dt > 0.1
-        # # Demask = De > 0.1
-        # # Clamp
-        # Dt_clamped = Dt.clone()
-        # Dt = torch.clamp(Dt_clamped, max=dt_thresh, min=dt_thresh_low)
-        # Dt = (Dt - Dt.min())/ (Dt.max() - Dt.min())
-        # # Dt[Dtmask] = (Dt[Dtmask] - Dt[Dtmask].min())/ (Dt[Dtmask].max() - Dt[Dtmask].min())
-        # Dtmask = Dt > 0
- 
-
-        axs[0].hist(Dt[Dtmask].cpu().flatten().numpy(), bins=100)
-        axs[0].set_title("Dt Depth Value Distribution")
-        axs[0].set_xlabel("Depth")
-        axs[0].set_ylabel("Count")
-
-        axs[1].hist(De[Demask].cpu().flatten().numpy(), bins=100)
-        axs[1].set_title("De Depth Value Distribution")
-        axs[1].set_xlabel("Depth")
-        axs[1].set_ylabel("Count")
-
-        plt.tight_layout()
-        plt.show()
-        
-        # CDF
-        dt_vals = Dt[Dtmask].cpu().flatten().numpy()
-        de_vals = De[Demask].cpu().flatten().numpy()
-
-        # Sort and compute CDFs
-        dt_sorted = np.sort(dt_vals)
-        de_sorted = np.sort(de_vals)
-        dt_cdf = np.linspace(0, 1, len(dt_sorted))
-        de_cdf = np.linspace(0, 1, len(de_sorted))
-
-        # Plot CDFs
-        fig, axs = plt.subplots(1, 2, figsize=(12, 5))
-        axs[0].plot(dt_sorted, dt_cdf)
-        axs[0].set_title("Dt CDF")
-        axs[0].set_xlabel("Depth")
-        axs[0].set_ylabel("Cumulative Probability")
-
-        axs[1].plot(de_sorted, de_cdf)
-        axs[1].set_title("De CDF")
-        axs[1].set_xlabel("Depth")
-        axs[1].set_ylabel("Cumulative Probability")
-
-        plt.tight_layout() 
-        plt.show()
-
-
-        # # Dt = torch.cat([Dt, De], dim=1)
-        fig, axs = plt.subplots(1,2, figsize=(15, 5))
-        depthmaps = [Dt.cpu().numpy(), (De).cpu().numpy()]
-        for i, ax in enumerate(axs):
-            print(depthmaps[i].shape)
-            im = ax.imshow(depthmaps[i], cmap='gray')
-            # im = ax.imshow(Dt.cpu().numpy(), cmap='gray', vmin=Dt.median().item() - 1, vmax=Dt.median().item() + 1)
-            ax.axis('off')
-            fig.colorbar(im, ax=ax, shrink=0.6)
-
-        plt.tight_layout()
-        plt.show()
-        
-        # Dt = Dt.cpu()
-        # De = De.cpu()
-        plt.figure(figsize=(5, 5))
-        plt.scatter(depthmaps[0], depthmaps[1], alpha=0.3, s=1)
-        plt.plot([ 0,  1],
-                [0,  1], 'r--')
-        plt.xlabel("D")
-        plt.ylabel("De")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-        
-        # diff = (D-De_).abs()
-        # A = D - mD
-        # B = De_ - mD
-        # plt.figure(figsize=(5, 5))
-        # plt.scatter(D.cpu(), De.cpu(), alpha=0.3, s=1)
-        # plt.xlabel("De with mean at 0")
-        # plt.ylabel("ABS(D-DE)")
-        # plt.grid(True)
-        # plt.tight_layout()
-        # plt.show()
-        exit()
-        return torch.cat([D,De_], dim=-1)
-    
-    def train_depth(self):
-
-        # Load initial dara
-        print('Loading (t=0) for Depth')
-        # For each camera learn a seperate depth warp
-        for i in range(self.scene.num_cams):
-            # Set-up data 
-            data = self.get_depth_alignment_data(i).detach()
-            
 
     @torch.no_grad()
     def test_step(self):

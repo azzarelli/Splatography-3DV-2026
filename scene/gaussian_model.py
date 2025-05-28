@@ -337,10 +337,13 @@ class GaussianModel:
         self.target_mask = target_mask
         
         # Prune background down to 100k
-        xyz_min = fused_point_cloud[target_mask].min(0).values - .01
-        xyz_max = fused_point_cloud[target_mask].max(0).values + .01
-
+        xyz_min = fused_point_cloud[target_mask].min(0).values - .05
+        xyz_max = fused_point_cloud[target_mask].max(0).values + .05
         self._deformation.deformation_net.set_aabb(xyz_max, xyz_min)
+        
+        xyz_min = fused_point_cloud[~target_mask].min(0).values
+        xyz_max = fused_point_cloud[~target_mask].max(0).values
+        self._deformation.deformation_net.set_aabb(xyz_max, xyz_min, grid_type='background')
         
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
@@ -596,13 +599,13 @@ class GaussianModel:
         self.target_mask = self.target_mask[valid_points_mask]
         
     def densification_postfix(self, new_xyz,new_colors, new_opacities, new_scaling, new_rotation):
-        d = {"xyz": new_xyz,
-
-        "scaling" : new_scaling,
-        "opacity": new_opacities,
-        "rotation" : new_rotation,
-        "color":new_colors, 
-       }
+        d = {
+            "xyz": new_xyz,
+            "scaling" : new_scaling,
+            "opacity": new_opacities,
+            "rotation" : new_rotation,
+            "color":new_colors, 
+        }
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
 
         self._xyz = optimizable_tensors["xyz"]
@@ -611,10 +614,10 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
         self._colors = optimizable_tensors["color"]
 
-        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.xyz_gradient_accum_abs = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        # self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        # self.xyz_gradient_accum_abs = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        # self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        # self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
     
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor[update_filter,:2], dim=-1, keepdim=True)
@@ -666,6 +669,20 @@ class GaussianModel:
         selected_pts_mask = torch.logical_and(selected_pts_mask, self.target_mask)
         
         new_xyz = self._xyz[selected_pts_mask]
+        new_scaling = self._scaling[selected_pts_mask]
+        new_rotation = self._rotation[selected_pts_mask]
+        new_opacities = self._opacity[selected_pts_mask]
+        new_colors = self._colors[selected_pts_mask]
+        
+        # Update target mask
+        new_target_mask = self.target_mask[selected_pts_mask]
+        self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
+
+        self.densification_postfix(new_xyz, new_colors,new_opacities, new_scaling, new_rotation)
+        
+    def dupelicate(self):
+        selected_pts_mask = self.target_mask #torch.logical_and()
+        new_xyz = self._xyz[selected_pts_mask] + torch.rand_like(self._xyz[selected_pts_mask])*0.005
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
@@ -818,7 +835,7 @@ class GaussianModel:
     def reset_opacity(self):
         print('resetting opacity')
         opacities_new = self.get_opacity
-        opacities_new[:,0] = 0.01
+        opacities_new[:,0] =  torch.logit(torch.tensor(0.05)).item()
         opacities_new[:,1] = 0.05
 
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")

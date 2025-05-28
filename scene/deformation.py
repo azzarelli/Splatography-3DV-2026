@@ -53,6 +53,7 @@ class Deformation(nn.Module):
         super(Deformation, self).__init__()
         self.W = W
         self.grid = WavePlaneField(args.bounds, args.scene_config)
+        self.background_grid = WavePlaneField(args.bounds, args.target_config)
         # self.fine_grid = WavePlaneField(args.bounds, args.scene_config, rotate=True)
 
         # self.target_grid.aabb = None
@@ -61,7 +62,6 @@ class Deformation(nn.Module):
 
         self.ratio=0
         self.create_net()
-        
         
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
@@ -77,9 +77,12 @@ class Deformation(nn.Module):
     def get_aabb(self):
         return self.grid.get_aabb
     
-    def set_aabb(self, xyz_max, xyz_min):
-        self.grid.set_aabb(xyz_max, xyz_min)
-
+    def set_aabb(self, xyz_max, xyz_min, grid_type='target'):
+        if grid_type=='target':
+            self.grid.set_aabb(xyz_max, xyz_min)
+        elif grid_type=='background':
+            self.background_grid.set_aabb(xyz_max, xyz_min)
+    
     
     def create_net(self):
         # Prep features for decoding
@@ -87,9 +90,10 @@ class Deformation(nn.Module):
         insize = self.grid.feat_dim 
         
         self.spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
+        self.background_spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
         self.color_enc = nn.Sequential(nn.Linear(insize,net_size))
-        # self.fine_enc = nn.Sequential(nn.Linear(insize,net_size//2))
 
+        self.background_pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size,16* 3))
@@ -105,12 +109,16 @@ class Deformation(nn.Module):
     def query_spacetime(self, rays_pts_emb, time, covariances, mask=None):
         
         if mask is not None:
-            space, spacetime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances)
+            space, spacetime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances[mask])
+            space_b, spacetime_b = self.background_grid(rays_pts_emb[~mask,:3], time[~mask,:], covariances[~mask])
+            st_b = self.background_spacetime_enc(space_b * spacetime_b)
+
         else:
             space, spacetime = self.grid(rays_pts_emb[:,:3], time, covariances)
+            st_b = None
 
         st = self.spacetime_enc(space * spacetime)
-        return st, space # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
+        return st, st_b # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
 
     def query_spacetheta(self, rays_pts_emb, angle, input_feature, mask=None):
         
@@ -122,39 +130,34 @@ class Deformation(nn.Module):
         sttheta = self.color_enc(input_feature*angle_feature)
         return sttheta
 
-    # def get_dx_coeffs(self, xyz, scale):
-    #     sp = self.query_grids(xyz[:,:3], scale[:,:3])
-
-    #     dx = self.pos_coeffs(sp) # 3
-    #     rot = self.rotations_deform(sp).view(-1, 2, 4) # 2
-    #     col =self.shs_deform(sp).view(-1, 2, 16,3) # 3
-    #     return dx, rot, col, None
 
     def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):
-        covariances = self.covariance_activation(scale_emb[target_mask], 1., rotations_emb[target_mask])
+        # Features
+        covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
+        dyn_feature, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
         
-        dyn_feature, spacetime_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
-        
-        # Change in rotation
+        # Rotation
         rotations = rotations_emb + 0.
         rotations[target_mask] += self.rotations_deform(dyn_feature)
         
+        # Color
         # Get norm from rotation and scales
         norms = rotated_softmin_axis_direction(rotations[target_mask], scale_emb[target_mask])
         norms = norms / norms.norm()
 
         # cos_theta = torch.clamp(torch.matmul(norms, view_dir.cuda()), -1.0, 1.0).unsqueeze(-1)
-        
         # col_feature = self.query_spacetheta(rays_pts_emb, cos_theta, spacetime_feature, target_mask)
     
         xyz = rgb_to_xyz(shs_emb)
-        # gaussian_integral(w) *  self.rgb_deform(st_feature).view(-1, 3
-        xyz[target_mask, 1] *= self.rgb_decoder(dyn_feature).squeeze(-1) # gaussian_integral(w).unsqueeze(-1)*  self.shs_deform(sp_features).view(-1, 16, 3)
+        xyz[target_mask, 1] += self.rgb_decoder(dyn_feature).squeeze(-1) 
         shs = xyz_to_rgb(xyz)
         
+        # Position
         pts = rays_pts_emb + 0. #.clone()        
         pts[target_mask] += self.pos_coeffs(dyn_feature)
+        pts[~target_mask] += self.background_pos_coeffs(background_feature)
         
+        # Opacity
         opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
         w = (h_emb[target_mask,1]**2).unsqueeze(-1)
         mu = torch.sigmoid(h_emb[target_mask,2]).unsqueeze(-1)
@@ -166,8 +169,6 @@ class Deformation(nn.Module):
  
         # scales = scale_emb + 0.
         # scales[target_mask] += self.scale_deform(dyn_feature)
-
-
         if False:
             w_np = w.cpu().numpy().flatten()
             h_np = h.cpu().numpy().flatten()

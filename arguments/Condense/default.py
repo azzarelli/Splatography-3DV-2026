@@ -3,6 +3,13 @@ ModelHiddenParams = dict(
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
+     'resolution': [256, 50],
+     'wavelevel':3
+    },
+    target_config = {
+     'grid_dimensions': 2,
+     'input_coordinate_dim': 4,
+     'output_coordinate_dim': 16,
      'resolution': [512, 150],
      'wavelevel':3
     },
