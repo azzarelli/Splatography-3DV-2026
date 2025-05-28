@@ -283,7 +283,6 @@ class GUI(GUIBase):
             viewpoint_cams = next(self.coarse_loader)
 
         
-        
         L1 = torch.tensor(0.).cuda()
         L1 = render_coarse_batch(
             viewpoint_cams, 
@@ -441,18 +440,18 @@ class GUI(GUIBase):
         # hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
         # wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
 
+        scale_exp = self.gaussians.get_scaling_with_3D_filter
+        # pg_loss = 0.001*(scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
+        max_gauss_ratio = 10
         # scale_exp = self.gaussians.get_scaling
-        # pg_loss = 0.01* (scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
-        # max_gauss_ratio = 5
-        # scale_exp = self.gaussians.get_scaling
-        # pg_loss = (
-        #     torch.maximum(
-        #         scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
-        #         torch.tensor(max_gauss_ratio),
-        #     )
-        #     - max_gauss_ratio
-        # ).mean()
-        pg_loss = 0.
+        pg_loss = (
+            torch.maximum(
+                scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
+                torch.tensor(max_gauss_ratio),
+            )
+            - max_gauss_ratio
+        ).mean()
+        # pg_loss = 0.
 
         if self.stage == 'coarse':
             planeloss = 0.

@@ -96,8 +96,8 @@ class Deformation(nn.Module):
         self.background_pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
-        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size,16* 3))
         self.rgb_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.rgb_deform2 = nn.Sequential(nn.ReLU(),nn.Linear(4, net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.scale_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
         # intial rgb, temporal rgb, rotation
@@ -145,12 +145,15 @@ class Deformation(nn.Module):
         norms = rotated_softmin_axis_direction(rotations[target_mask], scale_emb[target_mask])
         norms = norms / norms.norm()
 
-        # cos_theta = torch.clamp(torch.matmul(norms, view_dir.cuda()), -1.0, 1.0).unsqueeze(-1)
+        cos_theta = torch.clamp(torch.matmul(norms, view_dir.cuda()), -1.0, 1.0).unsqueeze(-1)
         # col_feature = self.query_spacetheta(rays_pts_emb, cos_theta, spacetime_feature, target_mask)
     
-        xyz = rgb_to_xyz(shs_emb)
-        xyz[target_mask, 1] += self.rgb_decoder(dyn_feature).squeeze(-1) 
-        shs = xyz_to_rgb(xyz)
+        # xyz = rgb_to_xyz(shs_emb)
+        # xyz[target_mask, 1] += self.rgb_decoder(dyn_feature).squeeze(-1) 
+        # shs = xyz_to_rgb(xyz)
+        shs = shs_emb + 0.
+        shs[target_mask] += self.rgb_deform2(torch.cat([self.rgb_deform(dyn_feature), cos_theta], dim=-1)) #self.rgb_decoder(dyn_feature).squeeze(-1) 
+
         
         # Position
         pts = rays_pts_emb + 0. #.clone()        
