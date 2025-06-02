@@ -108,7 +108,7 @@ class GUIBase:
                         self.iteration += 1
 
 
-                    if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
+                    if (self.iteration % 4000) == 0:
                         if self.stage == 'fine':
                             self.test_step()
 

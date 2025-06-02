@@ -100,6 +100,9 @@ class Deformation(nn.Module):
         self.rgb_deform2 = nn.Sequential(nn.ReLU(),nn.Linear(4, net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.scale_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
+        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
+    
+    
         # intial rgb, temporal rgb, rotation
         self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
 
@@ -129,31 +132,44 @@ class Deformation(nn.Module):
 
         sttheta = self.color_enc(input_feature*angle_feature)
         return sttheta
-
+    
 
     def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):
         # Features
         covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
         dyn_feature, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
         
+        if target_mask is None:
+            shs = shs_emb + self.shs_deform(dyn_feature).view(-1, 16, 3)
+            pts = rays_pts_emb + self.pos_coeffs(dyn_feature)
+            rotations = rotations_emb + self.rotations_deform(dyn_feature)
+            
+            opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
+            w = (h_emb[:,1]**2).unsqueeze(-1)
+            mu = torch.sigmoid(h_emb[:,2]).unsqueeze(-1)
+            t = time_emb[0:1].squeeze(0)
+            feat_exp = torch.exp(-w * (t-mu)**2)
+            opacity = feat_exp # h_emb[target_mask] * feat_exp
+            return pts, rotations, opacity, shs, None
+
         # Rotation
         rotations = rotations_emb + 0.
         rotations[target_mask] += self.rotations_deform(dyn_feature)
         
         # Color
         # Get norm from rotation and scales
-        norms = rotated_softmin_axis_direction(rotations[target_mask], scale_emb[target_mask])
-        norms = norms / norms.norm()
-
-        cos_theta = torch.clamp(torch.matmul(norms, view_dir.cuda()), -1.0, 1.0).unsqueeze(-1)
+        # norms = rotated_softmin_axis_direction(rotations[target_mask], scale_emb[target_mask])
+        # norms = norms / norms.norm()
+        # cos_theta = torch.clamp(torch.matmul(norms, view_dir.cuda()), -1.0, 1.0).unsqueeze(-1)
         # col_feature = self.query_spacetheta(rays_pts_emb, cos_theta, spacetime_feature, target_mask)
     
         # xyz = rgb_to_xyz(shs_emb)
         # xyz[target_mask, 1] += self.rgb_decoder(dyn_feature).squeeze(-1) 
         # shs = xyz_to_rgb(xyz)
         shs = shs_emb + 0.
-        shs[target_mask] += self.rgb_deform2(torch.cat([self.rgb_deform(dyn_feature), cos_theta], dim=-1)) #self.rgb_decoder(dyn_feature).squeeze(-1) 
-
+        # shs[target_mask] += self.rgb_deform2(torch.cat([self.rgb_deform(dyn_feature), cos_theta], dim=-1)) #self.rgb_decoder(dyn_feature).squeeze(-1) 
+        shs[target_mask] = shs_emb[target_mask] + self.shs_deform(dyn_feature).view(-1, 16, 3)
+         
         
         # Position
         pts = rays_pts_emb + 0. #.clone()        
@@ -201,7 +217,7 @@ class Deformation(nn.Module):
             plt.show()
             exit()
 
-        return pts, rotations, opacity, shs, norms
+        return pts, rotations, opacity, shs, None
     
     def get_mlp_parameters(self):
         parameter_list = []

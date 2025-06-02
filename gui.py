@@ -273,6 +273,10 @@ class GUI(GUIBase):
         # Update Gaussian lr for current iteration
         self.gaussians.update_learning_rate(self.iteration)          
         
+        if self.iteration == int(self.final_iter/2):
+            self.gaussians.dupelicate()
+            self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+        
         # Sample from the static cameras for background
         try:
             viewpoint_cams = next(self.coarse_loader)
@@ -341,9 +345,7 @@ class GUI(GUIBase):
         self.iter_start.record()
         if self.iteration < self.opt.iterations:
             self.gaussians.optimizer.zero_grad(set_to_none=True)
-            
-        # Update Gaussian lr for current iteration
-        self.gaussians.update_learning_rate(self.iteration)          
+      
         
         viewpoint_cams = self.get_batch_views
 
@@ -378,21 +380,7 @@ class GUI(GUIBase):
         self.gaussians.optimizer.step()
         self.gaussians.optimizer.zero_grad(set_to_none = True)
         self.iter_end.record()
-        
-        with torch.no_grad():
-            self.timer.pause()
-            torch.cuda.synchronize()
-            
-            # Save scene when at the saving iteration
-            if (self.iteration in self.saving_iterations) or (self.iteration == self.final_iter-1):
-                self.save_scene()
-            self.timer.start()
 
-            if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
-                self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-
-            # if self.iteration % self.opt.opacity_reset_interval == 0:
-            #     self.gaussians.reset_opacity_background()
             
     def train_step(self):
 
@@ -415,7 +403,7 @@ class GUI(GUIBase):
            
         viewpoint_cams = self.get_batch_views
         # print(self.iteration)
-        if self.iteration == 1 : #or self.iteration == 4000:
+        if self.iteration == 1400 : #or self.iteration == 4000:
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
 
@@ -437,8 +425,8 @@ class GUI(GUIBase):
 
         depthloss, normloss, covloss, target_depth = extra_losses
         
-        # hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
-        # wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+        hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
+        wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
 
         scale_exp = self.gaussians.get_scaling_with_3D_filter
         # pg_loss = 0.001*(scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
@@ -487,18 +475,18 @@ class GUI(GUIBase):
             depthloss +\
                 normloss + \
                        pg_loss + \
-                           covloss
-                # hopacloss + wopacloss +\
+                           covloss +\
+                hopacloss + wopacloss
                    
         # print( planeloss ,depthloss,hopacloss ,wopacloss ,normloss ,pg_loss,covloss)
         with torch.no_grad():
             if self.gui:
                     dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                     dpg.set_value("_log_loss", f"Loss: {L1.item()} | Planes {planeloss} ")
-                    # dpg.set_value("_log_opacs", f"h/w: {hopacloss}  |  {wopacloss} ")
+                    dpg.set_value("_log_opacs", f"h/w: {hopacloss}  |  {wopacloss} ")
                     dpg.set_value("_log_depth", f"PhysG: {pg_loss} ")
                     dpg.set_value("_log_dynscales", f"Norms : {normloss} ")
-                    dpg.set_value("_log_knn", f"Depth: {depthloss} | cov {covloss} ")
+                    dpg.set_value("_log_knn", f"depth: {depthloss} | cov {covloss} ")
                     if (self.iteration % 2) == 0:
                         dpg.set_value("_log_points", f"Scene Pts: {(~self.gaussians.target_mask).sum()} | Target Pts: {(self.gaussians.target_mask).sum()} ")
                     
@@ -778,7 +766,7 @@ if __name__ == "__main__":
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", type=int, default=1000)
+    parser.add_argument("--test_iterations", type=int, default=4000)
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[8000, 9999,15999, 20000, 30_000, 45000, 60000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--start_checkpoint", type=str, default = None)
