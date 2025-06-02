@@ -415,7 +415,7 @@ class GUI(GUIBase):
            
         viewpoint_cams = self.get_batch_views
         # print(self.iteration)
-        if self.iteration == 1:
+        if self.iteration == 1 : #or self.iteration == 4000:
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
 
@@ -587,8 +587,8 @@ class GUI(GUIBase):
 
     @torch.no_grad()
     def test_step(self):
-
-        if self.iteration < (self.final_iter -1) and (self.iteration % 500) != 0:
+        print('testing')
+        if self.iteration < (self.final_iter -1) and (self.iteration % 500) != 0 and self.view_test == False:
             idx = 0
             viewpoint_cams = []
             
@@ -610,6 +610,9 @@ class GUI(GUIBase):
 
         PSNR = 0.
         SSIM = 0.
+        fullPSNR = 0.
+        fullSSIM = 0.
+        dumbPSNR = 0.
 
         idx = 0
         # Render and return preds
@@ -624,7 +627,7 @@ class GUI(GUIBase):
                 self.gaussians, 
                 self.pipe, 
                 self.background, 
-                stage=self.stage
+                stage='test-full'
             )
             image = render_pkg["render"]
 
@@ -632,22 +635,29 @@ class GUI(GUIBase):
             gt_image = viewpoint_cam.original_image.cuda()
             mask = viewpoint_cam.gt_alpha_mask.cuda()
 
-
             if (self.iteration == 500) or (self.iteration == 1000 or self.iteration == 2000):
                 if idx % 100 == 0:
                     save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
+            
+            if self.view_test or self.iteration > (self.final_iter -2):
+                save_gt_pred_full(gt_image, image, self.iteration, idx, self.args.expname)
 
-            image = image*mask
+            fullPSNR += psnr(image, gt_image)
+            fullSSIM += ssim(image.unsqueeze(0), gt_image)
+            
+            render_pkg = render(
+                viewpoint_cam, 
+                self.gaussians, 
+                self.pipe, 
+                self.background, 
+                stage='test-foreground'
+            )
+            image = render_pkg["render"]
             gt_image = gt_image*mask
-
-            # import matplotlib.pyplot as plt
-            # plt.imshow(gt_image.cpu().numpy().transpose(1,2,0))
-            # plt.axis('off')
-            # plt.show()
-            # exit()
+            image = image*mask
             PSNR += psnr(image, gt_image)
-
             SSIM += ssim(image.unsqueeze(0), gt_image)
+            
             idx += 1
 
             if idx % 4 == 0 and self.gui:
@@ -657,12 +667,17 @@ class GUI(GUIBase):
 
 
         # Loss
+        # dumbPSNR = dumbPSNR.item()/len(viewpoint_cams)
+        fullPSNR = fullPSNR.item()/len(viewpoint_cams)
+        fullSSIM = fullSSIM/len(viewpoint_cams)
         PSNR = PSNR.item()/len(viewpoint_cams)
         SSIM = SSIM/len(viewpoint_cams)
 
         save_file = os.path.join(self.results_dir, f'{self.iteration}.json')
         with open(save_file, 'w') as f:
             obj = {
+                'full-psnr': fullPSNR,
+                'full-ssim': fullSSIM.item(),
                 'psnr': PSNR,
                 'ssim': SSIM.item(),
                 'points':self.gaussians._xyz.shape[0]}
@@ -685,6 +700,39 @@ def setup_seed(seed):
      np.random.seed(seed)
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
+
+def save_gt_pred_full(gt, pred, iteration, idx, name):
+
+    pred = (pred.permute(1, 2, 0)
+        # .contiguous()
+        .clamp(0, 1)
+        .contiguous()
+        .detach()
+        .cpu()
+        .numpy()
+    )*255
+
+    gt = (gt.permute(1, 2, 0)
+            .clamp(0, 1)
+            .contiguous()
+            .detach()
+            .cpu()
+            .numpy()
+    )*255
+
+    pred = pred.astype(np.uint8)
+    gt = gt.astype(np.uint8)
+
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+    gt_bgr = cv2.cvtColor(gt, cv2.COLOR_RGB2BGR)
+
+    # image_array = np.hstack((gt_bgr, pred_bgr))
+    if not os.path.exists(f'output/{name}/images/'):
+        os.mkdir(f'output/{name}/images/')
+    cv2.imwrite(f'output/{name}/images/{idx}.png', pred_bgr)
+
+    return pred_bgr
 
 def save_gt_pred(gt, pred, iteration, idx, name):
     pred = (pred.permute(1, 2, 0)
@@ -731,7 +779,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", type=int, default=1000)
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7000, 9999,15999, 20000, 30_000, 45000, 60000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[8000, 9999,15999, 20000, 30_000, 45000, 60000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--expname", type=str, default = "")

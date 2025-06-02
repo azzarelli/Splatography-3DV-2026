@@ -172,7 +172,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
     rotation = pc.rotation_activation(rotations)
 
     show_mask = 0
-    if view_args is not None:
+    if view_args is not None and stage != 'test':
         if view_args['viewer_status']:
 
             show_mask = view_args['show_mask'] 
@@ -198,19 +198,19 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
                 colors = (means3D - means3D_).abs()
     else:
         view_args= {'vis_mode':'render'}
-
     # print(.shape, means3D.shape)
     rendered_image, rendered_depth, norms = None, None, None
-    if view_args['vis_mode'] in ['render']:
+    if stage == 'test-foreground':
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
         mask = distances > 1.
-        
+        mask = torch.logical_and(pc.target_mask, mask)
+
         means3D = means3D[mask]
         rotation = rotation[mask]
         scales = scales[mask]
         opacity = opacity[mask]
         colors = colors[mask]
-        
+
         rendered_image, alpha, _ = rasterization(
                         means3D, rotation, scales, opacity.squeeze(-1), colors,
 
@@ -223,7 +223,49 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
             eps2d=0.1
         )
         rendered_image = rendered_image.squeeze(0).permute(2,0,1)
-           
+    elif stage == 'test-full':
+        distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
+        mask = distances > 1.
+        means3D = means3D[mask]
+        rotation = rotation[mask]
+        scales = scales[mask]
+        opacity = opacity[mask]
+        colors = colors[mask]
+
+        rendered_image, alpha, _ = rasterization(
+                        means3D, rotation, scales, opacity.squeeze(-1), colors,
+
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
+        
+    elif view_args['vis_mode'] in ['render']:
+        distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
+        mask = distances > 1.
+        means3D = means3D[mask]
+        rotation = rotation[mask]
+        scales = scales[mask]
+        opacity = opacity[mask]
+        colors = colors[mask]
+
+        rendered_image, alpha, _ = rasterization(
+                        means3D, rotation, scales, opacity.squeeze(-1), colors,
+
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1
+        )
+        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
         
     elif view_args['vis_mode'] == 'alpha':
         _, rendered_image, _ = rasterization(

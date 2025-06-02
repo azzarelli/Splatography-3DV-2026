@@ -14,21 +14,12 @@ import torch
 def mse(img1, img2):
     return (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
 @torch.no_grad()
-def psnr(img1, img2, mask=None):
+def psnr_(img1, img2, mask=None):
     img1 = img1.flatten(1)
     img2 = img2.flatten(1)
-
-    if mask is not None:
-
-        mask = mask.unsqueeze(0).flatten(1).repeat(3,1)
-        mask = torch.where(mask!=0,True,False)
-
-        img1 = img1[mask].unsqueeze(0)
-        img2 = img2[mask].unsqueeze(0)
-
-    else:
-        img1 = img1.unsqueeze(0)
-        img2 = img2.unsqueeze(0)
+    img1 = img1.unsqueeze(0)
+    img2 = img2.unsqueeze(0)
+    
     mse = ((img1 - img2) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
 
     psnr = 20 * torch.log10(1.0 / torch.sqrt(mse))
@@ -40,3 +31,19 @@ def psnr(img1, img2, mask=None):
             psnr = psnr[~torch.isinf(psnr)]
         
     return psnr
+
+@torch.no_grad()
+def psnr(img1, img2, mask=None):
+
+    if mask is not None:
+        assert mask.shape == img1.shape[-2:], "Mask must match HxW of the image"
+        mask = mask.expand_as(img1)
+        diff = (img1 - img2) ** 2 * mask
+        mse = diff.sum() / mask.sum()
+    else:
+        mse = ((img1 - img2) ** 2).mean()
+    
+    mse = torch.clamp(mse, min=1e-10)  # Prevent log(0)
+    psnr_value = 20 * torch.log10(1.0 / torch.sqrt(mse))
+    
+    return psnr_value

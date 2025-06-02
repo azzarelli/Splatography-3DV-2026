@@ -91,6 +91,7 @@ class GUIBase:
     
     def render(self):
         if self.gui:
+            tested = True
             while dpg.is_dearpygui_running():
                 if self.iteration > self.final_iter and self.stage == 'coarse':
                     self.stage = 'fine'
@@ -106,16 +107,18 @@ class GUIBase:
                             self.train_step()
                         self.iteration += 1
 
-                    # self.test_step()
 
-                    # if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                    #     if self.stage == 'fine':
-                    #         self.test_step()
+                    if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
+                        if self.stage == 'fine':
+                            self.test_step()
 
                     if self.iteration > self.final_iter and self.stage == 'fine':
                         self.stage = 'done'
                         dpg.stop_dearpygui() 
                         # exit()
+                elif tested:
+                    self.test_step()
+                    tested = False
 
                 # if self.view_test == True:
                 #     self.train_depth()

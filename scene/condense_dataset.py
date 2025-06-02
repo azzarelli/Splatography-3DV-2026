@@ -322,7 +322,7 @@ class CondenseData(Dataset):
                 mask = self.load_image(camid)
                 mask = (mask.sum(0) > 0).float()
         img = self.load_image(path)
-        depth = self.load_image(path.replace('color_corrected', 'depth_mono'))
+        depth = None # self.load_image(path.replace('color_corrected', 'depth_mono'))
         return img, pose, time, mask, depth, centers
     
     def get_depth(self, index):
