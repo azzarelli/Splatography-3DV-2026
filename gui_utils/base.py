@@ -117,7 +117,7 @@ class GUIBase:
                         dpg.stop_dearpygui() 
                         # exit()
                 elif tested:
-                    self.test_step()
+                    # self.test_step()
                     tested = False
 
                 # if self.view_test == True:

@@ -403,14 +403,9 @@ class GUI(GUIBase):
            
         viewpoint_cams = self.get_batch_views
         # print(self.iteration)
-        if self.iteration == 1400 : #or self.iteration == 4000:
+        if self.iteration == 0: #or self.iteration == 4000:
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-
-        # Generate scene based on an input camera from our current batch (defined by viewpoint_cams)
-        radii_list = []
-        visibility_filter_list = []
-        viewspace_point_tensor_list = []
 
         L1 = torch.tensor(0.).cuda()
         
@@ -545,7 +540,11 @@ class GUI(GUIBase):
             #     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
             #     self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
             #     self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-            
+            if self.iteration % 500 == 0 and self.iteration < 6000:
+                self.gaussians.prune(self.get_zero_cams)
+                self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+                self.gaussians.update_neighbours(self.gaussians.get_xyz)
+                
             if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
                 self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
             
@@ -556,7 +555,7 @@ class GUI(GUIBase):
             # if self.iteration == 1 and self.stage == 'fine':
             #     self.gaussians.prune_target(self.get_zero_cams)
 
-            if self.iteration % self.opt.opacity_reset_interval == 0 and self.stage == 'fine':
+            if self.iteration % self.opt.opacity_reset_interval == 0:# and self.stage == 'fine':
                 self.gaussians.reset_opacity()
                 
             # Optimizer step

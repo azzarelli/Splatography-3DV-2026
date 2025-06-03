@@ -255,7 +255,7 @@ class GaussianModel:
             
             # distance[valid] = torch.min(distance[valid], xyz_to_cam[valid])
             distance[valid] = torch.min(distance[valid], z[valid])
-            valid_points = torch.logical_and(torch.logical_or(valid_points, valid), self.target_mask)
+            valid_points = torch.logical_or(valid_points, valid)
             if focal_length < camera.focal_x:
                 focal_length = camera.focal_x
         
@@ -380,11 +380,11 @@ class GaussianModel:
         # Initialize opacities
         opacities = 1. * torch.ones((fused_point_cloud.shape[0], 3), dtype=torch.float, device="cuda")
         # Set h = 1 : As max_opac = sig(h) to set max opac = 1 we need h = logit(1)
-        opacities[:, 0] = torch.logit(opacities[:, 0])
+        opacities[:, 0] = torch.logit(opacities[:, 0]*0.95)
         # Set w = 0.01 : As w_t = sig(w)*200, we need to set w = logit(w_t/200)
-        opacities[:, 1] = (opacities[:, 1]*.05)
+        opacities[:, 1] = (opacities[:, 1]*1.5)
         # Finally set mu to 0 as the start of the traniing
-        opacities[:, 2] = torch.logit(opacities[:, 2]*0.)
+        opacities[:, 2] = torch.logit(opacities[:, 2]*0.5)
         
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._colors = nn.Parameter(fused_color.requires_grad_(True))
@@ -630,20 +630,21 @@ class GaussianModel:
         return optimizable_tensors
 
     def prune_points(self, mask):
-        mask = torch.logical_and(mask, ~self.target_mask)
         valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
         self._opacity = optimizable_tensors["opacity"]
-        self._colors = optimizable_tensors["color"]
+        # self._colors = optimizable_tensors["color"]
+        self._features_dc = optimizable_tensors["f_dc"]
+        self._features_rest = optimizable_tensors["f_rest"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
                 
-        self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
-        self.xyz_gradient_accum_abs = self.xyz_gradient_accum_abs[valid_points_mask]
-        self.denom = self.denom[valid_points_mask]
-        self.max_radii2D = self.max_radii2D[valid_points_mask]
+        # self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
+        # self.xyz_gradient_accum_abs = self.xyz_gradient_accum_abs[valid_points_mask]
+        # self.denom = self.denom[valid_points_mask]
+        # self.max_radii2D = self.max_radii2D[valid_points_mask]
         
         self.target_mask = self.target_mask[valid_points_mask]
         
@@ -855,40 +856,34 @@ class GaussianModel:
         """
         return torch.sqrt(-torch.log(threshold / h) / (w ** 2))
 
-    def prune(self, h_thresold, extent, max_screen_size,):
+    def prune(self,cam_list): # h_thresold, extent, max_screen_size,):
         """
+        """
+        h = self.get_coarse_opacity_with_3D_filter
+        h_mask = (h < 0.05).squeeze(-1)
         
-            Notes:
-                So purging H seems to work when we apply sigmoid to h and mu instead of using the opacity emebdding and activator
-                
-                Lets test the following:
-                    We need to evaluate the time points where the temporal opacity function crosses a min(h) threshold e.g. h=0.05
-                    There will be two intersections with the y = h = 0.05 and these can be determined with:
-                        t = m +- sqrt(-ln(0.05/h)/(w**2))
-                        
-                    We can then asses the absolute distance between t_neg and t_pos and remove spikes that apear smaller than our temporal
-                    grid resolution (basically temporal pruning)
-        """
-        h = self.get_hopac
-        prune_mask = (h < 0.05).squeeze(-1)
+        prune_mask = torch.zeros_like(self.target_mask, dtype=torch.uint8).cuda()
+        for cam in cam_list:
+            prune_mask += get_in_view_dyn_mask(cam, self.get_xyz)
 
-        h_mask = torch.logical_and((h < 0.5).squeeze(-1), self.target_mask)
-        prune_mask = torch.logical_or(h_mask, prune_mask)
-        if max_screen_size:
-            big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+        prune_mask = prune_mask < len(cam_list)-2
+        prune_mask = torch.logical_and(prune_mask, self.target_mask)
 
-            prune_mask = torch.logical_or(prune_mask, big_points_vs)
-            prune_mask = torch.logical_or(prune_mask, big_points_ws)
+        prune_mask = torch.logical_or(prune_mask, h_mask)
+        # if max_screen_size:
+        #     big_points_vs = self.max_radii2D > max_screen_size
+        #     big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+
+        #     prune_mask = torch.logical_or(prune_mask, big_points_vs)
+        #     prune_mask = torch.logical_or(prune_mask, big_points_ws)
         self.prune_points(prune_mask)
-
         torch.cuda.empty_cache()
           
     def reset_opacity(self):
         print('resetting opacity')
         opacities_new = self.get_opacity
         opacities_new[:,0] =  torch.logit(torch.tensor(0.05)).item()
-        opacities_new[:,1] = 0.05
+        opacities_new[:,1] = 1.5
 
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
@@ -984,7 +979,7 @@ class GaussianModel:
         edge_index = knn_graph(points, k=5, batch=None, loop=False)
         self.target_neighbours = edge_index
 
-    def update_neighbours(self,points):
+    def update_neighbours(self, points):
         edge_index = knn_graph(points, k=5, batch=None, loop=False)
         self.target_neighbours = edge_index
 
@@ -1248,7 +1243,7 @@ def populate_background(camera, xyz, col) -> torch.Tensor:
     exit()
     return mask_values.long()
 
-def get_in_view_dyn_mask(camera, xyz, col) -> torch.Tensor:
+def get_in_view_dyn_mask(camera, xyz) -> torch.Tensor:
     device = xyz.device
     N = xyz.shape[0]
 
@@ -1272,16 +1267,12 @@ def get_in_view_dyn_mask(camera, xyz, col) -> torch.Tensor:
     py_valid = py[valid_idx].clamp(0, camera.image_height - 1)
     
     mask = camera.mask.to(device)  # (H, W)
-    sampled_mask = mask[py_valid, px_valid] 
-    
-    mask_valid = sampled_mask.bool()
-    final_idx = valid_idx[mask_valid]
-
+    sampled_mask = mask[py_valid, px_valid].bool()
     # Get filtered 3D points and colors
-    xyz_in_mask = xyz[final_idx]
-    col_in_mask = col[final_idx]
-    proj_z = proj_xyz[final_idx, 2]
-    # return xyz_in_mask, col_in_mask
+    final_mask = torch.zeros(N, dtype=torch.uint8, device=device)
+    final_mask[valid_idx[sampled_mask]] = 1  # Set mask to 1 where points are visible and inside the mask
+
+    return final_mask 
     
     img = camera.original_image.permute(1,2,0).cuda()
 
