@@ -4,7 +4,7 @@ import torch.nn.init as init
 from scene.waveplanes import WavePlaneField
 
 from scene.triplanes import TriPlaneField
-from scene.displacementplanes import DisplacementField
+
 import time
 
 from torch_cluster import knn_graph
@@ -53,7 +53,6 @@ class Deformation(nn.Module):
         super(Deformation, self).__init__()
         self.W = W
         self.grid = WavePlaneField(args.bounds, args.scene_config)
-        self.displacement_grid = DisplacementField(args.bounds, args.scene_config)
         self.background_grid = WavePlaneField(args.bounds, args.target_config)
         # self.fine_grid = WavePlaneField(args.bounds, args.scene_config, rotate=True)
 
@@ -81,7 +80,6 @@ class Deformation(nn.Module):
     def set_aabb(self, xyz_max, xyz_min, grid_type='target'):
         if grid_type=='target':
             self.grid.set_aabb(xyz_max, xyz_min)
-            self.displacement_grid.set_aabb(xyz_max, xyz_min)
         elif grid_type=='background':
             self.background_grid.set_aabb(xyz_max, xyz_min)
     
@@ -94,7 +92,6 @@ class Deformation(nn.Module):
         self.spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
         self.background_spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
         self.color_enc = nn.Sequential(nn.Linear(insize,net_size))
-        self.coefenc = nn.Sequential(nn.Linear(insize,net_size))
 
         self.background_pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
@@ -116,20 +113,15 @@ class Deformation(nn.Module):
         
         if mask is not None:
             space, spacetime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances[mask])
-            std_A, std_B = self.displacement_grid(rays_pts_emb[mask,:3], time[mask,:])
-            std_B = self.coefenc(space*std_B)
-
             space_b, spacetime_b = self.background_grid(rays_pts_emb[~mask,:3], time[~mask,:], covariances[~mask])
             st_b = self.background_spacetime_enc(space_b * spacetime_b)
 
         else:
             space, spacetime = self.grid(rays_pts_emb[:,:3], time, covariances)
-            std_A, std_B = self.displacement_grid(rays_pts_emb[:,:3], time, coarse=True)
             st_b = None
 
         st = self.spacetime_enc(space * spacetime)
-        std_A = self.coefenc(space*std_A)
-        return st, std_A, std_B, st_b # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
+        return st, st_b # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
 
     def query_spacetheta(self, rays_pts_emb, angle, input_feature, mask=None):
         
@@ -145,14 +137,11 @@ class Deformation(nn.Module):
     def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):
         # Features
         covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
-        dyn_feature, disp_feature_A, disp_feature_B, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
+        dyn_feature, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
         
         if target_mask is None: # Sample features at the 
-            shs = shs_emb + 0.
-            shs[:, 1:] = shs[:, 1:] + self.shs_deform(dyn_feature).view(-1, 15, 3)
-            # pts = rays_pts_emb + 0.
-            pts = rays_pts_emb + self.pos_coeffs(disp_feature_A)            
-            # pts = rays_pts_emb + self.pos_coeffs(dyn_feature)
+            shs = shs_emb + self.shs_deform(dyn_feature).view(-1, 16, 3)
+            pts = rays_pts_emb + self.pos_coeffs(dyn_feature)
             rotations = rotations_emb + self.rotations_deform(dyn_feature)
             
             opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
@@ -179,7 +168,13 @@ class Deformation(nn.Module):
         # shs = xyz_to_rgb(xyz)
         shs = shs_emb + 0.
         # shs[target_mask] += self.rgb_deform2(torch.cat([self.rgb_deform(dyn_feature), cos_theta], dim=-1)) #self.rgb_decoder(dyn_feature).squeeze(-1) 
-        shs[target_mask, 1:] = shs_emb[target_mask, 1:] + self.shs_deform(dyn_feature).view(-1, 15, 3)
+        shs[target_mask] = shs_emb[target_mask] + self.shs_deform(dyn_feature).view(-1, 16, 3)
+         
+        
+        # Position
+        pts = rays_pts_emb + 0. #.clone()        
+        pts[target_mask] += self.pos_coeffs(dyn_feature)
+        pts[~target_mask] += self.background_pos_coeffs(background_feature)
         
         # Opacity
         opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
@@ -190,23 +185,7 @@ class Deformation(nn.Module):
         feat_exp = torch.exp(-w * (t-mu)**2)
         opacity = opacity.clone()
         opacity[target_mask] = feat_exp # h_emb[target_mask] * feat_exp
-        
-        # Position
-        # We want to interpollate the two positions A and B from our feature space
-        A = rays_pts_emb[target_mask] + self.pos_coeffs(disp_feature_A)
-        B = rays_pts_emb[target_mask] + self.pos_coeffs(disp_feature_B)
-        res = (2.* self.displacement_grid.grid_config['resolution'][1])
-        interval = 1. /res
-        t_index = torch.floor(t*res).float()
-        t_value = t_index*interval
-        t_delta = t-t_value
-        pts = rays_pts_emb + 0.
-        pts[target_mask] = (1.-t_delta)*A + (t_delta)*B
-
-        # Non-linear and uninterpretable
-        pts[~target_mask] += self.background_pos_coeffs(background_feature)
-        
-        
+ 
         # scales = scale_emb + 0.
         # scales[target_mask] += self.scale_deform(dyn_feature)
         if False:

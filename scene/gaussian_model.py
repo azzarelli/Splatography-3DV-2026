@@ -75,6 +75,7 @@ class GaussianModel:
         self.target_mask = None
         self.target_neighbours = None
         
+        
         self.setup_functions()
 
     def capture(self):

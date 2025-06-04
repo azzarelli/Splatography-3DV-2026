@@ -395,7 +395,7 @@ class GUI(GUIBase):
         self.gaussians.update_learning_rate(self.iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if self.iteration % 100 == 0:
+        if self.iteration % 500 == 0:
             self.gaussians.oneupSHdegree()
         
         # if self.stage == 'fine' and self.iteration % 1000 == 0 and self.iteration > 1:
@@ -766,7 +766,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", type=int, default=4000)
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[8000, 9999,15999, 20000, 30_000, 45000, 60000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[8000, 15999, 20000, 30_000, 45000, 60000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--expname", type=str, default = "")

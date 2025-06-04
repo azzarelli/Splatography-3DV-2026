@@ -253,7 +253,7 @@ class CondenseData(Dataset):
             list_dir = sorted(os.listdir(fp), key=lambda x: int(x.split('.')[0]))
             time_max = len(list_dir)
             cnt = 0
-            for img_fp in list_dir:
+            for idx, img_fp in enumerate(list_dir):
                 img_fp_ = os.path.join(fp, img_fp)
                 image_paths.append(img_fp_)
                 image_poses.append((meta['R'], meta['T']))

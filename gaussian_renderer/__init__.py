@@ -211,7 +211,6 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         scales = scales[mask]
         opacity = opacity[mask]
         colors = colors[mask]
-        
 
         rendered_image, alpha, _ = rasterization(
                         means3D, rotation, scales, opacity.squeeze(-1), colors,
@@ -257,9 +256,7 @@ def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, sc
         scales = scales[mask]
         opacity = opacity[mask]
         colors = colors[mask]
-        # print(colors.shape)
-        # colors[:, 1:] *= 0.
-        # exit()
+
         rendered_image, alpha, _ = rasterization(
                         means3D, rotation, scales, opacity.squeeze(-1), colors,
 
@@ -649,7 +646,7 @@ def render_batch(
             target_mask=pc.target_mask,
         )
         
-        means_collection.append(means3D_final.unsqueeze(1))
+        means_collection.append(torch.norm(means3D_final[row] - means3D_final[col], dim=-1).unsqueeze(-1))
         
         opacity_final = pc.get_fine_opacity_with_3D_filter(opacity_final)        
         rotations_final = pc.rotation_activation(rotations_final)
@@ -799,10 +796,10 @@ def render_batch(
         # visibility_filter_list.append((meta['radii'] > 0).unsqueeze(0))
         # viewspace_point_tensor_list.append(screenspace_points)
     
-    if stage == 'fine':
-        # distance to NN at various timesteps
-        distances = torch.cat(means_collection, dim=1) # N, batch, 3
-        mean_distance = distances.mean(-1).unsqueeze(-1)
-        depth_loss = (distances - mean_distance).pow(2).mean()
+    # if stage == 'fine':
+    #     # distance to NN at various timesteps
+    #     # distances = torch.cat(means_collection, dim=-1) # N, batch
+    #     # mean_distance = distances.mean(-1).unsqueeze(-1)
+    #     depth_loss = 10.* (means_collection[0] - means_collection[1]).abs().mean()
         
     return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss, covloss, (None, None))
