@@ -899,7 +899,7 @@ class GaussianModel:
             if index in [0,1,3]: # space only
                 for grid in grids:
                     tvtotal += compute_plane_smoothness(grid)
-            elif index in [2,4,5]:
+            elif index in [2, 4, 5, 6, 7, 8]:
                 for grid in grids: # space time
                     tstotal += compute_plane_smoothness(grid)
                     

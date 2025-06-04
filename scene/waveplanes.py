@@ -56,6 +56,7 @@ def interpolate_features_MUL(data, M, kplanes):
     # time m feature
     space = 1.
     spacetime = 1.
+    coltime = 1.
     
 
     # q,r are the coordinate combinations needed to retrieve pts
@@ -72,7 +73,15 @@ def interpolate_features_MUL(data, M, kplanes):
         elif i in [2, 4, 5]:
             spacetime = spacetime * feature
 
-    return space, spacetime
+    coords = [[3,0], [3,1], [3,2]]
+    for i in range(len(coords)):
+        q,r = coords[i]
+        feature = kplanes[6+i](data[..., (q, r)])
+        feature = feature.view(-1, M, feature.shape[-1]).mean(dim=1)
+
+        coltime = coltime * feature
+
+    return space, spacetime, coltime
    
 
 def interpolate_features_theta(pts, angle, kplanes):
@@ -189,10 +198,10 @@ class WavePlaneField(nn.Module):
 
             self.grids.append(gridset)
 
-        for i in range(3):
+        for i in range(3): # for the color
             what = 'spacetime'
             res = [self.grid_config['resolution'][0],
-                360]
+                75]
             
             gridset = GridSet(
                 what=what,
@@ -252,17 +261,17 @@ class WavePlaneField(nn.Module):
         """
         ms_planes = []
         for i in range(len(self.grids)):
-            if i < 6:
-                gridset = self.grids[i]
+            # if i < 6:
+            gridset = self.grids[i]
 
-                ms_feature_planes = gridset.signal
+            ms_feature_planes = gridset.signal
 
-                # Initialise empty ms_planes
-                if ms_planes == []:
-                    ms_planes = [[] for j in range(len(ms_feature_planes))]
+            # Initialise empty ms_planes
+            if ms_planes == []:
+                ms_planes = [[] for j in range(len(ms_feature_planes))]
 
-                for j, feature_plane in enumerate(ms_feature_planes):
-                    ms_planes[j].append(feature_plane)
+            for j, feature_plane in enumerate(ms_feature_planes):
+                ms_planes[j].append(feature_plane)
 
         return ms_planes
 
