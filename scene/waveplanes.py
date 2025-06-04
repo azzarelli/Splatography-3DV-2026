@@ -145,7 +145,7 @@ class WavePlaneField(nn.Module):
     def __init__(
             self,
             bounds,
-            planeconfig,
+            planeconfig, 
             rotate=False
     ):
         super().__init__()

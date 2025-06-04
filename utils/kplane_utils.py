@@ -8,7 +8,7 @@ from submodules.pytorch_wavelets_.dwt.transform2d import DWTForward,DWTInverse
 def normalize_aabb(pts, aabb):
     return (pts - aabb[0]) * (2.0 / (aabb[1] - aabb[0])) - 1.0
 
-def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners: bool = True) -> torch.Tensor:
+def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, sample_method:str='bilinear', align_corners: bool = True) -> torch.Tensor:
     grid_dim = coords.shape[-1]
 
     if grid.dim() == grid_dim + 1:
@@ -33,7 +33,7 @@ def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners:
         grid,  # [B, feature_dim, reso, ...]
         coords,  # [B, 1, ..., n, grid_dim]
         align_corners=align_corners,
-        mode='bilinear', padding_mode='border')
+        mode=sample_method, padding_mode='border')
     interp = interp.view(B, feature_dim, n).transpose(-1, -2)  # [B, n, feature_dim]
     interp = interp.squeeze()  # [B?, n, feature_dim?]
     return interp
@@ -77,6 +77,7 @@ class GridSet(nn.Module):
             is_proposal: bool = False,
             J: int = 3,
             cachesig: bool = True,
+            sample_method:str = 'bilinear'
     ):
         super().__init__()
 
@@ -95,7 +96,7 @@ class GridSet(nn.Module):
         self.mode = config['wave_mode']
         self.J = J
         self.current_J = J
-        
+        self.sample_method = sample_method
 
         # Initialise a signal to DWT into our initial Wave coefficients
         dwt = DWTForward(J=J, wave=config['wave'], mode=config['wave_mode']).cuda()
@@ -178,7 +179,7 @@ class GridSet(nn.Module):
 
         if self.what == 'spacetime':
             return fine + 1.
-        return fine
+        return fine 
 
     def forward(self, pts):
         """Given a set of points sample the dwt transformed Kplanes and return features
@@ -192,7 +193,7 @@ class GridSet(nn.Module):
         
         # Sample features
         feature = (
-            grid_sample_wrapper(plane, pts)
+            grid_sample_wrapper(plane, pts, sample_method=self.sample_method)
             .view(-1, plane.shape[1])
         )        
 
