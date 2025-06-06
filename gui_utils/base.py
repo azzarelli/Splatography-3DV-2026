@@ -104,7 +104,10 @@ class GUIBase:
                             self.train_background_step()
                             self.train_foreground_step()
                         else:
+                            # if self.iteration < (self.final_iter //2):
+                            #     self.train_foreground_fine_step()
                             self.train_step()
+                            self.train_depth_step()
                         self.iteration += 1
 
 

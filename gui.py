@@ -24,7 +24,7 @@ from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss, l1_loss_intense
 from pytorch_msssim import ms_ssim
 import cv2
 
-from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_target
+from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_target, render_depth_batch
 import json
 import open3d as o3d
 # from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
@@ -348,7 +348,7 @@ class GUI(GUIBase):
       
         
         viewpoint_cams = self.get_batch_views
-
+        
         L1 = torch.tensor(0.).cuda()
         L1 = render_coarse_batch_target(
             viewpoint_cams, 
@@ -381,6 +381,43 @@ class GUI(GUIBase):
         self.gaussians.optimizer.zero_grad(set_to_none = True)
         self.iter_end.record()
 
+    def train_foreground_fine_step(self):
+        """Train canon foreground GS using the t=0 (as was initialized)
+        """
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        self.iter_start.record()
+        if self.iteration < self.opt.iterations:
+            self.gaussians.optimizer.zero_grad(set_to_none=True)
+        
+        try:
+            viewpoint_cams = next(self.coarse_loader)
+        except StopIteration:
+            viewpoint_stack_loader = DataLoader(self.coarse_viewpoint_stack, batch_size=1, shuffle=self.random_loader,
+                                                num_workers=8, collate_fn=list)
+            self.coarse_loader = iter(viewpoint_stack_loader)
+            viewpoint_cams = next(self.coarse_loader)
+            
+        L1 = torch.tensor(0.).cuda()
+        L1 = render_coarse_batch_target(
+            viewpoint_cams, 
+            self.gaussians, 
+            self.pipe,
+            self.background, 
+            stage=self.stage,
+            iteration=self.iteration
+        )
+        
+        loss = L1
+
+        with torch.no_grad():
+            if torch.isnan(loss).any():
+                print("loss is nan, end training, reexecv program now.")
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+        loss.backward()
+        self.gaussians.optimizer.step()
+        self.gaussians.optimizer.zero_grad(set_to_none = True)
+        self.iter_end.record()
             
     def train_step(self):
 
@@ -481,7 +518,7 @@ class GUI(GUIBase):
                     dpg.set_value("_log_opacs", f"h/w: {hopacloss}  |  {wopacloss} ")
                     dpg.set_value("_log_depth", f"PhysG: {pg_loss} ")
                     dpg.set_value("_log_dynscales", f"Norms : {normloss} ")
-                    dpg.set_value("_log_knn", f"depth: {depthloss} | cov {covloss} ")
+                    # dpg.set_value("_log_knn", f"depth: {depthloss} | cov {covloss} ")
                     if (self.iteration % 2) == 0:
                         dpg.set_value("_log_points", f"Scene Pts: {(~self.gaussians.target_mask).sum()} | Target Pts: {(self.gaussians.target_mask).sum()} ")
                     
@@ -572,6 +609,50 @@ class GUI(GUIBase):
             #     self.gaussians.update_target_mask(cam_list)
             #     self.final_iter += 1000
 
+    
+    def train_depth_step(self):
+
+        # Start recording step duration
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        self.iter_start.record()
+        L1 = torch.tensor(0.).cuda()
+
+        if self.iteration < self.opt.iterations:
+            self.gaussians.optimizer.zero_grad(set_to_none=True)
+
+        viewpoint_cams = self.get_batch_views
+        zero_cam_idxs = self.scene.train_camera.zero_idxs
+        canon_cams = []
+        view_cams = []
+        for cam in viewpoint_cams:
+            # we  need the camera index to sample the right image from the coarse_loader
+            if cam.uid % 300 != 0:
+                idx = zero_cam_idxs.index(cam.uid - (cam.uid % 300))
+                canon_cams.append(self.coarse_viewpoint_stack[idx])
+                view_cams.append(cam)
+        loss = render_depth_batch(
+            view_cams, canon_cams,
+            self.gaussians
+        )
+      
+        with torch.no_grad():
+            if self.gui:
+                dpg.set_value("_log_knn", f"depth: {loss.item()} | cov {0.} ")
+
+                    
+            # Error if loss becomes nan
+            if torch.isnan(loss).any():
+                print("loss is nan for train_depth_step, end training, reexecv program now.")
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+                
+        # Backpass
+        loss.backward()
+        self.gaussians.optimizer.step()
+        self.gaussians.optimizer.zero_grad(set_to_none = True)
+        self.iter_end.record()
+        
+        
     @torch.no_grad()
     def test_step(self):
         print('testing')

@@ -138,14 +138,12 @@ class Deformation(nn.Module):
 
     def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):
         # Features
-        covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
-        dyn_feature, color_feature, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
         
         if target_mask is None: # Sample features at the 
-            shs = shs_emb + self.shs_deform(color_feature).view(-1, 16, 3)
+            shs = shs_emb # + self.shs_deform(color_feature).view(-1, 16, 3)
             
-            pts = rays_pts_emb + self.pos_coeffs(dyn_feature)
-            rotations = rotations_emb + self.rotations_deform(dyn_feature)
+            pts = rays_pts_emb # + self.pos_coeffs(dyn_feature)
+            rotations = rotations_emb # + self.rotations_deform(dyn_feature)
             
             opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
             w = (h_emb[:,1]**2).unsqueeze(-1)
@@ -155,6 +153,9 @@ class Deformation(nn.Module):
             opacity = feat_exp # h_emb[target_mask] * feat_exp
             return pts, rotations, opacity, shs, None
 
+        covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
+        dyn_feature, color_feature, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
+        
         # Rotation
         rotations = rotations_emb + 0.
         rotations[target_mask] += self.rotations_deform(dyn_feature)

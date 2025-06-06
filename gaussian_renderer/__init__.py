@@ -803,3 +803,104 @@ def render_batch(
     #     depth_loss = 10.* (means_collection[0] - means_collection[1]).abs().mean()
         
     return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss, covloss, (None, None))
+
+
+def render_depth_batch(
+    viewpoint_cams, canon_cams,
+    pc: GaussianModel
+    ):
+    """
+    Render the scene.
+    """
+    means3D = pc.get_xyz.detach()
+    scales = pc.get_scaling_with_3D_filter.detach()
+    rotations = pc._rotation.detach()
+    colors = pc.get_features.detach()
+    opacity = pc.get_opacity.detach()
+    
+    L1 = 0.
+
+    time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
+    for viewpoint_camera, canon_camera in zip(viewpoint_cams, canon_cams):
+        time = time*0. +viewpoint_camera.time
+        
+        # Render canon depth
+        with torch.no_grad():
+            distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
+            mask = distances > 0.3
+
+            means3D_final = means3D[mask]
+            rotations_final = rotations[mask]
+            scales_final = scales[mask]
+            opacity_final = pc.get_coarse_opacity_with_3D_filter[mask].detach()
+            colors_final = colors[mask]
+            
+            D, _, _ = rasterization(
+                means3D_final, rotations_final, scales_final, 
+                opacity_final.squeeze(-1),colors_final,
+                viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+                viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+                viewpoint_camera.image_width, 
+                viewpoint_camera.image_height,
+                
+                render_mode='D',
+                rasterize_mode='antialiased',
+                eps2d=0.1,
+                sh_degree=pc.active_sh_degree
+            )
+            D = D.squeeze(0).permute(2,0,1)
+
+        # Do deformation
+        means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
+            point=means3D, 
+            rotations=rotations,
+            scales = scales,
+            times_sel=time, 
+            h_emb=opacity,
+            shs=colors,
+            view_dir=viewpoint_camera.direction_normal(),
+            target_mask=pc.target_mask,
+        )
+        opacity_final = pc.get_fine_opacity_with_3D_filter(opacity_final)        
+        rotations_final = pc.rotation_activation(rotations_final)
+        
+        # Filter near-camera 3D viewpointss
+        distances = torch.norm(means3D_final - viewpoint_camera.camera_center.cuda(), dim=1)
+        mask = distances > 0.3
+        means3D_final = means3D_final[mask]
+        rotations_final = rotations_final[mask]
+        scales_final = scales[mask]
+        opacity_final = opacity_final[mask]
+        colors_final = colors_final[mask]
+
+        # Set up rasterization configuration
+        D_t, _, _ = rasterization(
+            means3D_final, rotations_final.detach(), scales_final.detach(), 
+            opacity_final.squeeze(-1).detach(),colors_final.detach(),
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1,
+            sh_degree=pc.active_sh_degree
+        )
+        
+        
+        D_t = D_t.squeeze(0).permute(2,0,1)
+        
+        Q = (D-D_t).abs()
+
+        Q = (Q - Q.min())/ (Q.max() - Q.min())
+        Q_inv = 1. - Q
+        with torch.no_grad():
+            I_t = viewpoint_camera.original_image.cuda()
+            I = canon_camera.original_image.cuda()
+            P = (I-I_t).abs()
+            P = (P - P.min())/(P.max() - P.min())
+        
+        L1 += (P*Q_inv).mean()
+            
+    
+    return L1
