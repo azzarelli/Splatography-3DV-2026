@@ -74,10 +74,6 @@ class Deformation(nn.Module):
         self.covariance_activation = build_covariance_from_scaling_rotation
 
         
-    @property
-    def get_aabb(self):
-        return self.grid.get_aabb
-    
     def set_aabb(self, xyz_max, xyz_min, grid_type='target'):
         if grid_type=='target':
             self.grid.set_aabb(xyz_max, xyz_min)
@@ -92,24 +88,14 @@ class Deformation(nn.Module):
         
         self.spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
         self.background_spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
-        self.color_enc = nn.Sequential(nn.Linear(insize,net_size))
-
+        
         self.background_pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+
         self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
-        self.rgb_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
-        self.rgb_deform2 = nn.Sequential(nn.ReLU(),nn.Linear(4, net_size),nn.ReLU(),nn.Linear(net_size, 3))
-        self.scale_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 3))
-
+        
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
     
-    
-        # intial rgb, temporal rgb, rotation
-        self.rgb_decoder = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
-
-    def update_wavelevel(self):
-        self.grid.update_J()
-
     def query_spacetime(self, rays_pts_emb, time, covariances, mask=None):
         
         if mask is not None:
@@ -121,20 +107,9 @@ class Deformation(nn.Module):
             space, spacetime, coltime = self.grid(rays_pts_emb[:,:3], time, covariances)
             st_b = None
 
-        st = self.spacetime_enc(space * spacetime)
+        st = self.spacetime_enc(space * spacetime) # TODO: Different encoders for color and space time? Its only one layer though
         ct = self.spacetime_enc(space * coltime)
         return st, ct, st_b # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
-
-    def query_spacetheta(self, rays_pts_emb, angle, input_feature, mask=None):
-        
-        if mask is not None:
-            angle_feature = self.grid.theta(rays_pts_emb[mask,:3], angle)
-        else:
-            angle_feature = self.grid.theta(rays_pts_emb[:,:3], angle)
-
-        sttheta = self.color_enc(input_feature*angle_feature)
-        return sttheta
-    
 
     def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):
         # Features
@@ -178,90 +153,36 @@ class Deformation(nn.Module):
         opacity = opacity.clone()
         opacity[target_mask] = feat_exp # h_emb[target_mask] * feat_exp
  
-        # scales = scale_emb + 0.
-        # scales[target_mask] += self.scale_deform(dyn_feature)
-        if False:
-            w_np = w.cpu().numpy().flatten()
-            h_np = h.cpu().numpy().flatten()
-            mu_np = mu.cpu().numpy().flatten()
-            opacity_np = opacity.cpu().numpy().flatten()
-
-            # pass
-            import matplotlib.pyplot as plt
-
-            fig, axes = plt.subplots(2, 2, figsize=(12, 8))  # 2x2 grid of subplots
-
-            # Plot each histogram in its own axis
-            axes[0, 0].hist(h_np, bins=30, color='blue', edgecolor='black')
-            axes[0, 0].set_title('Histogram of h')
-
-            axes[0, 1].hist(w_np, bins=100, color='green', edgecolor='black')
-            axes[0, 1].set_title('Histogram of w')
-
-            axes[1, 0].hist(mu_np, bins=30, color='red', edgecolor='black')
-            axes[1, 0].set_title('Histogram of mu')
-
-            axes[1, 1].hist(opacity_np, bins=30, color='purple', edgecolor='black')
-            axes[1, 1].set_title('Histogram of opacity')
-
-            # Adjust layout
-            plt.tight_layout()
-            plt.show()
-            exit()
-
         return pts, rotations, opacity, shs, None
     
     def get_mlp_parameters(self):
         parameter_list = []
         for name, param in self.named_parameters():
-            if  "grid" not in name:
+            if  "grid" not in name and 'background' not in name:
                 parameter_list.append(param)
         return parameter_list
+    
+    def get_background_mlp_parameters(self):
+        parameter_list = []
+        for name, param in self.named_parameters():
+            if  "grid" not in name and 'background' in name:
+                parameter_list.append(param)
+        return parameter_list
+    
     def get_grid_parameters(self):
         parameter_list = []
         for name, param in self.named_parameters():
-            if  "grid" in name:
+            if  "grid" in name and 'background' not in name:
                 parameter_list.append(param)
         return parameter_list
-
-SQRT_PI = torch.sqrt(torch.tensor(torch.pi))
-def gaussian_integral(w):
-    """Returns high weight (0 to 1) for solid materials
     
-        Notes on optimization:
-            The initial integral for a gaussian from 0 to 1 is (SQRT_PI / (2 * w)) * (erf_term_1 - erf_term_2), 
-            with the center at 0. Instead, to be more precise/sensitive and faster we evaluate the integral between
-            -1 and 1 with the gaussian centered at mu=0, as SQRT_PI*erf1/w. This reduces the complexity of
-            the integral
-    """
-    SQRT_PI = torch.sqrt(torch.tensor(torch.pi, dtype=w.dtype, device=w.device))
-    EPS = 1e-8  # for numerical stability
-    return (SQRT_PI / (w + EPS)) * torch.erf(w)
-
-import torch.nn.functional as F
-def quaternion_rotate(q, v):
-    q_vec = q[:, :3]
-    q_w = q[:, 3].unsqueeze(1)
-    t = 2 * torch.cross(q_vec, v, dim=1)
-    return v + q_w * t + torch.cross(q_vec, t, dim=1)
-
-def rotated_softmin_axis_direction(r, s, temperature=10.0):
-    # s: (N, 3), we want the direction of the smallest abs scale
-    abs_s = torch.abs(s)
-
-    # Step 1: Compute softmin weights (lower abs(s) => higher weight)
-    weights = F.softmax(-abs_s * temperature, dim=1)  # (N, 3)
-
-    # Step 2: Basis axes: x, y, z
-    basis = torch.eye(3, device=s.device).unsqueeze(0)  # (1, 3, 3)
-
-    # Step 3: Weighted sum of basis vectors
-    soft_axis = torch.bmm(weights.unsqueeze(1), basis.repeat(s.size(0), 1, 1)).squeeze(1)  # (N, 3)
-
-    # Step 4: Rotate the direction
-    rotated = quaternion_rotate(r, soft_axis)  # (N, 3)
-
-    return rotated        
+    def get_background_grid_parameters(self):
+        parameter_list = []
+        for name, param in self.named_parameters():
+            if  "grid" in name and 'background' in name:
+                parameter_list.append(param)
+        return parameter_list
+    
 
 class deform_network(nn.Module):
     def __init__(self, args) :
@@ -284,21 +205,18 @@ class deform_network(nn.Module):
             h_emb=h_emb, 
             target_mask=target_mask
         )
-        
-    
-    @property
-    def get_aabb(self):
-        
-        return self.deformation_net.get_aabb
-
-    def update_wavelevel(self):
-        self.deformation_net.update_wavelevel()
 
     def get_mlp_parameters(self):
         return self.deformation_net.get_mlp_parameters() 
     
+    def get_background_mlp_parameters(self):
+        return self.deformation_net.get_background_mlp_parameters() 
+    
     def get_grid_parameters(self):
         return self.deformation_net.get_grid_parameters()
+    
+    def get_background_grid_parameters(self):
+        return self.deformation_net.get_background_grid_parameters()
     
     def get_dyn_coefs(self, xyz, scale):
         return self.deformation_net.get_dx_coeffs(xyz, scale)
@@ -311,9 +229,3 @@ def initialize_weights(m):
             init.xavier_uniform_(m.weight,gain=1)
             # init.constant_(m.bias, 0)
             
-def poc_fre(input_data,poc_buf):
-    input_data_emb = (input_data.unsqueeze(-1) * poc_buf).flatten(-2)
-    input_data_sin = input_data_emb.sin()
-    input_data_cos = input_data_emb.cos()
-    input_data_emb = torch.cat([input_data, input_data_sin,input_data_cos], -1)
-    return input_data_emb

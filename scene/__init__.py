@@ -104,7 +104,7 @@ class Scene:
             zero_cams = [self.getTrainCameras()[idx] for idx in self.train_camera.zero_idxs]
             self.getTrainCameras().dataset.get_mask = False
             
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent, self.maxtime, zero_cams)
+            self.gaussians.create_from_pcd(scene_info.point_cloud, zero_cams)
 
         if not skip_coarse and load_iteration is None:
             with torch.no_grad():
