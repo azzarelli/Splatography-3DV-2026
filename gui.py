@@ -440,10 +440,14 @@ class GUI(GUIBase):
            
         viewpoint_cams = self.get_batch_views
         # print(self.iteration)
-        if self.iteration == 0: #or self.iteration == 4000:
+        if self.iteration == 6000 or self.iteration == 3000:
+            self.gaussians.dynamic_dupelication()
+            self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+        
+        if self.iteration == 1:
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-
+        
         L1 = torch.tensor(0.).cuda()
         
         radii_list, visibility_filter_list, viewspace_point_tensor_list, L1, extra_losses = render_batch(
@@ -554,44 +558,15 @@ class GUI(GUIBase):
 
             self.timer.start()
             
-            # Keep track of max radii in image-space for pruning
-            # self.gaussians.max_radii2D[visibility_filter] = torch.max(self.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            # self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
 
-            # Densification for scene
-            # densify_threshold = self.opt.densify_grad_threshold
-            # if  self.stage == 'fine' and \
-            #     self.iteration > self.opt.densify_from_iter and \
-            #     self.iteration < self.opt.densify_until_iter and \
-            #     self.iteration % self.opt.densification_interval == 0 and \
-            #     (self.gaussians.target_mask).sum() < 100000:
-            #         self.gaussians.densify(densify_threshold,self.scene.cameras_extent)
-            #         self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-            #         # self.gaussians.split_spikes()
-
-            # # Global pruning
-            # if  self.stage == 'fine' and \
-            #     self.iteration > self.opt.pruning_from_iter and \
-            #     self.iteration % self.opt.pruning_interval == 0 and \
-            #     (self.gaussians.target_mask).sum() > 100000:
-            #     size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-            #     self.gaussians.prune(self.hyperparams.opacity_lambda, self.scene.cameras_extent, size_threshold)
+            # if self.iteration % 500 == 0 and self.iteration < 6000:
+            #     self.gaussians.prune(self.get_zero_cams)
             #     self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-            if self.iteration % 500 == 0 and self.iteration < 6000:
-                self.gaussians.prune(self.get_zero_cams)
-                self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-                self.gaussians.update_neighbours(self.gaussians.get_xyz)
+            #     self.gaussians.update_neighbours(self.gaussians.get_xyz)
                 
             if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
                 self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
             
-            # if self.stage == 'coarse' and self.iteration == 300:
-            #     self.gaussians.densify_coarse(viewpoint_cams[-1],target_depth)
-            # if self.stage == 'coarse' and self.iteration % 1000:
-            #     self.gaussians.prune_coarse()
-            # if self.iteration == 1 and self.stage == 'fine':
-            #     self.gaussians.prune_target(self.get_zero_cams)
-
             if self.iteration % self.opt.opacity_reset_interval == 0:# and self.stage == 'fine':
                 self.gaussians.reset_opacity()
                 
@@ -631,6 +606,7 @@ class GUI(GUIBase):
                 idx = zero_cam_idxs.index(cam.uid - (cam.uid % 300))
                 canon_cams.append(self.coarse_viewpoint_stack[idx])
                 view_cams.append(cam)
+        
         loss = render_depth_batch(
             view_cams, canon_cams,
             self.gaussians
@@ -762,6 +738,27 @@ class GUI(GUIBase):
                 dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
                 dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
 
+    @torch.no_grad()
+    def render_video_step(self):
+
+        viewpoint_cams = self.scene.getVideoCameras() #.copy()
+
+        idx = 0
+        # Render and return preds
+        for viewpoint_cam in tqdm(viewpoint_cams, desc="Processing viewpoints"):
+            render_pkg = render(
+                viewpoint_cam, 
+                self.gaussians, 
+                self.pipe, 
+                self.background, 
+                stage='test-foreground'
+            )
+            image = render_pkg["render"]
+            save_video(image, idx, self.args.expname)
+            
+            idx += 1
+
+
 def setup_seed(seed):
      torch.manual_seed(seed)
      torch.cuda.manual_seed_all(seed)
@@ -801,6 +798,27 @@ def save_gt_pred_full(gt, pred, iteration, idx, name):
     cv2.imwrite(f'output/{name}/images/{idx}.png', pred_bgr)
 
     return pred_bgr
+
+def save_video(pred, idx, name):
+    path =  os.path.join('output',name, 'render')
+    if os.path.exists(path) == False:
+        os.makedirs(path)
+    
+    pred = (pred.permute(1, 2, 0)
+        # .contiguous()
+        .clamp(0, 1)
+        .contiguous()
+        .detach()
+        .cpu()
+        .numpy()
+    )*255
+
+    pred = pred.astype(np.uint8)
+
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+    dest = os.path.join(path, f'{int(idx):03d}.png')
+    cv2.imwrite(dest, pred_bgr)
 
 def save_gt_pred(gt, pred, iteration, idx, name):
     pred = (pred.permute(1, 2, 0)

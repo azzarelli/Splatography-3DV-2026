@@ -27,6 +27,8 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation
 from scene.deformation import deform_network
 from scene.regulation import compute_plane_smoothness,compute_plane_tv
 
+from gaussian_renderer import render_motion_point_mask
+
 from torch_cluster import knn_graph
 
 class GaussianModel:
@@ -71,7 +73,7 @@ class GaussianModel:
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
-        
+        self.spatial_lr_scale_background = 0
         self.target_mask = None
         self.target_neighbours = None
         
@@ -267,8 +269,9 @@ class GaussianModel:
         filter_3D = distance / focal_length * (0.2 ** 0.5)
         self.filter_3D = filter_3D[..., None]
         
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, time_line: int, cam_list=None):
+    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float,spatial_lr_scale_background : float, time_line: int, cam_list=None):
         self.spatial_lr_scale = spatial_lr_scale
+        self.spatial_lr_scale_background = spatial_lr_scale_background
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
         
@@ -747,6 +750,27 @@ class GaussianModel:
         self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
+
+    def dynamic_dupelication(self):
+        """Duplicate points with highly dynamic motion - maybe the top 10% of points with the largest motions?
+        """
+        
+        selected_pts_mask = render_motion_point_mask(self)
+        
+        new_xyz = self._xyz[selected_pts_mask] + torch.rand_like(self._xyz[selected_pts_mask])*0.005
+        new_features_dc = self._features_dc[selected_pts_mask]
+        new_features_rest = self._features_rest[selected_pts_mask]
+        new_scaling = self._scaling[selected_pts_mask]
+        new_rotation = self._rotation[selected_pts_mask]
+        new_opacities = self._opacity[selected_pts_mask]
+        # new_colors = self._colors[selected_pts_mask]
+        
+        # Update target mask
+        new_target_mask = self.target_mask[selected_pts_mask]
+        self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
+
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
+
 
     def densify_and_split(self, scene_extent, grads, grad_threshold):
         n_init_points = self.get_xyz.shape[0]

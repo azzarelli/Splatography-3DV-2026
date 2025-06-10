@@ -88,7 +88,8 @@ class Camera(nn.Module):
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", time = 0,
                  mask = None, depth:bool=False,
                  weights=None,
-                 cxfx=None
+                 cxfx=None,
+                 width=None, height=None
                  ):
         super(Camera, self).__init__()
 
@@ -115,13 +116,16 @@ class Camera(nn.Module):
                 image = image[:-1, :]
 
         self.original_image = image
-
-        try:
-            self.image_width = self.original_image.shape[2]
-            self.image_height = self.original_image.shape[1]
-        except:
-            self.image_width = self.original_image.shape[1]
-            self.image_height = self.original_image.shape[0]
+        if self.original_image is not None:
+            try:
+                self.image_width = self.original_image.shape[2]
+                self.image_height = self.original_image.shape[1]
+            except:
+                self.image_width = self.original_image.shape[1]
+                self.image_height = self.original_image.shape[0]
+        else:
+            self.image_height = height
+            self.image_width = width
 
         self.depth = depth
         self.mask = mask

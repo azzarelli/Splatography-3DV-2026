@@ -123,6 +123,10 @@ class GUIBase:
                     # self.test_step()
                     tested = False
 
+                # self.render_video_step()
+                # exit()
+                
+                
                 # if self.view_test == True:
                 #     self.train_depth()
                 # with torch.no_grad():

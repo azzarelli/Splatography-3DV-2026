@@ -14,7 +14,6 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 # from diff_gauss import GaussianRasterizationSettings, GaussianRasterizer
 import torch.nn.functional as F
-from scene.gaussian_model import GaussianModel
 # from gaussian_renderer.pytorch_render import GaussRenderer
 
 from gsplat.rendering import rasterization
@@ -124,7 +123,7 @@ def compute_alpha_interval(A, B, cov6A, cov6B, alpha_threshold=0.1):
     alpha = torch.exp(-0.5* λA) # * t_BA.pow(2))
     return alpha
 
-def render(viewpoint_camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
+def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
            stage="fine", view_args=None, G=None, kernel_size=0.1):
     """
     Render the scene.
@@ -473,7 +472,7 @@ def get_edges(mask):
 
 from utils.loss_utils import l1_loss, l1_loss_masked,local_triplet_ranking_loss
 def render_coarse_batch(
-    viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
+    viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
     stage="fine", iteration=0,kernel_size=0.1):
     """
     Render the scene.
@@ -535,7 +534,7 @@ def render_coarse_batch(
     
     return  L1
 
-def render_coarse_batch_target(viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
+def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
     stage="fine", iteration=0,kernel_size=0.1):
     """
     Render the scene.
@@ -604,7 +603,7 @@ def render_coarse_batch_target(viewpoint_cams, pc: GaussianModel, pipe, bg_color
 
 
 def render_batch(
-    viewpoint_cams, pc: GaussianModel, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
+    viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
     stage="fine", iteration=0,kernel_size=0.1):
     """
     Render the scene.
@@ -807,7 +806,7 @@ def render_batch(
 
 def render_depth_batch(
     viewpoint_cams, canon_cams,
-    pc: GaussianModel
+    pc
     ):
     """
     Render the scene.
@@ -887,9 +886,7 @@ def render_depth_batch(
             sh_degree=pc.active_sh_degree
         )
         
-        
         D_t = D_t.squeeze(0).permute(2,0,1)
-        
         Q = (D-D_t).abs()
 
         Q = (Q - Q.min())/ (Q.max() - Q.min())
@@ -904,3 +901,47 @@ def render_depth_batch(
             
     
     return L1
+
+
+
+def render_motion_point_mask(pc):
+    """
+    Render the scene.
+    """
+    means3D = pc.get_xyz.detach()
+    scales = pc.get_scaling_with_3D_filter.detach()
+    rotations = pc._rotation.detach()
+    colors = pc.get_features.detach()
+    opacity = pc.get_opacity.detach()
+    
+    L1 = 0.
+
+    time = torch.zeros_like(means3D[:, 0], device=means3D.device).unsqueeze(-1)
+    means3D_collection = []
+    for i in range(10):
+        time = time*0. + float(i)*0.1
+
+        means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
+            point=means3D, 
+            rotations=rotations,
+            scales = scales,
+            times_sel=time, 
+            h_emb=opacity,
+            shs=colors,
+            view_dir=None,
+            target_mask=pc.target_mask,
+        )
+        
+        means3D_collection.append(means3D_final[pc.target_mask].unsqueeze(0))
+    
+    means3D_collection = torch.cat(means3D_collection, dim=0) # K, N, 3, where K=10 for each time step
+    displacement = ((means3D_collection - means3D_collection.mean(dim=0))**2).sum(dim=2).sqrt()  # K, N, 3
+    motion_metric = displacement.mean(dim=0) # shape (N,)
+
+    threshold = torch.quantile(motion_metric, 0.9)
+
+    mask = (motion_metric >= threshold)
+    
+    final_mask = torch.zeros_like(pc.target_mask, device=means3D.device)
+    final_mask[pc.target_mask] = mask
+    return final_mask

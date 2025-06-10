@@ -82,7 +82,6 @@ class Scene:
 
         self.train_camera = FourDGSdataset(scene_info.train_cameras, args, dataset_type, 'train', maxframes=max_frames, num_cams=num_cams)
         self.test_camera = FourDGSdataset(scene_info.test_cameras, args, dataset_type, 'test', maxframes=max_frames, num_cams=num_cams)
-        # self.video_camera = FourDGSdataset(scene_info.video_cameras, args, dataset_type)
 
         if skip_coarse:
             print(f'Skipping coarse step with {skip_coarse}')
@@ -110,6 +109,10 @@ class Scene:
         if not skip_coarse and load_iteration is None:
             with torch.no_grad():
                 self.train_camera.update_target(self.gaussians._xyz[~self.gaussians.target_mask].mean(dim=0).cpu())
+        
+        from scene.dataset_readers import format_condense_infos
+        self.video_camera  = format_condense_infos(scene_info.train_cameras, "val", pos=self.gaussians.get_xyz[self.gaussians.target_mask].mean(1))
+
         
     def get_pseudo_view(self):
         """Generate a pseudo view with four known cameras 
