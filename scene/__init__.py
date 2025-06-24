@@ -39,7 +39,6 @@ class Scene:
                 self.loaded_iter = load_iteration
             print("Loading trained model at iteration {}".format(self.loaded_iter))
 
-        
         if os.path.exists(os.path.join(args.source_path, "rotation_correction.json")):
             scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.resolution)
             dataset_type="condense"
@@ -78,7 +77,6 @@ class Scene:
         self.num_cams = num_cams
         self.dataset_type = dataset_type
         self.cameras_extent = scene_info.nerf_normalization["radius"]
-
 
         self.train_camera = FourDGSdataset(scene_info.train_cameras, args, dataset_type, 'train', maxframes=max_frames, num_cams=num_cams)
         self.test_camera = FourDGSdataset(scene_info.test_cameras, args, dataset_type, 'test', maxframes=max_frames, num_cams=num_cams)

@@ -16,15 +16,20 @@ ModelHiddenParams = dict(
 
     net_width = 128,
     
-    plane_tv_weight = 0.0005,
+    plane_tv_weight = 0.0001,
     time_smoothness_weight = 0.0001,
     l1_time_planes =  0.0001,
+    opacity_lambda = 0.,
+    
     minview_weight=0.0001,
+    tvtotal1_weight=0.0, #0001,
+    spsmoothness_weight=0., #1,
+    minmotion_weight=0.0, #0001,
 )
 
 OptimizationParams = dict(
     dataloader=True,
-    iterations=16000,
+    iterations=8000,
     coarse_iterations=3000,
     batch_size=2, # Was 4
 

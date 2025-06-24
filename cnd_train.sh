@@ -5,7 +5,7 @@ EXP_NAME=$2
 
 
 if [ "$2" == "-1" ];then
-  echo "Input 1 is the expname; Input 2 is [coffee, spinach, cut, flame, salmon, sear]"
+  echo "Input 1 is the expname; Input 2 "
   exit 1
 fi
 

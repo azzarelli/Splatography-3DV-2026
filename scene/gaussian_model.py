@@ -729,16 +729,24 @@ class GaussianModel:
         tvtotal = 0
         l1total = 0
         tstotal = 0
+        col=0
+        
+        wavelets = self._deformation.deformation_net.grid.waveplanes_list()
         # model.grids is 6 x [1, rank * F_dim, reso, reso]
         for index, grids in enumerate(self._deformation.deformation_net.grid.grids_()):
             if index in [0,1,3]: # space only
                 for grid in grids:
                     tvtotal += compute_plane_smoothness(grid)
-            elif index in [2, 4, 5, 6, 7, 8]:
+            elif index in [2, 4, 5]:
                 for grid in grids: # space time
                     tstotal += compute_plane_smoothness(grid)
+                
+                for grid in wavelets[index]:
+                    l1total += torch.abs(grid).mean()
                     
-                    l1total += torch.abs(1. - grid).mean()
+            elif index in [6, 7, 8]:
+                for grid in wavelets[index]: # space time
+                    col += (grid ** 2).mean()
             # else:
             #     for grid in grids: # space time
             #         l1total += torch.abs(1. - grid).mean()
@@ -780,7 +788,7 @@ class GaussianModel:
         #             elif idx == 2:
         #                 minview += 0.3 * grid.abs().mean()
         
-        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total 
+        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + minview_weight*col
             # tvtotal1 * tvtotal1_weight + spsmoothness * spsmoothness_weight + minmotion * minmotion_weight + minview * minview_weight
 
     def compute_covariance_loss(self, xyz, rotation, scaling):
