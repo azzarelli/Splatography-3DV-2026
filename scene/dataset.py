@@ -27,9 +27,9 @@ class FourDGSdataset(Dataset):
         try:
             self.zero_idxs = dataset.mask_idxs
         except:
-            self.zero_idxs = [i*maxframes for i in range(num_cams)]
+            self.zero_idxs = [i*maxframes for i in range(num_cams)]    
             
-        if dataset_type == 'train':
+        if split == 'train':
             print(f'Zero Indexs are: {self.zero_idxs}')
             
         self.vert_poses = self.dataset.poses
@@ -92,7 +92,7 @@ class FourDGSdataset(Dataset):
             return rgb_cam#, depth_cam
         else:
             try:
-                image, w2c, time, mask, depth, weights = self.dataset[index]
+                image, w2c, time, mask, depth = self.dataset[index]
                 R, T = w2c
                 FovX = self.fovx
                 FovY = self.fovy
@@ -110,9 +110,8 @@ class FourDGSdataset(Dataset):
             return Camera(colmap_id=index, R=R, T=T, FoVx=FovX, FoVy=FovY, image=image, gt_alpha_mask=None,
                           image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time, 
                           mask=mask, 
-                          depth=depth,
-                          weights=weights
-                      )
+                          depth=depth
+                          )
 
     def __len__(self):
         

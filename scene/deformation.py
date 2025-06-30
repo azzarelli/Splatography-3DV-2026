@@ -101,7 +101,6 @@ class Deformation(nn.Module):
         if mask is not None:
             space, spacetime, coltime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances[mask])
             space_b, spacetime_b, _ = self.background_grid(rays_pts_emb[~mask,:3], time[~mask,:], covariances[~mask])
-            
             st_b = self.background_spacetime_enc(space_b * spacetime_b)
         else:
             space, spacetime, coltime = self.grid(rays_pts_emb[:,:3], time, covariances)

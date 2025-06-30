@@ -24,7 +24,7 @@ from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss, l1_loss_intense
 from pytorch_msssim import ms_ssim
 import cv2
 
-from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_target, render_depth_batch
+from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_vanilla,render_coarse_batch_target, render_depth_batch
 import json
 import open3d as o3d
 # from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
@@ -288,14 +288,20 @@ class GUI(GUIBase):
 
         
         L1 = torch.tensor(0.).cuda()
-        L1 = render_coarse_batch(
-            viewpoint_cams, 
-            self.gaussians, 
-            self.pipe,
-            self.background, 
-            stage=self.stage,
-            iteration=self.iteration
-        )
+        if self.scene.dataset_type == "condense":
+            L1 = render_coarse_batch(
+                viewpoint_cams, 
+                self.gaussians, 
+                self.pipe,
+                self.background, 
+                stage=self.stage,
+                iteration=self.iteration
+            )
+        elif self.scene.dataset_type == "dynerf":
+            L1 = render_coarse_batch_vanilla(
+                viewpoint_cams, 
+                self.gaussians, 
+            )
         
         
         hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
@@ -671,7 +677,7 @@ class GUI(GUIBase):
                 self.gaussians, 
                 self.pipe, 
                 self.background, 
-                stage='test-full'
+                stage='test-full' #foreground
             )
             image = render_pkg["render"]
 
@@ -696,11 +702,11 @@ class GUI(GUIBase):
                 self.background, 
                 stage='test-foreground'
             )
-            image = render_pkg["render"]
-            gt_image = gt_image*mask
-            image = image*mask
-            PSNR += psnr(image, gt_image)
-            SSIM += ssim(image.unsqueeze(0), gt_image)
+            # image = render_pkg["render"]
+            # gt_image = gt_image*mask
+            # image = image*mask
+            # PSNR += psnr(image, gt_image)
+            # SSIM += ssim(image.unsqueeze(0), gt_image)
             
             idx += 1
 
@@ -712,31 +718,31 @@ class GUI(GUIBase):
 
         # Loss
         # dumbPSNR = dumbPSNR.item()/len(viewpoint_cams)
-        fullPSNR = fullPSNR.item()/len(viewpoint_cams)
-        fullSSIM = fullSSIM/len(viewpoint_cams)
-        PSNR = PSNR.item()/len(viewpoint_cams)
-        SSIM = SSIM/len(viewpoint_cams)
+        # fullPSNR = fullPSNR.item()/len(viewpoint_cams)
+        # fullSSIM = fullSSIM/len(viewpoint_cams)
+        # PSNR = PSNR.item()/len(viewpoint_cams)
+        # SSIM = SSIM/len(viewpoint_cams)
 
-        save_file = os.path.join(self.results_dir, f'{self.iteration}.json')
-        with open(save_file, 'w') as f:
-            obj = {
-                'full-psnr': fullPSNR,
-                'full-ssim': fullSSIM.item(),
-                'psnr': PSNR,
-                'ssim': SSIM.item(),
-                'points':self.gaussians._xyz.shape[0]}
-            json.dump(obj, f)
+        # save_file = os.path.join(self.results_dir, f'{self.iteration}.json')
+        # with open(save_file, 'w') as f:
+        #     obj = {
+        #         'full-psnr': fullPSNR,
+        #         'full-ssim': fullSSIM.item(),
+        #         'psnr': PSNR,
+        #         'ssim': SSIM.item(),
+        #         'points':self.gaussians._xyz.shape[0]}
+        #     json.dump(obj, f)
 
 
-        # Only compute extra metrics at the end of training -> can be slow
-        if self.gui:
-            if self.iteration < (self.final_iter -1):
-                dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
-                dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
+        # # Only compute extra metrics at the end of training -> can be slow
+        # if self.gui:
+        #     if self.iteration < (self.final_iter -1):
+        #         dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
+        #         dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
 
-            else:
-                dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
-                dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
+        #     else:
+        #         dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
+        #         dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
 
     @torch.no_grad()
     def render_video_step(self):

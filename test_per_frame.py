@@ -11,8 +11,8 @@ import matplotlib.pyplot as plt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths
-result_dir = "/home/barry/Desktop/other_code/GS_Research/output/Condense/Bassist/Tune/images"
-gt_dir = "/media/barry/56EA40DEEA40BBCD/DATA/Condense/Bassist/test"
+result_dir = "/home/barry/Desktop/other_code/GS_Research/output/Condense/Curling/Test/images"
+gt_dir = "/media/barry/56EA40DEEA40BBCD/DATA/Condense/Piano/test"
 
 order = ["000809414712", "000875114712", "000906614712", "000950714712"]
 image_folder = "scene_masks"
@@ -33,7 +33,7 @@ lpips_alex = lpips.LPIPS(net='alex').to(device)
 
 # Frame-wise results dictionary
 cnt = 0
-per_frame_results = {i: {'full':{'mae':0.,'psnr': 0., 'ssim': 0., 'lpips_vgg': 0., 'lpips_alex': 0.},'mask':{'mae':0.,'psnr': 0.,'m_mae':0.,'m_psnr': 0., 'ssim': 0., 'lpips_vgg': 0., 'lpips_alex': 0.}} for i in range(300)}
+per_frame_results = {i: {'full':{'mae':0.,'psnr': 0., 'ssim': 0., 'lpips_vgg': 0., 'lpips_alex': 0.},'mask':{'mae':0.,'psnr': 0.,'m_mae':0.,'m_psnr': 0., 'ssim': 0., 'lpips_vgg': 0., 'lpips_alex': 0.}} for i in range(1200)}
 
 def preprocess(img):
     """Prepares an image for LPIPS (PyTorch tensor, GPU, scaled to [-1, 1])"""
@@ -77,7 +77,7 @@ with torch.no_grad():
         per_frame_results[cnt]['mask']['lpips_alex'] += lpips_alex(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
 
         # Frame counter (reset every 300 frames)
-        cnt = cnt + 1 if cnt < 299 else 0
+        cnt = cnt + 1 #if cnt < 299 else 0
 
 # Average results over the 4 sequences
 for key in per_frame_results.keys():
@@ -133,5 +133,5 @@ final_results = {
     "per-frame": per_frame_results
 }
 import json
-with open("./results.json", 'w') as json_file:
+with open("./pinaist_results.json", 'w') as json_file:
     json.dump(final_results, json_file,  indent=4)

@@ -87,7 +87,6 @@ class Camera(nn.Module):
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", time = 0,
                  mask = None, depth:bool=False,
-                 weights=None,
                  cxfx=None,
                  width=None, height=None
                  ):
@@ -129,7 +128,6 @@ class Camera(nn.Module):
 
         self.depth = depth
         self.mask = mask
-        self.weights = weights
         self.zfar = 100.0
         self.znear = 0.01
 

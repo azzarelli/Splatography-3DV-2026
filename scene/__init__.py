@@ -49,29 +49,7 @@ class Scene:
             dataset_type="dynerf"
             max_frames = 50
             num_cams = 4
-        # if os.path.exists(os.path.join(args.source_path, "rotation_correction.json")):
-        #     scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.eval)
-        #     dataset_type = "condense"
-        # elif os.path.exists(os.path.join(args.source_path, "sparse")):
-        #     scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, args.llffhold)
-        #     dataset_type="colmap"
-        # elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
-        #     print("Found transforms_train.json file, assuming Blender data set!")
-        #     scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval, args.extension)
-        #     dataset_type="blender"
-        # elif os.path.exists(os.path.join(args.source_path, "poses_bounds.npy")):
-            
-        # elif os.path.exists(os.path.join(args.source_path,"dataset.json")):
-        #     scene_info = sceneLoadTypeCallbacks["nerfies"](args.source_path, False, args.eval)
-        #     dataset_type="nerfies"
-        # elif os.path.exists(os.path.join(args.source_path,"train_meta.json")):
-        #     scene_info = sceneLoadTypeCallbacks["PanopticSports"](args.source_path)
-        #     dataset_type="PanopticSports"
-        # elif os.path.exists(os.path.join(args.source_path,"points3D_multipleview.ply")):
-        #     scene_info = sceneLoadTypeCallbacks["MultipleView"](args.source_path)
-        #     dataset_type="MultipleView"
-        # else:
-        #     assert False, "Could not recognize scene type!"
+
         self.maxtime = scene_info.maxtime
         self.maxframes = max_frames
         self.num_cams = num_cams
@@ -101,15 +79,16 @@ class Scene:
             self.getTrainCameras().dataset.get_mask = True
             zero_cams = [self.getTrainCameras()[idx] for idx in self.train_camera.zero_idxs]
             self.getTrainCameras().dataset.get_mask = False
-            
-            self.gaussians.create_from_pcd(scene_info.point_cloud, zero_cams)
+
+            self.gaussians.create_from_pcd(scene_info.point_cloud, zero_cams, dataset_type)
 
         if not skip_coarse and load_iteration is None:
             with torch.no_grad():
                 self.train_camera.update_target(self.gaussians._xyz[~self.gaussians.target_mask].mean(dim=0).cpu())
         
-        from scene.dataset_readers import format_condense_infos
-        self.video_camera  = format_condense_infos(scene_info.train_cameras, "val", pos=self.gaussians.get_xyz[self.gaussians.target_mask].mean(1))
+        if self.dataset_type == "condense":
+            from scene.dataset_readers import format_condense_infos
+            self.video_camera  = format_condense_infos(scene_info.train_cameras, "val", pos=self.gaussians.get_xyz[self.gaussians.target_mask].mean(1))
 
         
     def get_pseudo_view(self):

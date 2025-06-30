@@ -187,8 +187,6 @@ class Neural3D_NDC_Dataset(Dataset):
         self.load_meta()
         print(f"meta data loaded, total image:{len(self)}")
 
-        self.get_rgb_pixel_loss_map()
-
     def load_meta(self):
         """
         Load meta data from the dataset.
@@ -247,8 +245,7 @@ class Neural3D_NDC_Dataset(Dataset):
                 count = 0
                 video_images_path = video_path.split('.')[0]
                 if split == 'train':
-                    if 'flame_steak' in video_images_path: name__ = "images_2x"
-                    else: name__ = 'images'
+                    name__ = 'images'
                     image_path = os.path.join(video_images_path,name__)
                     depth_path = video_images_path[:-5]+'vda/'+video_images_path.split('/')[-1]+'/target_depth.png'
                     self.depth_paths.append(depth_path)
@@ -315,17 +312,7 @@ class Neural3D_NDC_Dataset(Dataset):
         # plt.show()
         # exit()
         return image_paths, image_poses, image_times, N_cams, N_time, general_poses
-    
-    def get_rgb_pixel_loss_map(self):
-        if self.split == 'train':
-            self.rgb_loss_weights = {}
-            for name in self.cam_names:
-                weight_fp = os.path.join(f'{self.root_dir}/heatmaps', f'{name}.png')
-                weights = Image.open(weight_fp)
-                weights = self.transform(weights).float()[0,:]#.cuda()
-                
-                # track the rgb loss
-                self.rgb_loss_weights[name] = weights
+
             
     def __len__(self):
         return len(self.image_paths)
@@ -341,9 +328,8 @@ class Neural3D_NDC_Dataset(Dataset):
         img = self.transform(img)
         extra = None
         depth = None
-        weights = None
         if self.get_mask:
-            if 'cam00' not in self.image_paths[index] and'0000.png' in self.image_paths[index]:
+            if 'cam00' not in self.image_paths[index] and '0000.png' in self.image_paths[index]:
                 camid = os.path.join(f'{self.root_dir}/static_masks',self.image_paths[index].split('/')[-3])
                 camid = f'{camid}.png'
                 extra = Image.open(camid)
@@ -354,10 +340,8 @@ class Neural3D_NDC_Dataset(Dataset):
         if self.split == 'train':
             depth = Image.open(self.image_paths[index].replace('images', 'depth'))
             depth = self.transform(depth).float()/255.
-        
-            weights = self.rgb_loss_weights[self.image_paths[index].split('/')[-3]]
 
-        return img, self.image_poses[index], self.image_times[index], extra, depth, weights
+        return img, self.image_poses[index], self.image_times[index], extra, depth
     
     
     def load_pose(self,index):

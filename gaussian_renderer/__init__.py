@@ -471,6 +471,59 @@ def get_edges(mask):
     return interior.squeeze(0).squeeze(0)
 
 from utils.loss_utils import l1_loss, l1_loss_masked,local_triplet_ranking_loss
+def render_coarse_batch_vanilla(
+    viewpoint_cams, pc):
+    """
+    Render the scene.
+    """
+    means3D = pc.get_xyz    
+    scales = pc.get_scaling_with_3D_filter
+    rotations = pc.rotation_activation(pc._rotation)
+    # colors = pc.get_color
+    colors = pc.get_features
+    opacity = pc.get_fine_opacity_with_3D_filter(pc.get_hopac)
+
+    means3D = means3D[~pc.target_mask]
+    rotations = rotations[~pc.target_mask]
+    scales = scales[~pc.target_mask]
+    colors = colors[~pc.target_mask]
+    opacity = opacity[~pc.target_mask]
+    
+    L1 = 0.
+    for idx, viewpoint_camera in enumerate(viewpoint_cams):
+        distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
+        mask = distances > 0.2
+        
+        means3D_final = means3D[mask]
+        rotations_final = rotations[mask]
+        scales_final = scales[mask]
+        colors_final = colors[mask]
+        opacity_final = opacity[mask]
+
+        rgb, _, _ = rasterization(
+            means3D_final, rotations_final, scales_final, 
+            opacity_final.squeeze(-1),colors_final,
+            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+            viewpoint_camera.image_width, 
+            viewpoint_camera.image_height,
+            
+            rasterize_mode='antialiased',
+            eps2d=0.1,
+            sh_degree=pc.active_sh_degree
+        )
+        rgb = rgb.squeeze(0).permute(2,0,1)
+        
+        # Train the backgroudn
+        gt_img = viewpoint_camera.original_image.cuda()
+        mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
+        inv_mask = 1. - mask.float() 
+        gt = gt_img * inv_mask
+
+        L1 += l1_loss(rgb, gt)
+    
+    return  L1
+
 def render_coarse_batch(
     viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
     stage="fine", iteration=0,kernel_size=0.1):

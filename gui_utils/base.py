@@ -124,9 +124,9 @@ class GUIBase:
                     tested = False
 
                 # self.render_video_step()
+                # self.test_step()
                 # exit()
-                
-                
+
                 # if self.view_test == True:
                 #     self.train_depth()
                 # with torch.no_grad():
@@ -188,7 +188,7 @@ class GUIBase:
                         "finecoarse_flag":self.finecoarse_flag,
                     }
             )
-            
+
             try:
                 buffer_image = buffer_image["render"]
             except:

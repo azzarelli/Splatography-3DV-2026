@@ -243,7 +243,7 @@ class GaussianModel:
         filter_3D = distance / focal_length * (0.2 ** 0.5)
         self.filter_3D = filter_3D[..., None]
         
-    def create_from_pcd(self, pcd : BasicPointCloud, cam_list=None):
+    def create_from_pcd(self, pcd : BasicPointCloud, cam_list=None, dataset_type="dynerf"):
         
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
@@ -253,7 +253,7 @@ class GaussianModel:
         # Remove unseen points
         # Remove points betwen 1 and  target view masks
 
-        if False: # This is for the dynerf dataset
+        if dataset_type == "dynerf": # This is for the dynerf dataset
             dyn_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
             scene_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
             
@@ -265,13 +265,12 @@ class GaussianModel:
             target_mask = dyn_mask > (len(cam_list)-1)
             dyn_mask = torch.logical_or(target_mask, dyn_mask ==0)
             viable  = torch.logical_and(dyn_mask, scene_mask)
-        else:
+            
+        elif dataset_type == "condense":
             target_mask = torch.zeros_like(fused_point_cloud[:,0],dtype=torch.long).cuda()
-
-            # For the condense dataset we use the bounding box
-            # Just for the basssist test scene
-            CORNER_2 = [[-1.38048, -0.1863],[-0.7779, 1.6705], [1.1469, 1.1790], [0.5832, -0.7245]]
-            polygon = np.array(CORNER_2)  # shape (4, 2)
+            # Pre-defined corners from the ViVo dataset (theres one for each scene butre-using the same one doesnt cause problems)
+            CORNERS = [[-1.38048, -0.1863],[-0.7779, 1.6705], [1.1469, 1.1790], [0.5832, -0.7245]]
+            polygon = np.array(CORNERS)  # shape (4, 2)
             from matplotlib.path import Path
             path = Path(polygon)
             points_xy = fused_point_cloud[:, 1:].cpu().numpy()  # (N, 2)
@@ -330,7 +329,8 @@ class GaussianModel:
         #     target_mask = torch.cat([target_mask, target_mask[target_mask]])
         
         self.target_mask = target_mask
-        
+        # print(self.target_mask.sum(), self.target_mask.shape)
+        # exit()
         # Prune background down to 100k
         xyz_min = fused_point_cloud[target_mask].min(0).values - .05
         xyz_max = fused_point_cloud[target_mask].max(0).values + .05
@@ -346,9 +346,13 @@ class GaussianModel:
 
         # fused_color[~target_mask] = fused_color[~target_mask] + torch.clamp(torch.rand(fused_color[~target_mask].shape[0], 3).cuda()*0.1, 0., 1.)
         
-        dist2 = torch.clamp_min(distCUDA2(fused_point_cloud[target_mask]), 0.00000000001)
-        dist2_else = torch.clamp_min(distCUDA2(fused_point_cloud[~target_mask]), 0.00000000001)
-        dist2 = torch.cat([dist2_else, dist2], dim=0)
+        if dataset_type == "condense":
+            dist2 = torch.clamp_min(distCUDA2(fused_point_cloud[target_mask]), 0.00000000001)
+            dist2_else = torch.clamp_min(distCUDA2(fused_point_cloud[~target_mask]), 0.00000000001)
+            dist2 = torch.cat([dist2_else, dist2], dim=0)
+        else:
+            dist2 = torch.clamp_min(distCUDA2(fused_point_cloud), 0.000000001)
+
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
 
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
