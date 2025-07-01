@@ -263,7 +263,7 @@ class GaussianModel:
             
             scene_mask = scene_mask > 0
             target_mask = dyn_mask > (len(cam_list)-1)
-            dyn_mask = torch.logical_or(target_mask, dyn_mask ==0)
+            dyn_mask = target_mask # torch.logical_or(target_mask, dyn_mask == 0)
             viable  = torch.logical_and(dyn_mask, scene_mask)
             
         elif dataset_type == "condense":
@@ -301,19 +301,6 @@ class GaussianModel:
         # Re-sample point cloud
         target = fused_point_cloud[viable]
         target_col = fused_color[viable]
-        
-        # for cam in cam_list:
-        #     target, target_col = get_in_view_dyn_mask(cam, target, target_col)
-            
-            # points_xy = target[:, 1:].cpu().numpy()  # (N, 2)
-            # # Create mask for points inside polygon
-            # viable = torch.from_numpy(path.contains_points(points_xy)).cuda()
-            
-            # target = target[viable]
-            # target_col = target_col[viable]
-        
-        # for cam in cam_list:
-        #     target, target_col = refilter_pcd(cam, target, target_col)
             
         fused_point_cloud = torch.cat([ds_pcd, target], dim=0)
         fused_color = torch.cat([ds_cols, target_col], dim=0)
@@ -321,13 +308,19 @@ class GaussianModel:
         target_mask[ds_cols.shape[0]:, :] = 1
         target_mask = (target_mask > 0.).squeeze(-1)
     
-        
-        # while target_mask.sum() < 40000:
-        #     target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
-        #     fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
-        #     fused_color = torch.cat([fused_color,fused_color[target_mask]], dim=0)
-        #     target_mask = torch.cat([target_mask, target_mask[target_mask]])
-        
+        if dataset_type == "dynerf":
+            while target_mask.sum() < 20000:
+                target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
+                fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
+                fused_color = torch.cat([fused_color,fused_color[target_mask]], dim=0)
+                target_mask = torch.cat([target_mask, target_mask[target_mask]])
+                
+                # while target_mask.sum() < 20000:
+                # target_point_noise =  fused_point_cloud[~target_mask] + torch.randn_like(fused_point_cloud[~target_mask]).cuda() * 0.05
+                # fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
+                # fused_color = torch.cat([fused_color,fused_color[~target_mask]], dim=0)
+                # target_mask = torch.cat([target_mask, target_mask[~target_mask]])
+            
         self.target_mask = target_mask
         # print(self.target_mask.sum(), self.target_mask.shape)
         # exit()
@@ -1113,10 +1106,19 @@ def get_in_view_dyn_mask(camera, xyz) -> torch.Tensor:
     
     mask = camera.mask.to(device)  # (H, W)
     sampled_mask = mask[py_valid, px_valid].bool()
+
+    # exit()
     # Get filtered 3D points and colors
     final_mask = torch.zeros(N, dtype=torch.uint8, device=device)
     final_mask[valid_idx[sampled_mask]] = 1  # Set mask to 1 where points are visible and inside the mask
-
+        
+    # fmask = torch.zeros_like(mask)
+    # fmask[py_valid, px_valid] = mask[py_valid, px_valid] 
+    # import matplotlib.pyplot as plt
+    # tensor_hw = fmask.cpu()  # If it's on GPU
+    # plt.imshow(tensor_hw, cmap='gray')
+    # plt.axis('off')
+    # plt.show()
     return final_mask 
     
     img = camera.original_image.permute(1,2,0).cuda()

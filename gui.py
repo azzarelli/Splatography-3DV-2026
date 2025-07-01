@@ -274,6 +274,7 @@ class GUI(GUIBase):
         self.gaussians.update_learning_rate(self.iteration)          
         
         if self.iteration == int(self.final_iter/2):
+            print("Dupelication")
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
@@ -288,7 +289,7 @@ class GUI(GUIBase):
 
         
         L1 = torch.tensor(0.).cuda()
-        if self.scene.dataset_type == "condense":
+        if self.scene.dataset_type == "condense" or  self.scene.dataset_type == "dynerf":
             L1 = render_coarse_batch(
                 viewpoint_cams, 
                 self.gaussians, 
@@ -297,12 +298,11 @@ class GUI(GUIBase):
                 stage=self.stage,
                 iteration=self.iteration
             )
-        elif self.scene.dataset_type == "dynerf":
+        else:
             L1 = render_coarse_batch_vanilla(
                 viewpoint_cams, 
                 self.gaussians, 
             )
-        
         
         hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
         wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
@@ -447,10 +447,12 @@ class GUI(GUIBase):
         viewpoint_cams = self.get_batch_views
         # print(self.iteration)
         if self.iteration == 6000 or self.iteration == 3000:
+            print("Dupelicating Dynamics")
             self.gaussians.dynamic_dupelication()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
         if self.iteration == 1:
+            print("Dupelicating Dynamics")
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
