@@ -103,7 +103,8 @@ class GUI(GUIBase):
                  debug_from,
                  expname,
                  skip_coarse,
-                 view_test
+                 view_test,
+                 use_gui:bool=False
                  ):
 
         if skip_coarse is not None:
@@ -125,7 +126,6 @@ class GUI(GUIBase):
         self.hyperparams = hyperparams
         self.args = args
         self.args.model_path = expname
-        use_gui = True
         self.saving_iterations = saving_iterations
         self.checkpoint = ckpt_start
         self.debug_from = debug_from

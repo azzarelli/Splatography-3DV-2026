@@ -136,26 +136,31 @@ class GUIBase:
                     self.viewer_step()
                     dpg.render_dearpygui_frame()
             dpg.destroy_context() 
-        else:
-            while self.stage != 'done':
-                if self.iteration % 100 == 0:
-                    print(f'[{self.stage}] {self.iteration}')
-                if self.iteration > self.final_iter and self.stage == 'coarse':
-                    self.stage = 'fine'
-                    self.init_taining()
-
-                if self.iteration <= self.final_iter:
+    
+    def train(self):
+        """Train without gui"""
+        while self.stage != 'done':
+            print(self.iteration)
+            if self.iteration % 100 == 0:
+                print(f'[{self.stage}] {self.iteration}')
+                
+            if self.iteration <= self.final_iter:
+                # Train the background seperately
+                if self.stage == 'coarse':
+                    self.train_background_step()
+                    self.train_foreground_step()
+                else:
                     self.train_step()
-                    self.iteration += 1
 
+                self.iteration += 1
 
-                if (self.iteration % self.args.test_iterations) == 0 or (self.iteration == 1 and self.stage == 'fine' and self.opt.coarse_iterations > 50):
-                    if self.stage == 'fine':
-                        self.test_step()
+            if (self.iteration % 1000) == 0:
+                if self.stage == 'fine':
+                    self.test_step()
 
-                if self.iteration > self.final_iter and self.stage == 'fine':
-                    self.stage = 'done'
-                    exit()
+            if self.iteration > self.final_iter and self.stage == 'fine':
+                self.stage = 'done'
+                exit()
                     
     @torch.no_grad()
     def viewer_step(self):
