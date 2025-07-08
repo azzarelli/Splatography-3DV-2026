@@ -200,8 +200,7 @@ class WavePlaneField(nn.Module):
 
         for i in range(3): # for the color
             what = 'spacetime'
-            res = [self.grid_config['resolution'][0],
-                75]
+            res = [self.grid_config['resolution'][0], self.grid_config['resolution'][1]]
             
             gridset = GridSet(
                 what=what,

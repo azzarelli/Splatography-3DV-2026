@@ -229,8 +229,8 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
             
-            # rasterize_mode='antialiased',
-            # eps2d=0.1,
+            rasterize_mode='antialiased',
+            eps2d=0.1,
             sh_degree=pc.active_sh_degree
         )
         rendered_image = rendered_image.squeeze(0).permute(2,0,1)
@@ -527,8 +527,8 @@ def render_coarse_batch(
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
             
-            # rasterize_mode='antialiased',
-            # eps2d=0.1,
+            rasterize_mode='antialiased',
+            eps2d=0.1,
             sh_degree=pc.active_sh_degree
         )
         rgb = rgb.squeeze(0).permute(2,0,1)
@@ -603,8 +603,8 @@ def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
             
-            # rasterize_mode='antialiased',
-            # eps2d=0.1,
+            rasterize_mode='antialiased',
+            eps2d=0.1,
             sh_degree=pc.active_sh_degree,
             backgrounds=background
         )
@@ -682,8 +682,8 @@ def render_batch(
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
             
-            # rasterize_mode='antialiased',
-            # eps2d=0.1,
+            rasterize_mode='antialiased',
+            eps2d=0.1,
             sh_degree=pc.active_sh_degree
         )
         rgb = rgb.squeeze(0).permute(2,0,1)
@@ -736,8 +736,8 @@ def render_depth_batch(
                 viewpoint_camera.image_height,
                 
                 render_mode='D',
-                # rasterize_mode='antialiased',
-                # eps2d=0.1,
+                rasterize_mode='antialiased',
+                eps2d=0.1,
                 sh_degree=pc.active_sh_degree
             )
             D = D.squeeze(0).permute(2,0,1)
@@ -774,8 +774,8 @@ def render_depth_batch(
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
             
-            # rasterize_mode='antialiased',
-            # eps2d=0.1,
+            rasterize_mode='antialiased',
+            eps2d=0.1,
             sh_degree=pc.active_sh_degree
         )
         

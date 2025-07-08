@@ -24,7 +24,7 @@ class GUIBase:
         self.W, self.H = self.scene.getTestCameras()[0].image_width, self.scene.getTestCameras()[0].image_height
         self.fov = (self.scene.getTestCameras()[0].FoVy, self.scene.getTestCameras()[0].FoVx)
 
-        if self.H > 800:
+        if self.H > 800 and self.scene != "dynerf":
             self.W = self.W//2
             self.H = self.H //2
         # Initialize the image buffer
