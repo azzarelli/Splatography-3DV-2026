@@ -307,7 +307,19 @@ class GUI(GUIBase):
         hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
         wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
 
-        loss = L1 + hopacloss + wopacloss
+        scale_exp = self.gaussians.get_scaling_with_3D_filter
+        # pg_loss = 0.001*(scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
+        max_gauss_ratio = 10
+        # scale_exp = self.gaussians.get_scaling
+        pg_loss = (
+            torch.maximum(
+                scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
+                torch.tensor(max_gauss_ratio),
+            )
+            - max_gauss_ratio
+        ).mean()
+        
+        loss = L1 + hopacloss + wopacloss + pg_loss
 
         # print( planeloss ,depthloss,hopacloss ,wopacloss ,normloss ,pg_loss,covloss)
         with torch.no_grad():
@@ -446,7 +458,8 @@ class GUI(GUIBase):
            
         viewpoint_cams = self.get_batch_views
         # print(self.iteration)
-        if self.iteration == 6000 or self.iteration == 3000:
+        
+        if (self.scene.dataset_type == "dynerf" and self.iteration in [3000,6000]) or (self.scene.dataset_type == "condense" and self.iteration in [3000, 6000]):
             print("Dupelicating Dynamics")
             self.gaussians.dynamic_dupelication()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
@@ -500,20 +513,6 @@ class GUI(GUIBase):
                 self.hyperparams.minview_weight, self.hyperparams.tvtotal1_weight, 
                 self.hyperparams.spsmoothness_weight, self.hyperparams.minmotion_weight
             )
-            # max_gauss_ratio = 10
-            # pg_loss = (
-            #     torch.maximum(
-            #         scale_exp.amax(dim=-1)  / scale_exp.amin(dim=-1),
-            #         torch.tensor(max_gauss_ratio),
-            #     )
-            #     - max_gauss_ratio
-            # ).mean()
-            # depth_loss = render_batch_displacement(
-            #     self.get_batch_views, 
-            #     self.gaussians, 
-            #     self.pipe,
-            #     self.background,
-            # )
 
         loss = L1 +  planeloss + \
             depthloss +\
@@ -697,13 +696,13 @@ class GUI(GUIBase):
             fullPSNR += psnr(image, gt_image)
             fullSSIM += ssim(image.unsqueeze(0), gt_image)
             
-            render_pkg = render(
-                viewpoint_cam, 
-                self.gaussians, 
-                self.pipe, 
-                self.background, 
-                stage='test-foreground'
-            )
+            # render_pkg = render(
+            #     viewpoint_cam, 
+            #     self.gaussians, 
+            #     self.pipe, 
+            #     self.background, 
+            #     stage='test-foreground'
+            # )
             # image = render_pkg["render"]
             # gt_image = gt_image*mask
             # image = image*mask
@@ -720,22 +719,23 @@ class GUI(GUIBase):
 
         # Loss
         # dumbPSNR = dumbPSNR.item()/len(viewpoint_cams)
-        # fullPSNR = fullPSNR.item()/len(viewpoint_cams)
-        # fullSSIM = fullSSIM/len(viewpoint_cams)
+        fullPSNR = fullPSNR.item()/len(viewpoint_cams)
+        fullSSIM = fullSSIM/len(viewpoint_cams)
         # PSNR = PSNR.item()/len(viewpoint_cams)
         # SSIM = SSIM/len(viewpoint_cams)
 
-        # save_file = os.path.join(self.results_dir, f'{self.iteration}.json')
-        # with open(save_file, 'w') as f:
-        #     obj = {
-        #         'full-psnr': fullPSNR,
-        #         'full-ssim': fullSSIM.item(),
-        #         'psnr': PSNR,
-        #         'ssim': SSIM.item(),
-        #         'points':self.gaussians._xyz.shape[0]}
-        #     json.dump(obj, f)
+        save_file = os.path.join(self.results_dir, f'{self.iteration}.json')
+        with open(save_file, 'w') as f:
+            obj = {
+                'full-psnr': fullPSNR,
+                'full-ssim': fullSSIM.item(),
+                # 'psnr': PSNR,
+                # 'ssim': SSIM.item(),
+                'points':self.gaussians._xyz.shape[0]}
+            json.dump(obj, f)
 
-
+        print(obj)
+        
         # # Only compute extra metrics at the end of training -> can be slow
         # if self.gui:
         #     if self.iteration < (self.final_iter -1):

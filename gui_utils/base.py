@@ -51,7 +51,7 @@ class GUIBase:
         self.N_pseudo = 3 
         if view_test:
             if self.scene.dataset_type == 'dynerf':
-                self.free_cams = [self.scene.getTestCameras()[0], self.scene.getTestCameras()[300]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+                self.free_cams = [self.scene.getTestCameras()[0], self.scene.getTestCameras()[49]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
             else:
                 self.free_cams = [self.scene.getTestCameras()[i*300] for i in range(4)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
 

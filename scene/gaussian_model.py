@@ -282,51 +282,69 @@ class GaussianModel:
         pcds = fused_point_cloud[~viable].cpu().numpy().astype(np.float64)
         cols = fused_color[~viable].cpu().numpy().astype(np.float64)
 
-        # Create Open3D point cloud
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pcds)
-        pcd.colors = o3d.utility.Vector3dVector(cols)
+        if dataset_type == "condense":
+            # Create Open3D point cloud
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(pcds)
+            pcd.colors = o3d.utility.Vector3dVector(cols)
 
-        # Voxel size controls the granularity
-        voxel_size = 0.05  # Adjust based on your data scale
-        downsampled_pcd = pcd.voxel_down_sample(voxel_size)
+            # Voxel size controls the granularity
+            voxel_size = 0.05  # Adjust based on your data scale
+            downsampled_pcd = pcd.voxel_down_sample(voxel_size)
 
-        # Convert back to PyTorch tensor
-        ds_pcd = torch.tensor(np.asarray(downsampled_pcd.points), dtype=fused_point_cloud.dtype).cuda()
-        ds_cols = torch.tensor(np.asarray(downsampled_pcd.colors), dtype=fused_color.dtype).cuda()
-        
-        # for cam in cam_list:
-        #     ds_pcd, ds_cols = populate_background(cam, ds_pcd, ds_cols)
-        
+            # Convert back to PyTorch tensor
+            pcds = torch.tensor(np.asarray(downsampled_pcd.points), dtype=fused_point_cloud.dtype).cuda()
+            cols = torch.tensor(np.asarray(downsampled_pcd.colors), dtype=fused_color.dtype).cuda()
+        else:
+            pcds = torch.tensor(pcds, dtype=fused_point_cloud.dtype).cuda()
+            cols = torch.tensor(cols, dtype=fused_color.dtype).cuda()
+            
+            mask = None
+            for cam in cam_list:
+                x = torch.tensor(cam.T).cuda().unsqueeze(0)
+                temp = torch.norm(x - pcds, dim=-1) < 40.
+                if mask == None:
+                    mask = temp
+                else:
+                    mask = mask & temp
+                                 
+            pcds = pcds[mask, :]
+            cols = cols[mask, :]
+            
+
         # Re-sample point cloud
         target = fused_point_cloud[viable]
         target_col = fused_color[viable]
             
-        fused_point_cloud = torch.cat([ds_pcd, target], dim=0)
-        fused_color = torch.cat([ds_cols, target_col], dim=0)
+        fused_point_cloud = torch.cat([pcds, target], dim=0)
+        fused_color = torch.cat([cols, target_col], dim=0)
         target_mask = torch.zeros((fused_color.shape[0], 1)).cuda()
-        target_mask[ds_cols.shape[0]:, :] = 1
+        target_mask[cols.shape[0]:, :] = 1
         target_mask = (target_mask > 0.).squeeze(-1)
     
         if dataset_type == "dynerf":
-            while target_mask.sum() < 20000:
+            while target_mask.sum() < 70000:
                 target_point_noise =  fused_point_cloud[target_mask] + torch.randn_like(fused_point_cloud[target_mask]).cuda() * 0.05
                 fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
                 fused_color = torch.cat([fused_color,fused_color[target_mask]], dim=0)
                 target_mask = torch.cat([target_mask, target_mask[target_mask]])
-                
-                # while target_mask.sum() < 20000:
-                # target_point_noise =  fused_point_cloud[~target_mask] + torch.randn_like(fused_point_cloud[~target_mask]).cuda() * 0.05
-                # fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
-                # fused_color = torch.cat([fused_color,fused_color[~target_mask]], dim=0)
-                # target_mask = torch.cat([target_mask, target_mask[~target_mask]])
             
+            while (~target_mask).sum() < 60000:
+                target_point_noise =  fused_point_cloud[~target_mask]  # + torch.randn_like(fused_point_cloud[~target_mask]).cuda() * 0.05
+                fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
+                fused_color = torch.cat([fused_color,fused_color[~target_mask]], dim=0)
+                target_mask = torch.cat([target_mask, target_mask[~target_mask]])
+
         self.target_mask = target_mask
         # print(self.target_mask.sum(), self.target_mask.shape)
         # exit()
         # Prune background down to 100k
-        xyz_min = fused_point_cloud[target_mask].min(0).values - .05
-        xyz_max = fused_point_cloud[target_mask].max(0).values + .05
+        if dataset_type == "condense":
+            err = 0.05
+        else:
+            err = 0.1
+        xyz_min = fused_point_cloud[target_mask].min(0).values - err
+        xyz_max = fused_point_cloud[target_mask].max(0).values + err
         self._deformation.deformation_net.set_aabb(xyz_max, xyz_min)
         
         xyz_min = fused_point_cloud[~target_mask].min(0).values
@@ -344,7 +362,7 @@ class GaussianModel:
             dist2_else = torch.clamp_min(distCUDA2(fused_point_cloud[~target_mask]), 0.00000000001)
             dist2 = torch.cat([dist2_else, dist2], dim=0)
         else:
-            dist2 = torch.clamp_min(distCUDA2(fused_point_cloud), 0.000000001)
+            dist2 = torch.clamp_min(distCUDA2(fused_point_cloud), 0.0000001)
 
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
 
@@ -353,12 +371,17 @@ class GaussianModel:
 
         # Initialize opacities
         opacities = 1. * torch.ones((fused_point_cloud.shape[0], 3), dtype=torch.float, device="cuda")
-        # Set h = 1 : As max_opac = sig(h) to set max opac = 1 we need h = logit(1)
-        opacities[:, 0] = torch.logit(opacities[:, 0]*0.95)
-        # Set w = 0.01 : As w_t = sig(w)*200, we need to set w = logit(w_t/200)
-        opacities[:, 1] = (opacities[:, 1]*1.5)
-        # Finally set mu to 0 as the start of the traniing
-        opacities[:, 2] = torch.logit(opacities[:, 2]*0.5)
+        if dataset_type == "condense":
+            # Set h = 1 : As max_opac = sig(h) to set max opac = 1 we need h = logit(1)
+            opacities[:, 0] = torch.logit(opacities[:, 0]*0.95)
+            # Set w = 0.01 : As w_t = sig(w)*200, we need to set w = logit(w_t/200)
+            opacities[:, 1] = (opacities[:, 1]*1.5)
+            # Finally set mu to 0 as the start of the traniing
+            opacities[:, 2] = torch.logit(opacities[:, 2]*0.5)
+        else:
+            opacities[:, 0] = torch.logit(opacities[:, 0]*0.95)
+            opacities[:, 1] = (opacities[:, 1]*0.05)
+            opacities[:, 2] = torch.logit(opacities[:, 2]*0.01)
         
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._colors = nn.Parameter(fused_color.requires_grad_(True))
@@ -744,49 +767,29 @@ class GaussianModel:
             elif index in [6, 7, 8]:
                 for grid in wavelets[index]: # space time
                     col += (grid ** 2).mean()
-            # else:
-            #     for grid in grids: # space time
-            #         l1total += torch.abs(1. - grid).mean()
-        
-        # Order is Yh0 Yl1 Yl0
-        # tvtotal1 = 0
-        # spsmoothness = 0
-        # minmotion = 0
-        # minview = 0
-        # for index, grids in enumerate(self._deformation.deformation_net.grid.waveplanes_list()):
-        #     if index in [0,1,3]: # space only
-        #         if tvtotal1_weight > 0. or spsmoothness_weight
-        #         for idx, grid in enumerate(grids):
-        #             # Total variation
-        #             if idx == 0:
-        #                 tvtotal1 += compute_plane_tv(grid)
                     
-        #             # Spatial smoothness prioritizing coarse features
-        #             elif idx == 1:
-        #                 spsmoothness += 0.6*grid.abs().mean()
-        #             elif idx == 2:
-        #                 spsmoothness += 0.3*grid.abs().mean()
-                        
-        #     elif index in [2,4,5]: # space time
-        #         for idx, grid in enumerate(grids):
-        #             # Min motion
-        #             if idx == 0: 
-        #                 minmotion += grid.abs().mean()
-        #             elif idx == 1:
-        #                 minmotion += 0.6 * grid.abs().mean()
-        #             elif idx == 2:
-        #                 minmotion += 0.3 * grid.abs().mean()
-        #     else:
-        #         for idx, grid in enumerate(grids):
-        #             if idx == 0: 
-        #                 minview += grid.abs().mean()
-        #             elif idx == 1:
-        #                 minview += 0.6 * grid.abs().mean()
-        #             elif idx == 2:
-        #                 minview += 0.3 * grid.abs().mean()
+        wavelets = self._deformation.deformation_net.background_grid.waveplanes_list()
+        # # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        for index, grids in enumerate(self._deformation.deformation_net.background_grid.grids_()):
+            if index in [0,1,3]: # space only
+                for grid in grids:
+                    tvtotal += compute_plane_smoothness(grid)
+            elif index in [2, 4, 5]:
+                for grid in grids: # space time
+                    tstotal += compute_plane_smoothness(grid)
+                
+                for grid in wavelets[index]:
+                    l1total += torch.abs(grid).mean()
+                    
+            elif index in [6, 7, 8]:
+                for grid in wavelets[index]: # space time
+                    col += (grid ** 2).mean()
+                    
+            else:
+                for grid in grids: # space time
+                    l1total += torch.abs(1. - grid).mean()
         
         return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + minview_weight*col
-            # tvtotal1 * tvtotal1_weight + spsmoothness * spsmoothness_weight + minmotion * minmotion_weight + minview * minview_weight
 
     def compute_covariance_loss(self, xyz, rotation, scaling):
         # row, col = knn_graph(xyz, k=2, batch=None, loop=False)

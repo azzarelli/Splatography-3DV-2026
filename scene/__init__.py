@@ -43,7 +43,7 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.resolution)
             dataset_type="condense"
             max_frames = 300
-            num_cams = 4
+            num_cams = 10
         else:
             scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, '4', max_frames)
             dataset_type="dynerf"

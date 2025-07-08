@@ -338,8 +338,8 @@ class Neural3D_NDC_Dataset(Dataset):
                 extra = self.transform(extra)[-1]
 
         if self.split == 'train':
-            depth = Image.open(self.image_paths[index].replace('images', 'depth'))
-            depth = self.transform(depth).float()/255.
+            # depth = Image.open(self.image_paths[index].replace('images', 'depth'))
+            depth = None # self.transform(depth).float()/255.
 
         return img, self.image_poses[index], self.image_times[index], extra, depth
     

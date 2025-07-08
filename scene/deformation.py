@@ -52,9 +52,9 @@ class Deformation(nn.Module):
     def __init__(self, W=256, args=None):
         super(Deformation, self).__init__()
         self.W = W
-        self.grid = WavePlaneField(args.bounds, args.scene_config)
+        self.grid = WavePlaneField(args.bounds, args.target_config)
         # self.color_grid = WavePlaneField(args.bounds, args.scene_config)
-        self.background_grid = WavePlaneField(args.bounds, args.target_config)
+        self.background_grid = WavePlaneField(args.bounds, args.scene_config)
         # self.fine_grid = WavePlaneField(args.bounds, args.scene_config, rotate=True)
 
         # self.target_grid.aabb = None
@@ -84,10 +84,8 @@ class Deformation(nn.Module):
     def create_net(self):
         # Prep features for decoding
         net_size = self.W
-        insize = self.grid.feat_dim 
-        
-        self.spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
-        self.background_spacetime_enc = nn.Sequential(nn.Linear(insize,net_size))
+        self.spacetime_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
+        self.background_spacetime_enc = nn.Sequential(nn.Linear(self.background_grid.feat_dim,net_size))
         
         self.background_pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
