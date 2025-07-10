@@ -99,7 +99,7 @@ class Deformation(nn.Module):
         if mask is not None:
             space, spacetime, coltime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances[mask])
             space_b, spacetime_b, _ = self.background_grid(rays_pts_emb[~mask,:3], time[~mask,:], covariances[~mask])
-            st_b = self.background_spacetime_enc(space_b * spacetime_b)
+            st_b = None #self.background_spacetime_enc(space_b * spacetime_b)
         else:
             space, spacetime, coltime = self.grid(rays_pts_emb[:,:3], time, covariances)
             st_b = None
@@ -138,7 +138,7 @@ class Deformation(nn.Module):
         # Position
         pts = rays_pts_emb + 0. #.clone()        
         pts[target_mask] += self.pos_coeffs(dyn_feature)
-        pts[~target_mask] += self.background_pos_coeffs(background_feature)
+        # pts[~target_mask] += self.background_pos_coeffs(background_feature)
         
         # Opacity
         opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)

@@ -1,4 +1,4 @@
 _base_ = './default.py'
 OptimizationParams = dict(
-    feature_lr=0.0004
+    feature_lr=0.0005
 )

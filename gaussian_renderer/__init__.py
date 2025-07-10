@@ -44,6 +44,40 @@ def rotated_softmin_axis_direction(r, s, temperature=10.0):
 
     return rotated
 
+
+def differentiable_cdf_match(source, target, eps=1e-5):
+    """
+    Remap 'source' values to match the CDF of 'target', using differentiable quantile mapping.
+    Works in older PyTorch versions (no torch.interp).
+    """
+    # Sort source and target
+    source_sorted, _ = torch.sort(source)
+    target_sorted, _ = torch.sort(target)
+
+    # Build uniform CDF positions
+    cdf_vals = torch.linspace(0.0, 1.0, len(source_sorted), device=source.device)
+
+    # Step 1: Get CDF values of 'source' values via inverse CDF
+    # Interpolate where each source value would sit in its own sorted list
+    idx = torch.searchsorted(source_sorted, source, right=False).clamp(max=len(cdf_vals) - 2)
+    x0 = source_sorted[idx]
+    x1 = source_sorted[idx + 1]
+    y0 = cdf_vals[idx]
+    y1 = cdf_vals[idx + 1]
+    t = (source - x0) / (x1 - x0 + eps)
+    source_cdf = y0 + t * (y1 - y0)
+
+    # Step 2: Map CDF to target values (i.e., inverse CDF of target)
+    idx = torch.searchsorted(cdf_vals, source_cdf, right=False).clamp(max=len(target_sorted) - 2)
+    x0 = cdf_vals[idx]
+    x1 = cdf_vals[idx + 1]
+    y0 = target_sorted[idx]
+    y1 = target_sorted[idx + 1]
+    t = (source_cdf - x0) / (x1 - x0 + eps)
+    matched = y0 + t * (y1 - y0)
+
+    return matched
+        
 from torch_cluster import knn
 def compute_alpha_interval(A, B, cov6A, cov6B, alpha_threshold=0.1):
     """
@@ -134,7 +168,8 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
             view_dir=viewpoint_camera.direction_normal(),
             target_mask=pc.target_mask
         )
-
+    
+    opacity = pc.get_fine_opacity_with_3D_filter(opacity)
     rotation = pc.rotation_activation(rotations)
 
     show_mask = 0
@@ -223,7 +258,8 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
         colors = colors[mask]
 
         rendered_image, alpha, _ = rasterization(
-            means3D, rotation, scales, opacity.squeeze(-1), colors,
+                        means3D, rotation, scales, opacity.squeeze(-1), colors,
+
             viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
             viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
             viewpoint_camera.image_width, 
@@ -465,6 +501,8 @@ def render_coarse_batch_vanilla(
         colors_final = colors[mask]
         opacity_final = opacity[mask]
 
+        background = torch.rand(1, 3).cuda() 
+
         rgb, _, _ = rasterization(
             means3D_final, rotations_final, scales_final, 
             opacity_final.squeeze(-1),colors_final,
@@ -475,7 +513,8 @@ def render_coarse_batch_vanilla(
             
             rasterize_mode='antialiased',
             eps2d=0.1,
-            sh_degree=pc.active_sh_degree
+            sh_degree=pc.active_sh_degree,
+            backgrounds=background
         )
         rgb = rgb.squeeze(0).permute(2,0,1)
         
@@ -483,7 +522,7 @@ def render_coarse_batch_vanilla(
         gt_img = viewpoint_camera.original_image.cuda()
         mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
         inv_mask = 1. - mask.float() 
-        gt = gt_img * inv_mask
+        gt = gt_img * inv_mask + (mask)*background.permute(1,0).unsqueeze(-1)
 
         L1 += l1_loss(rgb, gt)
     
@@ -676,7 +715,7 @@ def render_batch(
         # Set up rasterization configuration
         rgb, alpha, _ = rasterization(
             means3D_final, rotations_final, scales_final, 
-            opacity_final.squeeze(-1),colors_final,
+            opacity_final.squeeze(-1), colors_final,
             viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
             viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
             viewpoint_camera.image_width, 

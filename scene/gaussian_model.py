@@ -330,7 +330,7 @@ class GaussianModel:
                 target_mask = torch.cat([target_mask, target_mask[target_mask]])
             
             while (~target_mask).sum() < 60000:
-                target_point_noise =  fused_point_cloud[~target_mask]  # + torch.randn_like(fused_point_cloud[~target_mask]).cuda() * 0.05
+                target_point_noise =  fused_point_cloud[~target_mask] + torch.randn_like(fused_point_cloud[~target_mask]).cuda() * 0.1
                 fused_point_cloud = torch.cat([fused_point_cloud,target_point_noise], dim=0)
                 fused_color = torch.cat([fused_color,fused_color[~target_mask]], dim=0)
                 target_mask = torch.cat([target_mask, target_mask[~target_mask]])
@@ -380,8 +380,8 @@ class GaussianModel:
             opacities[:, 2] = torch.logit(opacities[:, 2]*0.5)
         else:
             opacities[:, 0] = torch.logit(opacities[:, 0]*0.95)
-            opacities[:, 1] = (opacities[:, 1]*0.05)
-            opacities[:, 2] = torch.logit(opacities[:, 2]*0.01)
+            opacities[:, 1] = (opacities[:, 1]*1.5)
+            opacities[:, 2] = torch.logit(opacities[:, 2]*0.5)
         
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._colors = nn.Parameter(fused_color.requires_grad_(True))
@@ -768,26 +768,18 @@ class GaussianModel:
                 for grid in wavelets[index]: # space time
                     col += (grid ** 2).mean()
                     
-        wavelets = self._deformation.deformation_net.background_grid.waveplanes_list()
-        # # model.grids is 6 x [1, rank * F_dim, reso, reso]
-        for index, grids in enumerate(self._deformation.deformation_net.background_grid.grids_()):
-            if index in [0,1,3]: # space only
-                for grid in grids:
-                    tvtotal += compute_plane_smoothness(grid)
-            elif index in [2, 4, 5]:
-                for grid in grids: # space time
-                    tstotal += compute_plane_smoothness(grid)
+        # wavelets = self._deformation.deformation_net.background_grid.waveplanes_list()
+        # # # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        # for index, grids in enumerate(self._deformation.deformation_net.background_grid.grids_()):
+        #     if index in [0,1,3]: # space only
+        #         for grid in grids:
+        #             tvtotal += compute_plane_smoothness(grid)
+        #     elif index in [2, 4, 5]:
+        #         for grid in grids: # space time
+        #             tstotal += compute_plane_smoothness(grid)
                 
-                for grid in wavelets[index]:
-                    l1total += torch.abs(grid).mean()
-                    
-            elif index in [6, 7, 8]:
-                for grid in wavelets[index]: # space time
-                    col += (grid ** 2).mean()
-                    
-            else:
-                for grid in grids: # space time
-                    l1total += torch.abs(1. - grid).mean()
+        #         for grid in wavelets[index]:
+        #             l1total += torch.abs(grid).mean()           
         
         return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + minview_weight*col
 

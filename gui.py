@@ -459,7 +459,7 @@ class GUI(GUIBase):
         viewpoint_cams = self.get_batch_views
         # print(self.iteration)
         
-        if (self.scene.dataset_type == "dynerf" and self.iteration in [3000,6000]) or (self.scene.dataset_type == "condense" and self.iteration in [3000, 6000]):
+        if (self.scene.dataset_type == "dynerf" and self.iteration in [3000]) or (self.scene.dataset_type == "condense" and self.iteration in [3000, 6000]):
             print("Dupelicating Dynamics")
             self.gaussians.dynamic_dupelication()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
@@ -498,21 +498,12 @@ class GUI(GUIBase):
         ).mean()
         # pg_loss = 0.
 
-        if self.stage == 'coarse':
-            planeloss = 0.
 
-            # normloss += self.gaussians.compute_static_rigidity_loss(self.iteration)
-            
-            
-            
-        elif self.stage == 'fine':
-            # dyn_target_loss += self.gaussians.compute_rigidity_loss(self.iteration)
-            
-            planeloss = self.gaussians.compute_regulation(
-                self.hyperparams.time_smoothness_weight, self.hyperparams.l1_time_planes, self.hyperparams.plane_tv_weight,
-                self.hyperparams.minview_weight, self.hyperparams.tvtotal1_weight, 
-                self.hyperparams.spsmoothness_weight, self.hyperparams.minmotion_weight
-            )
+        planeloss = self.gaussians.compute_regulation(
+            self.hyperparams.time_smoothness_weight, self.hyperparams.l1_time_planes, self.hyperparams.plane_tv_weight,
+            self.hyperparams.minview_weight, self.hyperparams.tvtotal1_weight, 
+            self.hyperparams.spsmoothness_weight, self.hyperparams.minmotion_weight
+        )
 
         loss = L1 +  planeloss + \
             depthloss +\
@@ -690,7 +681,7 @@ class GUI(GUIBase):
                 if idx % 100 == 0:
                     save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
             
-            if self.view_test or self.iteration > (self.final_iter -2):
+            if self.view_test or self.iteration > (self.final_iter -2) or self.iteration % 1000 == 0:
                 save_gt_pred_full(gt_image, image, self.iteration, idx, self.args.expname)
 
             fullPSNR += psnr(image, gt_image)
@@ -912,7 +903,8 @@ if __name__ == "__main__":
         debug_from=args.debug_from, 
         expname=name,
         skip_coarse=args.skip_coarse,
-        view_test=args.view_test
+        view_test=args.view_test,
+        use_gui=True
     )
     gui.render()
     del gui
@@ -938,89 +930,3 @@ if __name__ == "__main__":
     #         skip_coarse=args.skip_coarse,
     #         view_test=args.view_test
     #     )
-
-        
-    #     gui.render()
-    #     del gui
-    #     torch.cuda.empty_cache()
-    #     print("\nTraining complete.")
-    
-    # # Spatial smoothness
-    # hyp.tvtotal1_weight = 0.
-    # for value in [0.1,0.01,0.001,0.0001,0.00001]:
-    #     name = f'{initial_name}_SP{value}'
-    #     hyp.spsmoothness_weight = value
-        
-    #     gui = GUI(
-    #         args=args, 
-    #         hyperparams=hyp, 
-    #         dataset=lp.extract(args), 
-    #         opt=op.extract(args), 
-    #         pipe=pp.extract(args),
-    #         testing_iterations=args.test_iterations, 
-    #         saving_iterations=args.save_iterations,
-    #         ckpt_start=args.start_checkpoint, 
-    #         debug_from=args.debug_from, 
-    #         expname=name,
-    #         skip_coarse=args.skip_coarse,
-    #         view_test=args.view_test
-    #     )
-    #     gui.render()
-    #     del gui
-    #     torch.cuda.empty_cache()
-    #     print("\nTraining complete.")
-    
-    # Minview Weight
-    # hyp.spsmoothness_weight = 0.
-    # hyp.plane_tv_weight = 0.0005
-    
-    # for value in [0.01,0.001,0.0001,0.00001]:
-    #     name = f'{initial_name}_Angle{value}'
-    #     hyp.minview_weight = value
-        
-    #     gui = GUI(
-    #         args=args, 
-    #         hyperparams=hyp, 
-    #         dataset=lp.extract(args), 
-    #         opt=op.extract(args), 
-    #         pipe=pp.extract(args),
-    #         testing_iterations=args.test_iterations, 
-    #         saving_iterations=args.save_iterations,
-    #         ckpt_start=args.start_checkpoint, 
-    #         debug_from=args.debug_from, 
-    #         expname=name,
-    #         skip_coarse=args.skip_coarse,
-    #         view_test=args.view_test
-    #     )
-    #     gui.render()
-    #     del gui
-    #     torch.cuda.empty_cache()
-    #     print("\nTraining complete.")
-    
-    # Mintemporal Weight
-    # hyp.minview_weight = 0.
-    # hyp.l1_time_planes = 0.
-    # hyp.time_smoothness_weight = 0.
-    
-    # for value in [0.0001,0.00001]:
-    #     name = f'{initial_name}_Temporal{value}'
-    #     hyp.minmotion_weight = value
-        
-    #     gui = GUI(
-    #         args=args, 
-    #         hyperparams=hyp, 
-    #         dataset=lp.extract(args), 
-    #         opt=op.extract(args), 
-    #         pipe=pp.extract(args),
-    #         testing_iterations=args.test_iterations, 
-    #         saving_iterations=args.save_iterations,
-    #         ckpt_start=args.start_checkpoint, 
-    #         debug_from=args.debug_from, 
-    #         expname=name,
-    #         skip_coarse=args.skip_coarse,
-    #         view_test=args.view_test
-    #     )
-    #     gui.render()
-    #     del gui
-    #     torch.cuda.empty_cache()
-    #     print("\nTraining complete.")

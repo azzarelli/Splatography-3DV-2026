@@ -5,7 +5,7 @@ import copy
 import psutil
 import torch
 from gaussian_renderer import render
-
+from tqdm import tqdm
 class GUIBase:
     """This method servers to intialize the DPG visualization (keeping my code cleeeean!)
     
@@ -90,62 +90,64 @@ class GUIBase:
             f'[{self.stage} {self.iteration}] Time: {time:.2f} | Allocated Memory: {allocated:.2f} MB, Reserved Memory: {reserved:.2f} MB | CPU Memory Usage: {memory_mb:.2f} MB')
     
     def render(self):
-        if self.gui:
-            tested = True
-            while dpg.is_dearpygui_running():
-                if self.iteration > self.final_iter and self.stage == 'coarse':
-                    self.stage = 'fine'
-                    self.init_taining()
+        tested = True
+        while dpg.is_dearpygui_running():
+            if self.iteration > self.final_iter and self.stage == 'coarse':
+                self.stage = 'fine'
+                self.init_taining()
 
-                if self.view_test == False:
-                    if self.iteration <= self.final_iter:
-                        # Train the background seperately
-                        if self.stage == 'coarse':
-                            self.train_background_step()
-                            self.train_foreground_step()
-                        else:
-                            # if self.iteration < (self.final_iter //2):
-                            #     self.train_foreground_fine_step()
-                            self.train_step()
-                            # self.train_depth_step()
-                        self.iteration += 1
+            if self.view_test == False:
+                if self.iteration <= self.final_iter:
+                    # Train the background seperately
+                    if self.stage == 'coarse':
+                        self.train_background_step()
+                        self.train_foreground_step()
+                    else:
+                        # if self.iteration < (self.final_iter //2):
+                        #     self.train_foreground_fine_step()
+                        self.train_step()
+                        # self.train_depth_step()
+                    self.iteration += 1
 
 
-                    if (self.iteration % 4000) == 0:
-                        if self.stage == 'fine':
-                            self.test_step()
+                if (self.iteration % 4000) == 0:
+                    if self.stage == 'fine':
+                        self.test_step()
 
-                    if self.iteration > self.final_iter and self.stage == 'fine':
-                        self.stage = 'done'
-                        dpg.stop_dearpygui() 
-                        # exit()
-                elif tested:
-                    # self.test_step()
-                    tested = False
-
-                # self.render_video_step()
+                if self.iteration > self.final_iter and self.stage == 'fine':
+                    self.stage = 'done'
+                    dpg.stop_dearpygui() 
+                    # exit()
+            elif tested:
                 # self.test_step()
-                # exit()
+                tested = False
 
-                # if self.view_test == True:
-                #     self.train_depth()
-                # with torch.no_grad():
-                #     self.test_step()
-                #     exit()
-                with torch.no_grad():
-                    self.viewer_step()
-                    dpg.render_dearpygui_frame()
-            dpg.destroy_context() 
+            # self.render_video_step()
+            # self.test_step()
+            # exit()
+
+            # if self.view_test == True:
+            #     self.train_depth()
+            # with torch.no_grad():
+            #     self.test_step()
+            #     exit()
+            with torch.no_grad():
+                self.viewer_step()
+                dpg.render_dearpygui_frame()
+        dpg.destroy_context() 
     
     def train(self):
         """Train without gui"""
+        pbar = tqdm(initial=0, total=self.final_iter, desc=f"[{self.stage}]")
+
         while self.stage != 'done':
-            print(self.iteration)
-            if self.iteration % 100 == 0:
-                print(f'[{self.stage}] {self.iteration}')
-                
+            if self.iteration > self.final_iter and self.stage == 'coarse':
+                self.stage = 'fine'
+                self.init_taining()
+                pbar = tqdm(initial=0, total=self.final_iter, desc=f"[{self.stage}]")
+
             if self.iteration <= self.final_iter:
-                # Train the background seperately
+                # Train background and/or foreground depending on stage
                 if self.stage == 'coarse':
                     self.train_background_step()
                     self.train_foreground_step()
@@ -153,14 +155,16 @@ class GUIBase:
                     self.train_step()
 
                 self.iteration += 1
+                pbar.update(1)
 
-            if (self.iteration % 1000) == 0:
-                if self.stage == 'fine':
-                    self.test_step()
+            if self.iteration % 1000 == 0 and self.stage == 'fine':
+                self.test_step()
 
             if self.iteration > self.final_iter and self.stage == 'fine':
                 self.stage = 'done'
-                exit()
+                break  # Exit the loop instead of calling exit()
+
+        pbar.close()
                     
     @torch.no_grad()
     def viewer_step(self):
@@ -235,10 +239,10 @@ class GUIBase:
             dpg.set_value("_log_view_camera", f"Training Views")
 
     def save_scene(self):
-        print("\n[ITER {}] Saving Gaussians".format(self.iteration))
-        self.scene.save(self.iteration, self.stage)
-        print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
-        torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
+        print("\n[ITER {}] Not Saving Gaussians".format(self.iteration))
+        # self.scene.save(self.iteration, self.stage)
+        # print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
+        # torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
 
     def register_dpg(self):
         

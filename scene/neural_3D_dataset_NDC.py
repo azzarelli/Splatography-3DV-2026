@@ -252,6 +252,7 @@ class Neural3D_NDC_Dataset(Dataset):
                 else:
                     image_path = os.path.join(video_images_path,"masks")
 
+       
                 video_frames = cv2.VideoCapture(video_path)
                 if not os.path.exists(image_path):
                     print(f"no images saved in {image_path}, extract images from video.")
@@ -259,19 +260,18 @@ class Neural3D_NDC_Dataset(Dataset):
                     this_count = 0
                     while video_frames.isOpened():
                         ret, video_frame = video_frames.read()
-                        if this_count >= self.maxframes:break
+                        # if this_count >= self.maxframes:break
                         if ret:
                             video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
                             video_frame = Image.fromarray(video_frame)
-                            if self.downsample != 1.0:
-
-                                img = video_frame.resize(self.img_wh, Image.LANCZOS)
-                            img.save(os.path.join(image_path,"%04d.png"%count))
+                            print(os.path.join(image_path,"%04d.png"%count))
+                            video_frame.save(os.path.join(image_path,"%04d.png"%count))
 
                             count += 1
-                            this_count+=1
+                            # this_count+=1
                         else:
                             break
+                    # exit()
                         
                 images_path = os.listdir(image_path)
                 images_path.sort()
@@ -324,7 +324,11 @@ class Neural3D_NDC_Dataset(Dataset):
     
     def __getitem__(self,index):
         img = Image.open(self.image_paths[index])
-        
+        img = img.resize((int(self.W), int(self.H)), Image.LANCZOS)
+
+        if self.split == 'test':
+            img = img.resize((int(self.W), int(self.H)), Image.LANCZOS)
+            
         img = self.transform(img)
         extra = None
         depth = None
@@ -340,7 +344,7 @@ class Neural3D_NDC_Dataset(Dataset):
         if self.split == 'train':
             # depth = Image.open(self.image_paths[index].replace('images', 'depth'))
             depth = None # self.transform(depth).float()/255.
-
+            
         return img, self.image_poses[index], self.image_times[index], extra, depth
     
     
