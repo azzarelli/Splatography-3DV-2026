@@ -24,7 +24,7 @@ class GUIBase:
         self.W, self.H = self.scene.getTestCameras()[0].image_width, self.scene.getTestCameras()[0].image_height
         self.fov = (self.scene.getTestCameras()[0].FoVy, self.scene.getTestCameras()[0].FoVx)
 
-        if self.H > 800 and self.scene != "dynerf":
+        if self.H > 1200 and self.scene != "dynerf":
             self.W = self.W//2
             self.H = self.H //2
         # Initialize the image buffer
@@ -103,10 +103,8 @@ class GUIBase:
                         self.train_background_step()
                         self.train_foreground_step()
                     else:
-                        # if self.iteration < (self.final_iter //2):
-                        #     self.train_foreground_fine_step()
                         self.train_step()
-                        # self.train_depth_step()
+                        
                     self.iteration += 1
 
 
@@ -239,10 +237,10 @@ class GUIBase:
             dpg.set_value("_log_view_camera", f"Training Views")
 
     def save_scene(self):
-        print("\n[ITER {}] Not Saving Gaussians".format(self.iteration))
-        # self.scene.save(self.iteration, self.stage)
-        # print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
-        # torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
+        print("\n[ITER {}] Saving Gaussians".format(self.iteration))
+        self.scene.save(self.iteration, self.stage)
+        print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
+        torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
 
     def register_dpg(self):
         

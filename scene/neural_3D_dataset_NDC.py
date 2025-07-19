@@ -149,7 +149,7 @@ class Neural3D_NDC_Dataset(Dataset):
         bd_factor=0.75,
         eval_step=1,
         selected_cams=[],
-        maxframes=50,
+        maxframes=300,
         sphere_scale=1.0,
     ):
         

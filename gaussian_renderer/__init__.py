@@ -660,8 +660,7 @@ def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,
 
 
 def render_batch(
-    viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
-    stage="fine", iteration=0,kernel_size=0.1):
+    viewpoint_cams, pc, datasettype):
     """
     Render the scene.
     """
@@ -674,13 +673,6 @@ def render_batch(
     opacity = pc.get_opacity
     
     L1 = 0.
-    norm_loss = 0.
-    depth_loss = 0.
-    covloss = 0.
-    radii_list = []
-    visibility_filter_list = []
-    viewspace_point_tensor_list = []
-    norms = None
 
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
@@ -702,15 +694,16 @@ def render_batch(
         rotations_final = pc.rotation_activation(rotations_final)
         
         # For vivo
-        # distances = torch.norm(means3D_final - viewpoint_camera.camera_center.cuda(), dim=1)
-        # mask = distances > 0.3
-        # means3D_final = means3D_final[mask]
-        # rotations_final = rotations_final[mask]
-        # scales_final = scales[mask]
-        # opacity_final = opacity_final[mask]
-        # colors_final = colors_final[mask]
-        
-        scales_final = scales
+        if datasettype == 'condense':
+            distances = torch.norm(means3D_final - viewpoint_camera.camera_center.cuda(), dim=1)
+            mask = distances > 0.3
+            means3D_final = means3D_final[mask]
+            rotations_final = rotations_final[mask]
+            scales_final = scales[mask]
+            opacity_final = opacity_final[mask]
+            colors_final = colors_final[mask]
+        else:
+            scales_final = scales
         
         # Set up rasterization configuration
         rgb, alpha, _ = rasterization(
@@ -729,11 +722,12 @@ def render_batch(
         gt_img = viewpoint_camera.original_image.cuda()
 
         # For ViVo
-        # L1 += l1_loss(rgb[:, 100:-100, 100:-100], gt_img[:, 100:-100, 100:-100])
-        # For Dynerf
-        L1 += l1_loss(rgb, gt_img)
+        if datasettype == 'condense': # remove black edge from loss (edge from undistorting the images)
+            L1 += l1_loss(rgb[:, 100:-100, 100:-100], gt_img[:, 100:-100, 100:-100])
+        else:
+            L1 += l1_loss(rgb, gt_img)
    
-    return radii_list,visibility_filter_list, viewspace_point_tensor_list, L1, (depth_loss, norm_loss, covloss, (None, None))
+    return L1
 
 
 def render_depth_batch(
@@ -781,7 +775,7 @@ def render_depth_batch(
             )
             D = D.squeeze(0).permute(2,0,1)
 
-        # Do deformation
+        # Deform for current time step
         means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
             point=means3D, 
             rotations=rotations,
@@ -813,6 +807,7 @@ def render_depth_batch(
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
             
+            render_mode='D',
             rasterize_mode='antialiased',
             eps2d=0.1,
             sh_degree=pc.active_sh_degree
@@ -833,8 +828,6 @@ def render_depth_batch(
             
     
     return L1
-
-
 
 def render_motion_point_mask(pc):
     """

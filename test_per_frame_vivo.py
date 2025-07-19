@@ -11,8 +11,8 @@ import matplotlib.pyplot as plt
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Paths
-result_dir = "/home/barry/Desktop/other_code/GS_Research/output/Condense/Curling/Test/images"
-gt_dir = "/media/barry/56EA40DEEA40BBCD/DATA/Condense/Piano/test"
+result_dir = "/home/barry/Desktop/other_code/GS_Research/output/redo_july/Bassist/Test/images"
+gt_dir = "/media/barry/56EA40DEEA40BBCD/DATA/Condense/Bassist/test"
 
 order = ["000809414712", "000875114712", "000906614712", "000950714712"]
 image_folder = "scene_masks"

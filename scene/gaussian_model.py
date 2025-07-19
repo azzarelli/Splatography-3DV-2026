@@ -302,7 +302,7 @@ class GaussianModel:
             mask = None
             for cam in cam_list:
                 x = torch.tensor(cam.T).cuda().unsqueeze(0)
-                temp = torch.norm(x - pcds, dim=-1) < 40.
+                temp = torch.norm(x - pcds, dim=-1) < 51.
                 if mask == None:
                     mask = temp
                 else:
@@ -401,6 +401,9 @@ class GaussianModel:
         dist_foreground = torch.norm(fused_point_cloud[~target_mask] - mean_foreground, dim=1)
         self.spatial_lr_scale_background = torch.max(dist_foreground).detach().cpu().numpy()
 
+        if dataset_type == "dynerf": # For the dynerf scene the background lr scale is too large
+            self.spatial_lr_scale_background *= 0.1
+        print(f"Target lr scale: {self.spatial_lr_scale} | Background lr scale: {self.spatial_lr_scale_background}")
         self.active_sh_degree = 0
     
     def training_setup(self, training_args):
@@ -423,7 +426,6 @@ class GaussianModel:
                     
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
             
-
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -438,9 +440,9 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.deformation_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
         
-        self.deformation_background_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale_background,
-                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale_background,
-                                                    lr_delay_mult=training_args.position_lr_delay_mult,
+        self.deformation_background_scheduler_args = get_expon_lr_func(lr_init=training_args.deformation_lr_init*self.spatial_lr_scale_background,
+                                                    lr_final=training_args.deformation_lr_final*self.spatial_lr_scale_background,
+                                                    lr_delay_mult=training_args.deformation_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
         
         self.grid_scheduler_args = get_expon_lr_func(lr_init=training_args.grid_lr_init*self.spatial_lr_scale,
@@ -745,7 +747,7 @@ class GaussianModel:
         self._opacity = optimizable_tensors["opacity"]
 
     def compute_regulation(self, time_smoothness_weight, l1_time_planes_weight, plane_tv_weight,
-                           minview_weight, tvtotal1_weight, spsmoothness_weight, minmotion_weight):
+                           minview_weight):
         tvtotal = 0
         l1total = 0
         tstotal = 0
@@ -766,49 +768,21 @@ class GaussianModel:
                     
             elif index in [6, 7, 8]:
                 for grid in wavelets[index]: # space time
-                    col += (grid ** 2).mean()
+                    col += torch.abs(grid).mean()
                     
-        # wavelets = self._deformation.deformation_net.background_grid.waveplanes_list()
-        # # # model.grids is 6 x [1, rank * F_dim, reso, reso]
-        # for index, grids in enumerate(self._deformation.deformation_net.background_grid.grids_()):
-        #     if index in [0,1,3]: # space only
-        #         for grid in grids:
-        #             tvtotal += compute_plane_smoothness(grid)
-        #     elif index in [2, 4, 5]:
-        #         for grid in grids: # space time
-        #             tstotal += compute_plane_smoothness(grid)
-                
-        #         for grid in wavelets[index]:
-        #             l1total += torch.abs(grid).mean()           
+        wavelets = self._deformation.deformation_net.background_grid.waveplanes_list()
+        # # model.grids is 6 x [1, rank * F_dim, reso, reso]
+        for index, grids in enumerate(self._deformation.deformation_net.background_grid.grids_()):
+            if index in [0,1,3]: # space only
+                for grid in grids:
+                    tvtotal += compute_plane_smoothness(grid)
+            elif index in [2, 4, 5]:
+                for grid in grids: # space time
+                    tstotal += compute_plane_smoothness(grid)       
         
         return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + minview_weight*col
 
-    def compute_covariance_loss(self, xyz, rotation, scaling):
-        # row, col = knn_graph(xyz, k=2, batch=None, loop=False)
-        row, col  = self.target_neighbours
-
-        cov = self.covariance_activation(scaling.detach(), 1, rotation.detach())
-        
-        A = xyz[row]
-        B = xyz[col]
-        
-        t_AB = compute_alpha_interval(B - A, cov[row], alpha_threshold=0.1)
-        t_BA = compute_alpha_interval(A-B, cov[col], alpha_threshold=0.1)
-
-        # When this is true the Gaussians do not intersect
-        # TODO: check if any negative values
-        mask = t_AB + t_BA < 1.
-
-        # print(((B[mask]-A[mask]).abs()).mean())
-        return ((B[mask]-A[mask])**2).mean()
-
-    def get_waveplanes(self):
-        return self._deformation.deformation_net.grid.waveplanes_list()
-    
     def generate_neighbours(self, points):
-        # Maybe we can get NN by sampling every 0.25 time steps
-        # getting the neighbours at each time step? Maybe by selecting the closest
-        # points independant of time?
         edge_index = knn_graph(points, k=5, batch=None, loop=False)
         self.target_neighbours = edge_index
 
@@ -816,73 +790,7 @@ class GaussianModel:
         edge_index = knn_graph(points, k=5, batch=None, loop=False)
         self.target_neighbours = edge_index
 
-    def compute_normals_rigidity(self, norms):
-        points = self._xyz[self.target_mask] 
-        row, col = self.target_neighbours
-        disances = torch.norm(points[row] - points[col], dim=1)
-        distance_weights = 1./disances.unsqueeze(-1).detach() # 1. - torch.exp(- (0.00018/ (disances**2)))
-        diff = ((distance_weights*(norms[row] - norms[col]).abs())).mean()
-        return diff
-    
-    def compute_displacement_rigidity(self, position):
-        row, col = self.target_neighbours
-        return torch.norm(position[row] - position[col], dim=1).unsqueeze(1)
 
-    def compute_rigidity_loss(self, iteration):
-        points = self._xyz[self.target_mask] 
-        row, col = self.target_neighbours
-    
-        # As distance increased weighting decreases
-        # distance_weights = 1. #/(torch.norm(points[row] - points[col], dim=1))
-        # dx_coefs, drot, dcol, dcol_base = self.get_dyn_coefs
-        
-        # Dynamic rigidity w.r.t motion 
-        #   To think about, maybe we take A,B,C,D as points where A and D
-        # dx_coefs = dx_coefs.view(-1, 3, 3) # N, 3, 3
-        
-        # Smooth loss
-        # diff = ((distance_weights*(dx_coefs[row] - dx_coefs[col])**2).mean(-1).mean(-1)).mean()
-        
-        # Regularize w w.r.t nn
-        w = self.get_wopac
-        # 1-\ \exp\left(-\frac{0.0009}{\left(2\cdot x^{2}\right)}\right)
-        disances = torch.norm(points[row] - points[col], dim=1)
-        distance_weights = 1.#/disances # 1. - torch.exp(- (0.00018/ (disances**2)))
-        diff = ((distance_weights*(w[row] - w[col]).abs())).mean()
-        #((distance_mask*(((dx_coefs[row] - dx_coefs[col])**2).mean(-1)))).mean()
-        # Get the rotation of the point at t = 0 and t = 1
-        # rot0 = self.rotation_activation(self._rotation[self.target_mask])
-        # rot1 = self.rotation_activation(self._rotation[self.target_mask] + drot[:, -1, :])
-        # # Get the normalized direction of the smallest axis of each point
-        # #  TODO: We should 
-        # norms0 = rotated_soft_axis_direction(rot0,self.get_scaling[self.target_mask])
-        # # @ t = 1
-        # norms1 = rotated_soft_axis_direction(rot1,self.get_scaling[self.target_mask])
-
-        # # angles between pairs of points
-        # dot_A = torch.sum(norms0[row] * norms0[col], dim=1)  # (E,)
-        # dot_B = torch.sum(norms1[row] * norms1[col], dim=1)  # (E,)
-
-        # # The goal is to keep relative angles (dot products) consistent
-        # diff += F.mse_loss(dot_A, dot_B)
-
-        return diff
-    
-    def compute_static_rigidity_loss(self, iteration):
-        points = self._xyz[self.target_mask]
-        row, col = self.target_neighbours
-        
-        distance_mask = 0.1 > torch.norm(points[row] - points[col], dim=1)  # (E,)
-        
-        rot = self.rotation_activation(self._rotation[self.target_mask])
-        norms1 = rotated_soft_axis_direction(rot, self.get_scaling[self.target_mask])
-        scales = self.get_scaling.min(dim=1).values
-
-        # Surface direction, surface thickness
-        diff = ((distance_mask*(((norms1[row] - norms1[col])**2).mean(-1)))).mean()
-        diff += ((distance_mask*(((scales[row] - scales[col])**2).mean(-1)))).mean()
-
-        return diff
 
 def compute_alpha_interval(d, cov6, alpha_threshold=0.1):
     """

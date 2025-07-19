@@ -40,15 +40,16 @@ class Scene:
             print("Loading trained model at iteration {}".format(self.loaded_iter))
 
         if os.path.exists(os.path.join(args.source_path, "rotation_correction.json")):
-            scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.resolution)
-            dataset_type="condense"
             max_frames = 300
             num_cams = 10
+            scene_info = sceneLoadTypeCallbacks["Condense"](args.source_path, args.resolution)
+            dataset_type="condense"
         else:
+            max_frames = 50 #300 if "salmon" in args.source_path else 50
+            num_cams = 4
             scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, '4', max_frames)
             dataset_type="dynerf"
-            max_frames = 50
-            num_cams = 4
+            
 
         self.maxtime = scene_info.maxtime
         self.maxframes = max_frames

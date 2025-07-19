@@ -17,9 +17,9 @@ root = "/home/barry/Desktop/PhD/SparseViewPaper/DYNERF_RESULTS"
 gt_root = os.path.join(root, "GT")
 
 scenes = ["CSP", "FST", "FSM"]
-scenes = ["FSM"]
+scenes = ["CSP"]
 
-models = ["STG", "ITGS"]
+# models = ["4DGS", "W4DGS"]
 models = ["Ours"]
 
 # Frame-wise results dictionary
@@ -78,8 +78,8 @@ with torch.no_grad():
                 per_frame_results[cnt]['full']['mae']  += np.abs(gt_img - test_img).mean()
                 per_frame_results[cnt]['full']['psnr']  += psnr(gt_tensor, test_tensor).item()
                 per_frame_results[cnt]['full']['ssim']  += ssim(gt_img, test_img, win_size=3, channel_axis=-1, data_range=1.0)
-                per_frame_results[cnt]['full']['lpips_vgg'] += lpips_vgg(gt_tensor, test_tensor).item()
-                per_frame_results[cnt]['full']['lpips_alex'] += lpips_alex(gt_tensor, test_tensor).item()
+                # per_frame_results[cnt]['full']['lpips_vgg'] += lpips_vgg(gt_tensor, test_tensor).item()
+                # per_frame_results[cnt]['full']['lpips_alex'] += lpips_alex(gt_tensor, test_tensor).item()
                 
                 # # Masked
                 per_frame_results[cnt]['mask']['mae']  += (gt_tensor*mask_tensor - test_tensor*mask_tensor).abs().mean().item()
@@ -88,8 +88,8 @@ with torch.no_grad():
                 per_frame_results[cnt]['mask']['m_psnr']  += psnr(gt_tensor, test_tensor, mask_tensor.squeeze(0)).item()
                 per_frame_results[cnt]['mask']['ssim']  += ssim(gt_mask, test_mask, win_size=3, channel_axis=-1, data_range=1.0)
                 
-                per_frame_results[cnt]['mask']['lpips_vgg'] += lpips_vgg(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
-                per_frame_results[cnt]['mask']['lpips_alex'] += lpips_alex(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
+                # per_frame_results[cnt]['mask']['lpips_vgg'] += lpips_vgg(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
+                # per_frame_results[cnt]['mask']['lpips_alex'] += lpips_alex(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
 
                 # Frame counter (reset every 300 frames)
                 cnt = cnt + 1 
@@ -133,5 +133,5 @@ with torch.no_grad():
                 "per-frame": per_frame_results
             }
 import json
-with open("debugging/ours.json", 'w') as json_file:
+with open("debugging/our_res.json", 'w') as json_file:
     json.dump(finaldictionary, json_file,  indent=4)

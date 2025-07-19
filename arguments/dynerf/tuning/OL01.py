@@ -1,4 +1,4 @@
 _base_ = './default.py'
 OptimizationParams = dict(
-    feature_lr=0.0005
+    opacity_lr=0.01
 )

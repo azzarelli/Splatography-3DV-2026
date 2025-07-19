@@ -77,7 +77,8 @@ class GridSet(nn.Module):
             is_proposal: bool = False,
             J: int = 3,
             cachesig: bool = True,
-            sample_method:str = 'bilinear'
+            sample_method:str = 'bilinear',
+            is_col:bool=False
     ):
         super().__init__()
 
@@ -90,6 +91,7 @@ class GridSet(nn.Module):
         init_mode = 'uniform'
         if self.what == 'spacetime':
             init_mode = 'ones'
+            
         self.feature_size = config['feature_size']
         self.resolution = resolution
         self.wave = config['wave']

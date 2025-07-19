@@ -26,7 +26,7 @@ OptimizationParams = dict(
     dataloader=True,
     iterations=14000,
     coarse_iterations=3000,
-    batch_size=4, # Was 4
+    batch_size=2, # Was 4
     
     opacity_reset_interval = 4000,    
 
