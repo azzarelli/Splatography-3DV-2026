@@ -3,14 +3,14 @@ ModelHiddenParams = dict(
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
-     'resolution': [512, 150],
-     'wavelevel':3
+     'resolution': [256, 50],
+     'wavelevel':2
     },
     target_config = {
      'grid_dimensions': 2,
      'input_coordinate_dim': 4,
      'output_coordinate_dim': 16,
-     'resolution': [256, 50],
+     'resolution': [256, 100],
      'wavelevel':2
     },
 
@@ -24,7 +24,7 @@ ModelHiddenParams = dict(
 
 OptimizationParams = dict(
     dataloader=True,
-    iterations=16000,
+    iterations=12000,
     coarse_iterations=3000,
     batch_size=2, # Was 4
 

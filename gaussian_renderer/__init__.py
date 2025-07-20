@@ -203,7 +203,7 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
     rendered_image, rendered_depth, norms = None, None, None
     if stage == 'test-foreground':
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 1.
+        mask = distances > 0.3
         mask = torch.logical_and(pc.target_mask, mask)
 
         means3D = means3D[mask]
@@ -227,7 +227,7 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
         rendered_image = rendered_image.squeeze(0).permute(2,0,1)
     elif stage == 'test-full':
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 1.
+        mask = distances > 0.3
         means3D = means3D[mask]
         rotation = rotation[mask]
         scales = scales[mask]
@@ -250,7 +250,7 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
         
     elif view_args['vis_mode'] in ['render']:
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 1.
+        mask = distances > 0.3
         means3D = means3D[mask]
         rotation = rotation[mask]
         scales = scales[mask]
@@ -493,7 +493,7 @@ def render_coarse_batch_vanilla(
     L1 = 0.
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 0.2
+        mask = distances > 0.3
         
         means3D_final = means3D[mask]
         rotations_final = rotations[mask]
@@ -550,7 +550,7 @@ def render_coarse_batch(
     L1 = 0.
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 0.2
+        mask = distances > 0.3
         
         means3D_final = means3D[mask]
         rotations_final = rotations[mask]

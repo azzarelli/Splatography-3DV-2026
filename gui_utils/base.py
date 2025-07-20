@@ -44,7 +44,7 @@ class GUIBase:
         self.show_scene_target = 0
 
         self.finecoarse_flag = True        
-        self.switch_off_viewer = False
+        self.switch_off_viewer = True
         self.switch_off_viewer_args = False
         self.full_opacity = False
         
@@ -108,9 +108,9 @@ class GUIBase:
                     self.iteration += 1
 
 
-                if (self.iteration % 4000) == 0:
-                    if self.stage == 'fine':
-                        self.test_step()
+                # if (self.iteration % 4000) == 0:
+                #     if self.stage == 'fine':
+                #         self.test_step()
 
                 if self.iteration > self.final_iter and self.stage == 'fine':
                     self.stage = 'done'
