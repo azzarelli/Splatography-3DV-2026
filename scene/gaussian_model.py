@@ -281,6 +281,10 @@ class GaussianModel:
         # Downsample background gaussians
         pcds = fused_point_cloud[~viable].cpu().numpy().astype(np.float64)
         cols = fused_color[~viable].cpu().numpy().astype(np.float64)
+        
+        # Re-sample point cloud
+        target = fused_point_cloud[viable]
+        target_col = fused_color[viable]
 
         if dataset_type == "condense":
             # Create Open3D point cloud
@@ -293,8 +297,26 @@ class GaussianModel:
             downsampled_pcd = pcd.voxel_down_sample(voxel_size)
 
             # Convert back to PyTorch tensor
-            pcds = torch.tensor(np.asarray(downsampled_pcd.points), dtype=fused_point_cloud.dtype).cuda()
-            cols = torch.tensor(np.asarray(downsampled_pcd.colors), dtype=fused_color.dtype).cuda()
+            bck_pcds = torch.tensor(np.asarray(downsampled_pcd.points), dtype=fused_point_cloud.dtype).cuda()
+            bck_cols = torch.tensor(np.asarray(downsampled_pcd.colors), dtype=fused_color.dtype).cuda()
+            
+            # pcds = fused_point_cloud[viable].cpu().numpy().astype(np.float64)
+            # cols = fused_color[viable].cpu().numpy().astype(np.float64)
+
+            # pcd = o3d.geometry.PointCloud()
+            # pcd.points = o3d.utility.Vector3dVector(pcds)
+            # pcd.colors = o3d.utility.Vector3dVector(cols)
+
+            # # Voxel size controls the granularity
+            # voxel_size = 0.03  # Adjust based on your data scale
+            # downsampled_pcd = pcd.voxel_down_sample(voxel_size)
+
+            # # Convert back to PyTorch tensor
+            # target = torch.tensor(np.asarray(downsampled_pcd.points), dtype=fused_point_cloud.dtype).cuda()
+            # target_col = torch.tensor(np.asarray(downsampled_pcd.colors), dtype=fused_color.dtype).cuda()
+            pcds = bck_pcds
+            cols = bck_cols
+            
         else:
             pcds = torch.tensor(pcds, dtype=fused_point_cloud.dtype).cuda()
             cols = torch.tensor(cols, dtype=fused_color.dtype).cuda()
@@ -312,9 +334,7 @@ class GaussianModel:
             cols = cols[mask, :]
             
 
-        # Re-sample point cloud
-        target = fused_point_cloud[viable]
-        target_col = fused_color[viable]
+        
             
         fused_point_cloud = torch.cat([pcds, target], dim=0)
         fused_color = torch.cat([cols, target_col], dim=0)

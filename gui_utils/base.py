@@ -44,7 +44,7 @@ class GUIBase:
         self.show_scene_target = 0
 
         self.finecoarse_flag = True        
-        self.switch_off_viewer = True
+        self.switch_off_viewer = False
         self.switch_off_viewer_args = False
         self.full_opacity = False
         
@@ -53,13 +53,13 @@ class GUIBase:
             if self.scene.dataset_type == 'dynerf':
                 self.free_cams = [self.scene.getTestCameras()[0], self.scene.getTestCameras()[49]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
             else:
-                self.free_cams = [self.scene.getTestCameras()[i*300] for i in range(4)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+                self.free_cams = [self.scene.getTestCameras()[i*300] for i in range(2)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
 
         else:
             if self.scene.dataset_type == 'dynerf':
                 self.free_cams = [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
             else:
-                self.free_cams = [self.scene.getTestCameras()[i*300] for i in range(4)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+                self.free_cams = [self.scene.getTestCameras()[i*300] for i in range(2)] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
 
             # try:
             #     self.free_cams = [self.scene.get_pseudo_view() for i in range(self.N_pseudo)]+ [self.scene.getTestCameras()[0]] + [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
@@ -119,6 +119,7 @@ class GUIBase:
             elif tested:
                 # self.test_step()
                 tested = False
+                dpg.stop_dearpygui() 
 
             # self.render_video_step()
             # self.test_step()
@@ -132,7 +133,10 @@ class GUIBase:
             with torch.no_grad():
                 self.viewer_step()
                 dpg.render_dearpygui_frame()
-        dpg.destroy_context() 
+        dpg.destroy_context()
+        
+        # Finally test & produce results
+        self.full_evaluation()
     
     def train(self):
         """Train without gui"""
@@ -163,6 +167,8 @@ class GUIBase:
                 break  # Exit the loop instead of calling exit()
 
         pbar.close()
+        self.full_evaluation()
+
                     
     @torch.no_grad()
     def viewer_step(self):

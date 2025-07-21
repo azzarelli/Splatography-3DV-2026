@@ -583,6 +583,122 @@ class GUI(GUIBase):
         self.gaussians.optimizer.step()
         self.gaussians.optimizer.zero_grad(set_to_none = True)
         self.iter_end.record()
+    
+    
+    @torch.no_grad()
+    def full_evaluation(self):
+        print('Full Eval')
+        import lpips
+        # from skimage.metrics import structural_similarity as ssim
+        lpips_vgg = lpips.LPIPS(net='vgg').to('cuda')
+        lpips_alex = lpips.LPIPS(net='alex').to('cuda')
+
+        @torch.no_grad()
+        def psnr(img1, img2, mask=None):
+            if mask is not None:
+                assert mask.shape == img1.shape[-2:], "Mask must match HxW of the image"
+                mask = mask.expand_as(img1)
+                diff = (img1 - img2) ** 2 * mask
+                mse = diff.sum() / mask.sum()
+            else:
+                mse = ((img1 - img2) ** 2).mean()
+            
+            mse = torch.clamp(mse, min=1e-10)  # Prevent log(0)
+            psnr_value = 20 * torch.log10(1.0 / torch.sqrt(mse))
+            
+            return psnr_value
+
+        self.test_viewpoint_stack = self.scene.getTestCameras() #.copy()
+        viewpoint_cams = self.test_viewpoint_stack
+        per_frame_results = {i: {'full':{'psnr': 0., 'ssim': 0., 'lpips_vgg': 0., 'lpips_alex': 0.},
+                                 'mask':{'psnr': 0.,'m_mae':0.,'m_psnr': 0., 'ssim': 0., 'lpips_vgg': 0., 'lpips_alex': 0.}} for i in range(len(viewpoint_cams))}
+
+        cnt = 0
+        # Render and return preds
+        for viewpoint_cam in tqdm(viewpoint_cams, desc="Processing viewpoints"):
+            try: # If we have seperate depth
+                viewpoint_cam, depth_cam = viewpoint_cam
+            except:
+                depth_cam = None
+
+            render_pkg = render(
+                viewpoint_cam, 
+                self.gaussians, 
+                self.pipe, 
+                self.background, 
+                stage='test-full' #foreground
+            )
+            test_img = render_pkg["render"]
+            gt_img = viewpoint_cam.original_image.cuda()
+            mask = viewpoint_cam.gt_alpha_mask.cuda().unsqueeze(0)
+            
+            if self.scene.dataset_type == 'condense':
+                A=59
+                B=2500
+                C=34
+                D=1405
+                
+                test_img = test_img[:, A:B,C:D]
+                gt_img = gt_img[:, A:B,C:D]
+                mask = mask[:, A:B,C:D]
+            
+            save_gt_pred_full(test_img, cnt, self.args.expname)
+            
+            # import matplotlib.pyplot as plt
+            # plt.figure(figsize=(10, 5))  # Adjust figure size if needed
+            # plt.subplot(1, 2, 1)  # Left side
+            # plt.imshow(test_img.permute(1,2,0).cpu().detach().numpy(), cmap='gray')  # Use 'gray' if it's a grayscale image
+            # plt.title("Test Image")
+            # plt.axis('off')
+            
+            # plt.subplot(1, 2, 2)  # Right side
+            # plt.imshow(gt_img.permute(1,2,0).cpu().detach().numpy(), cmap='gray')
+            # plt.title("Ground Truth Image")
+            # plt.axis('off')
+            
+            # plt.show()
+            # exit()
+            test_mask = test_img * mask
+            gt_mask = gt_img * mask
+
+            per_frame_results[cnt]['full']['psnr']  += psnr(gt_img, test_img).item()
+            per_frame_results[cnt]['full']['ssim']  += ssim(gt_img, test_img, window_size=3).item()
+            per_frame_results[cnt]['full']['lpips_vgg'] += lpips_vgg(gt_img, test_img).item()
+            per_frame_results[cnt]['full']['lpips_alex'] += lpips_alex(gt_img, test_img).item()
+            
+            # Masked
+            per_frame_results[cnt]['mask']['psnr']  += psnr(gt_mask, test_mask).item()
+            per_frame_results[cnt]['mask']['m_psnr']  += psnr(gt_img, test_img, mask.squeeze(0)).item()
+            per_frame_results[cnt]['mask']['ssim']  += ssim(gt_mask, test_mask, window_size=3).item()
+            
+            per_frame_results[cnt]['mask']['lpips_vgg'] += lpips_vgg(gt_mask, test_mask).item()
+            per_frame_results[cnt]['mask']['lpips_alex'] += lpips_alex(gt_mask, test_mask).item()
+
+            cnt += 1
+
+        average = {
+            'full': {k: 0. for k in ['mae', 'psnr', 'ssim', 'lpips_vgg', 'lpips_alex']},
+            'mask': {k: 0. for k in ['mae', 'psnr', 'm_mae', 'm_psnr', 'ssim', 'lpips_vgg', 'lpips_alex']}
+        }
+
+        # Accumulate
+        for frame_data in per_frame_results.values():
+            for category in ['full', 'mask']:
+                for metric in average[category]:
+                    average[category][metric] += frame_data[category].get(metric, 0.0)
+
+        # Average
+        num_frames = len(viewpoint_cams)
+        for category in average:
+            for metric in average[category]:
+                average[category][metric] /= num_frames
+                
+        import json
+        with open(f'output/{self.args.expname}/results.json', 'w') as json_file:
+            json.dump({
+                "average":average,
+                "per-frame":per_frame_results
+                }, json_file,  indent=4)
         
     @torch.no_grad()
     def test_step(self):
@@ -637,9 +753,7 @@ class GUI(GUIBase):
             if (self.iteration == 500) or (self.iteration == 1000 or self.iteration == 2000):
                 if idx % 100 == 0:
                     save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
-            
-            if self.view_test or self.iteration > (self.final_iter -2) or self.iteration % 1000 == 0:
-                save_gt_pred_full(gt_image, image, self.iteration, idx, self.args.expname)
+        
 
             fullPSNR += psnr(image, gt_image)
             fullSSIM += ssim(image.unsqueeze(0), gt_image)
@@ -681,8 +795,6 @@ class GUI(GUIBase):
                 # 'ssim': SSIM.item(),
                 'points':self.gaussians._xyz.shape[0]}
             json.dump(obj, f)
-
-        print(obj)
         
         # # Only compute extra metrics at the end of training -> can be slow
         # if self.gui:
@@ -722,7 +834,7 @@ def setup_seed(seed):
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
 
-def save_gt_pred_full(gt, pred, iteration, idx, name):
+def save_gt_pred_full(pred, idx, name):
 
     pred = (pred.permute(1, 2, 0)
         # .contiguous()
@@ -733,22 +845,11 @@ def save_gt_pred_full(gt, pred, iteration, idx, name):
         .numpy()
     )*255
 
-    gt = (gt.permute(1, 2, 0)
-            .clamp(0, 1)
-            .contiguous()
-            .detach()
-            .cpu()
-            .numpy()
-    )*255
-
     pred = pred.astype(np.uint8)
-    gt = gt.astype(np.uint8)
 
     # Convert RGB to BGR for OpenCV
     pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
-    gt_bgr = cv2.cvtColor(gt, cv2.COLOR_RGB2BGR)
 
-    # image_array = np.hstack((gt_bgr, pred_bgr))
     if not os.path.exists(f'output/{name}/images/'):
         os.mkdir(f'output/{name}/images/')
     cv2.imwrite(f'output/{name}/images/{idx}.png', pred_bgr)

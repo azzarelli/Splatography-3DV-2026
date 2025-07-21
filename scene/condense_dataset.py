@@ -252,6 +252,11 @@ class CondenseData(Dataset):
             fp = os.path.join(cam_folder, f"{split}/{cam_info}/{self.image_type_folder}")
             list_dir = sorted(os.listdir(fp), key=lambda x: int(x.split('.')[0]))
             time_max = len(list_dir)
+            
+            
+            if split == 'test' and ('Pony' in cam_folder or 'Curling' in cam_folder):
+                if cam_info not in ["000499613112","000511713112"]:
+                    continue
             cnt = 0
             for idx, img_fp in enumerate(list_dir):
                 img_fp_ = os.path.join(fp, img_fp)
