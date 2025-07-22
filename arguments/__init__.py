@@ -77,27 +77,27 @@ class ModelHiddenParams(ParamGroup):
         self.net_width = 64 # width of deformation MLP, larger will increase the rendering quality and decrase the training/rendering speed.
         self.defor_depth = 1 # depth of deformation MLP, larger will increase the rendering quality and decrase the training/rendering speed.
         self.bounds = 1.6 
+        
         self.plane_tv_weight = 0.0001 # TV loss of spatial grid
         self.time_smoothness_weight = 0.01 # TV loss of temporal grid
-        self.l1_time_planes = 0.0001  # TV loss of temporal grid
+        self.l1_time_planes = 0.0001 # TV loss of temporal grid
+        self.l1_col_planes_weight=0.0001
+        self.tv_background_weight=0.0001
+        self.ts_background_weight=0.01
+        
         self.opacity_lambda = 0.01  # TV loss of temporal grid
 
-        self.minview_weight=0.
-        self.tvtotal1_weight=0.
-        self.spsmoothness_weight=0.
-        self.minmotion_weight=0.
-        
         self.scene_config = {
                              'grid_dimensions': 2,
                              'input_coordinate_dim': 4,
-                             'output_coordinate_dim': 32,
+                             'output_coordinate_dim': 16,
                              'resolution': [64, 64, 64, 25] , # [64,64,64]: resolution of spatial grid. 25: resolution of temporal grid, better to be half length of dynamic frames                            
                              'wavelevel':2
-}
+        }
         self.target_config = {
                              'grid_dimensions': 2,
                              'input_coordinate_dim': 4,
-                             'output_coordinate_dim': 32,
+                             'output_coordinate_dim': 16,
                              'resolution': [64, 64, 64, 25],  # [64,64,64]: resolution of spatial grid. 25: resolution of temporal grid, better to be half length of dynamic frames
                             'wavelevel':2
                             }
@@ -112,33 +112,31 @@ class OptimizationParams(ParamGroup):
         self.custom_sampler=None
         self.iterations = 30_000
         self.coarse_iterations = 3000
+        
         self.position_lr_init = 0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 20_000
+        
         self.deformation_lr_init = 0.00016
         self.deformation_lr_final = 0.000016
         self.deformation_lr_delay_mult = 0.01
+        
         self.grid_lr_init = 0.0016
         self.grid_lr_final = 0.00016
 
         self.feature_lr = 0.0025
-        self.opacity_lr = 0.05
+        
+        self.opacityh_lr = 0.05
+        self.opacityw_lr = 0.05
+        self.opacitymu_lr = 0.05
+        
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
+        
+        
         self.percent_dense = 0.01
-        self.lambda_dssim = 0
-        self.lambda_lpips = 0
-        self.weight_constraint_init= 1
-        self.weight_constraint_after = 0.2
-        self.weight_decay_iteration = 5000
         self.opacity_reset_interval = 3000
-        self.densification_interval = 100
-        self.densify_from_iter = 500
-        self.densify_until_iter = 15_000
-        self.densify_grad_threshold= 0.0001
-        self.pruning_from_iter = 500
-        self.pruning_interval = 100
         self.batch_size=1
         
         self.add_point=False

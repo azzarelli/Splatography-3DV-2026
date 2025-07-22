@@ -185,8 +185,7 @@ class GUIBase:
             buffer_image = render(
                     cam,
                     self.gaussians, 
-                    self.pipe, 
-                    self.background, 
+                    self.scene.dataset_type, 
                     stage=self.stage,
                     view_args={
                         'show_mask':self.show_scene_target,
@@ -245,12 +244,10 @@ class GUIBase:
     def save_scene(self):
         print("\n[ITER {}] Saving Gaussians".format(self.iteration))
         self.scene.save(self.iteration, self.stage)
-        print("\n[ITER {}] Saving Checkpoint".format(self.iteration))
-        torch.save((self.gaussians.capture(), self.iteration), self.scene.model_path + "/chkpnt" + f"_{self.stage}_" + str(self.iteration) + ".pth")
-
+        
+        self.gaussians.save_checkpoint(self.iteration, self.stage, self.scene.model_path)
+  
     def register_dpg(self):
-        
-        
         ### register texture
         with dpg.texture_registry(show=False):
             dpg.add_raw_texture(
