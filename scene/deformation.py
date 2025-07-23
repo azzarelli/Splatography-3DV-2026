@@ -45,6 +45,7 @@ class Deformation(nn.Module):
         # Prep features for decoding
         net_size = self.W
         self.spacetime_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
+        self.spacecol_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
         
         self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         
@@ -57,7 +58,7 @@ class Deformation(nn.Module):
         if self.name == 'foreground':
             space, spacetime, coltime = self.grid(pts, time, covariances)
             st = self.spacetime_enc(space * spacetime) # TODO: Different encoders for color and space time? Its only one layer though
-            ct = self.spacetime_enc(space * coltime)
+            ct = self.spacecol_enc(space * coltime)
         elif self.name == 'background':
             space_b, spacetime_b, _ = self.grid(pts, time, covariances)
             st = self.spacetime_enc(space_b * spacetime_b)
@@ -66,15 +67,13 @@ class Deformation(nn.Module):
 
     def forward(self, rays_pts_emb, rotations_emb, scale_emb, shs_emb, h_emb, time_emb):
         time_emb = torch.full_like(scale_emb[:,0].unsqueeze(-1), time_emb).to(rays_pts_emb.device)
-        
         covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
         dyn_feature, color_feature = self.query_spacetime(rays_pts_emb, time_emb, covariances)
         
         pts = rays_pts_emb + self.pos_coeffs(dyn_feature)
 
         if self.name == 'background':
-            opacity = h_emb[0]
-            return pts, rotations_emb, opacity, shs_emb 
+            return pts, rotations_emb, None, shs_emb 
 
         rotations = None
         shs = None

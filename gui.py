@@ -200,13 +200,14 @@ class GUI(GUIBase):
        
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if self.iteration % 500 == 0:
-            self.gaussians.oneupSHdegree()
+            self.gaussians.fg.oneupSHdegree()
+            self.gaussians.bg.oneupSHdegree()
             
         # Update Gaussian lr for current iteration
         self.gaussians.update_learning_rate(self.iteration)          
         
         if self.iteration == int(self.final_iter/2):
-            print("Dupelication")
+            print("Spatial Duplication")
             self.gaussians.duplicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
@@ -244,7 +245,7 @@ class GUI(GUIBase):
             if self.gui:
                     dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                     if (self.iteration % 2) == 0:
-                        dpg.set_value("_log_points", f"Scene Pts: {self.gaussians.fg._xyz.shape[0]} | Target Pts: {self.gaussians.bg._xyz.shape[0]} ")
+                        dpg.set_value("_log_points", f"Bg Pts: {self.gaussians.bg._xyz.shape[0]} | Fg Pts: {self.gaussians.fg._xyz.shape[0]} ")
                     
             if self.iteration % 2000 == 0:
                 self.track_cpu_gpu_usage(0.1)
@@ -263,9 +264,6 @@ class GUI(GUIBase):
             self.timer.pause()
             torch.cuda.synchronize()
             
-            # Save scene when at the saving iteration
-            if (self.iteration in self.saving_iterations) or (self.iteration == self.final_iter-1):
-                self.save_scene()
             self.timer.start()
 
             if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
@@ -300,7 +298,7 @@ class GUI(GUIBase):
             if self.gui:
                     dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                     if (self.iteration % 2) == 0:
-                        dpg.set_value("_log_points", f"Scene Pts: {self.gaussians.fg._xyz.shape[0]} | Target Pts: {self.gaussians.bg._xyz.shape[0]} ")
+                        dpg.set_value("_log_points", f"Bg Pts: {self.gaussians.bg._xyz.shape[0]} | Fg Pts: {self.gaussians.fg._xyz.shape[0]} ")
             if self.iteration % 2000 == 0:
                 self.track_cpu_gpu_usage(0.1)
 
@@ -319,10 +317,10 @@ class GUI(GUIBase):
             self.gaussians.duplicate('dynamic')
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
-        if self.iteration == 1 and self.scene.dataset_type == "condense": # TODO: Maybe this is unecessary?
-            print("Dupelicating Dynamics")
-            self.gaussians.duplicate()
-            self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+        # if self.iteration == 1 and self.scene.dataset_type == "condense": # TODO: Maybe this is unecessary?
+        #     print("Dupelicating Dynamics")
+        #     self.gaussians.duplicate()
+        #     self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
     
         L1 = torch.tensor(0.).cuda()
@@ -368,7 +366,7 @@ class GUI(GUIBase):
                     dpg.set_value("_log_dynscales", f"Plane Reg: {planeloss} ")
 
                     if (self.iteration % 1000) == 0:
-                        dpg.set_value("_log_points", f"Scene Pts: {(~self.gaussians.target_mask).sum()} | Target Pts: {(self.gaussians.target_mask).sum()} ")
+                        dpg.set_value("_log_points", f"Bg Pts: {self.gaussians.bg._xyz.shape[0]} | Fg Pts: {self.gaussians.fg._xyz.shape[0]} ")
                     
 
             if self.iteration % 2000 == 0:
@@ -389,8 +387,8 @@ class GUI(GUIBase):
            
             torch.cuda.synchronize()
             # Save scene when at the saving iteration
-            if (self.iteration in self.saving_iterations) or (self.iteration == self.final_iter-1):
-                self.save_scene()
+            # if (self.iteration in self.saving_iterations) or (self.iteration == self.final_iter-1):
+            #     self.save_scene()
 
             self.timer.start()
 

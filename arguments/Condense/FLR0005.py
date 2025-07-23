@@ -30,5 +30,5 @@ OptimizationParams = dict(
     coarse_iterations=3000,
     batch_size=2, # Was 4
     opacity_reset_interval=3000,    
-    feature_lr=0.001
+    feature_lr=0.0005
 )

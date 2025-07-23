@@ -158,7 +158,7 @@ class GaussianBase:
     def get_temporal_parameters(self,time):
         scales = self.get_scaling_with_3D_filter
         
-        means3D, rotations, opacity, colors  = self._deformation(
+        means3D, rotations, _, colors  = self._deformation(
             point=self._xyz, 
             rotations=self._rotation,
             scales=scales, 
@@ -167,7 +167,7 @@ class GaussianBase:
             time=time
         )
 
-        opacity = self.get_fine_opacity_with_3D_filter(opacity)
+        opacity = self.get_fine_opacity_with_3D_filter(self.get_hopac)
         rotations = self.rotation_activation(rotations)
         
         return means3D, scales, rotations, colors, opacity
@@ -380,6 +380,7 @@ class GaussianBase:
         self._deformation = self._deformation.to("cuda")
         
     def save_deformation(self, path):
+        if os.path.exists(path) == False: os.mkdir(path)
         torch.save(self._deformation.state_dict(),os.path.join(path, f"deformation_{self.name}.pth"))
     
     def save_ply(self, path):
