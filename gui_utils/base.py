@@ -44,7 +44,7 @@ class GUIBase:
         self.show_scene_target = 0
 
         self.finecoarse_flag = True        
-        self.switch_off_viewer = True
+        self.switch_off_viewer = False
         self.switch_off_viewer_args = False
         self.full_opacity = False
         

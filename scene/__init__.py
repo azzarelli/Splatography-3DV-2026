@@ -14,7 +14,6 @@ import random
 import torch
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
-from scene.gaussian_model import GaussianModel
 from scene.gaussians.interface import GaussianScene
 from scene.dataset import FourDGSdataset
 from arguments import ModelParams

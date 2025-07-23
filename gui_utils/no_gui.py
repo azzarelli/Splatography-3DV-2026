@@ -8,7 +8,7 @@ from random import randint
 
 from tqdm import tqdm
 import sys
-from scene import Scene, GaussianModel
+from scene import Scene
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams, ModelHiddenParams
