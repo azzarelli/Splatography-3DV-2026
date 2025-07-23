@@ -195,7 +195,7 @@ class Neural3D_NDC_Dataset(Dataset):
         poses_arr = np.load(os.path.join(self.root_dir, "poses_bounds.npy"))
         poses = poses_arr[:, :-2].reshape([-1, 3, 5])  # (N_cams, 3, 5)
         self.near_fars = poses_arr[:, -2:]
-        videos = glob.glob(os.path.join(self.root_dir, "cam*.mp4"))
+        videos = glob.glob(os.path.join(self.root_dir, "cam*.txt"))
         videos = sorted(videos)
         # breakpoint()
         assert len(videos) == poses_arr.shape[0]
@@ -247,8 +247,6 @@ class Neural3D_NDC_Dataset(Dataset):
                 if split == 'train':
                     name__ = 'images'
                     image_path = os.path.join(video_images_path,name__)
-                    depth_path = video_images_path[:-5]+'vda/'+video_images_path.split('/')[-1]+'/target_depth.png'
-                    self.depth_paths.append(depth_path)
                 else:
                     image_path = os.path.join(video_images_path,"masks")
 
