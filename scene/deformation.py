@@ -133,7 +133,7 @@ class Deformation(nn.Module):
         rotations[target_mask] += self.rotations_deform(dyn_feature)
         
         shs = shs_emb + 0.
-        shs[target_mask] += self.shs_deform(color_feature).view(-1, 16, 3)
+        shs[target_mask] += self.shs_deform(dyn_feature).view(-1, 16, 3)
          
         # Position
         pts = rays_pts_emb + 0. #.clone()        
