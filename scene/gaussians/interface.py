@@ -1,26 +1,13 @@
 import torch
 import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
-from torch import nn
-import os
 import open3d as o3d
-from utils.system_utils import mkdir_p
-from plyfile import PlyData, PlyElement
-from random import randint
 from utils.sh_utils import RGB2SH
-# from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation
-from scene.deformation import deform_network
-from scene.regulation import compute_plane_smoothness,compute_plane_tv
-
-from gaussian_renderer import render_motion_point_mask
+from scene.regulation import compute_plane_smoothness
 
 from scene.gaussians.B_Gaussians import BackgroundGaussians
 from scene.gaussians.F_Gaussians import ForegroundGaussians
-
 from scipy.spatial import KDTree
-import torch
 
 def distCUDA2(points):
     points_np = points.detach().cpu().float().numpy()

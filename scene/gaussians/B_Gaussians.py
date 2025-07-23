@@ -1,6 +1,5 @@
 import torch
 from scene.deformation import deform_network
-from gaussian_renderer import render_motion_point_mask
 from scene.gaussians.base import GaussianBase
 
 class BackgroundGaussians(GaussianBase):
