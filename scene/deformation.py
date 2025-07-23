@@ -7,7 +7,6 @@ from scene.triplanes import TriPlaneField
 
 import time
 
-from torch_cluster import knn_graph
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
 class Deformation(nn.Module):

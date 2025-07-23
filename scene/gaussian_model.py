@@ -28,7 +28,6 @@ from scene.regulation import compute_plane_smoothness,compute_plane_tv
 
 from gaussian_renderer import render_motion_point_mask
 
-from torch_cluster import knn_graph
 
 class GaussianModel:
 
@@ -802,14 +801,6 @@ class GaussianModel:
         
         return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + l1_col_planes_weight*col +\
             ts_background_weight*tsbackground + tv_background_weight*tvbackground
-
-    def generate_neighbours(self, points):
-        edge_index = knn_graph(points, k=5, batch=None, loop=False)
-        self.target_neighbours = edge_index
-
-    def update_neighbours(self, points):
-        edge_index = knn_graph(points, k=5, batch=None, loop=False)
-        self.target_neighbours = edge_index
 
 
 
