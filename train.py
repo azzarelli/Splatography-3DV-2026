@@ -7,7 +7,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams, ModelHidd
 import numpy as np
 import random
 
-from gui import GUI
+from gui_utils.no_gui import GUI
 
 def setup_seed(seed):
      torch.manual_seed(seed)
