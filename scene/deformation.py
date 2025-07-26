@@ -105,7 +105,7 @@ class Deformation(nn.Module):
             st_b = None
 
         st = self.spacetime_enc(space * spacetime) # TODO: Different encoders for color and space time? Its only one layer though
-        ct = self.spacetime_enc(space * coltime)
+        ct = None #self.spacetime_enc(space * coltime)
         return st, ct, st_b # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
 
     def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):

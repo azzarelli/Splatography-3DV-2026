@@ -458,10 +458,10 @@ class GUI(GUIBase):
             self.gaussians.dynamic_dupelication()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
-        if self.iteration == 1 and self.scene.dataset_type == "condense": # TODO: Maybe this is unecessary?
-            print("Dupelicating Dynamics")
-            self.gaussians.dupelicate()
-            self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+        # if self.iteration == -1 and self.scene.dataset_type == "condense": # TODO: Maybe this is unecessary?
+        #     print("Dupelicating Dynamics")
+        #     self.gaussians.dupelicate()
+        #     self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
         L1 = torch.tensor(0.).cuda()
         
@@ -495,7 +495,7 @@ class GUI(GUIBase):
 
         loss = L1 +  planeloss + \
                         pg_loss + \
-                            0.01*(hopacloss + wopacloss)
+                            0.01*(hopacloss) + (wopacloss)
                    
         # print( planeloss ,depthloss,hopacloss ,wopacloss ,normloss ,pg_loss,covloss)
         with torch.no_grad():
@@ -674,6 +674,17 @@ class GUI(GUIBase):
             per_frame_results[cnt]['mask']['lpips_vgg'] += lpips_vgg(gt_mask, test_mask).item()
             per_frame_results[cnt]['mask']['lpips_alex'] += lpips_alex(gt_mask, test_mask).item()
 
+            
+            render_pkg = render(
+                viewpoint_cam, 
+                self.gaussians, 
+                self.pipe, 
+                self.background, 
+                stage='test-foreground' #foreground
+            )
+            test_img = render_pkg["render"]
+            save_gt_pred_mask(test_img, cnt, self.args.expname)
+
             cnt += 1
 
         average = {
@@ -699,37 +710,30 @@ class GUI(GUIBase):
                 "average":average,
                 "per-frame":per_frame_results
                 }, json_file,  indent=4)
-        
+     
     @torch.no_grad()
     def test_step(self):
-        print('testing')
-        if self.iteration < (self.final_iter -1) and (self.iteration % 500) != 0 and self.view_test == False:
-            idx = 0
-            viewpoint_cams = []
+        @torch.no_grad()
+        def psnr(img1, img2, mask=None):
+            if mask is not None:
+                assert mask.shape == img1.shape[-2:], "Mask must match HxW of the image"
+                mask = mask.expand_as(img1)
+                diff = (img1 - img2) ** 2 * mask
+                mse = diff.sum() / mask.sum()
+            else:
+                mse = ((img1 - img2) ** 2).mean()
             
-            # Construct batch for current step
-            while idx < 10:
-                # If viewpoint stack doesn't exist get it from the temp view point list
-                if not self.test_viewpoint_stack:
-                    self.test_viewpoint_stack = self.scene.getTestCameras().copy()
+            mse = torch.clamp(mse, min=1e-10)  # Prevent log(0)
+            psnr_value = 20 * torch.log10(1.0 / torch.sqrt(mse))
+            
+            return psnr_value
 
-                viewpoint_cams.append(self.test_viewpoint_stack[randint(0,len(self.test_viewpoint_stack)-1)]) # TODO: perhaps ensuring varying view positions rather thn just random views
-                idx +=1
-        else:
-            self.test_viewpoint_stack = self.scene.getTestCameras() #.copy()
-            viewpoint_cams = self.test_viewpoint_stack
+        self.test_viewpoint_stack = self.scene.getTestCameras() #.copy()
+        viewpoint_cams = self.test_viewpoint_stack
+        per_frame_results = {i: {'full':{'psnr': 0., 'ssim': 0.},
+                                 'mask':{'psnr': 0.,'m_psnr': 0., 'ssim': 0.}} for i in range(len(viewpoint_cams))}
 
-
-        # if not os.path.exists(f'debugging/{self.iteration}') and self.iteration % 1000 == 0:
-        #     os.mkdir(f'debugging/{self.iteration}')
-
-        PSNR = 0.
-        SSIM = 0.
-        fullPSNR = 0.
-        fullSSIM = 0.
-        dumbPSNR = 0.
-
-        idx = 0
+        cnt = 0
         # Render and return preds
         for viewpoint_cam in tqdm(viewpoint_cams, desc="Processing viewpoints"):
             try: # If we have seperate depth
@@ -744,87 +748,74 @@ class GUI(GUIBase):
                 self.background, 
                 stage='test-full' #foreground
             )
-            image = render_pkg["render"]
-
-
-            gt_image = viewpoint_cam.original_image.cuda()
-            mask = viewpoint_cam.gt_alpha_mask.cuda()
-
-            if (self.iteration == 500) or (self.iteration == 1000 or self.iteration == 2000):
-                if idx % 100 == 0:
-                    save_gt_pred(gt_image, image, self.iteration, idx, self.args.expname.split('/')[-1])
-        
-
-            fullPSNR += psnr(image, gt_image)
-            fullSSIM += ssim(image.unsqueeze(0), gt_image)
+            test_img = render_pkg["render"]
+            gt_img = viewpoint_cam.original_image.cuda()
+            mask = viewpoint_cam.gt_alpha_mask.cuda().unsqueeze(0)
             
-            # render_pkg = render(
-            #     viewpoint_cam, 
-            #     self.gaussians, 
-            #     self.pipe, 
-            #     self.background, 
-            #     stage='test-foreground'
-            # )
-            # image = render_pkg["render"]
-            # gt_image = gt_image*mask
-            # image = image*mask
-            # PSNR += psnr(image, gt_image)
-            # SSIM += ssim(image.unsqueeze(0), gt_image)
+            if self.scene.dataset_type == 'condense':
+                A=59
+                B=2500
+                C=34
+                D=1405
+                
+                test_img = test_img[:, A:B,C:D]
+                gt_img = gt_img[:, A:B,C:D]
+                mask = mask[:, A:B,C:D]
+               
+            test_mask = test_img * mask
+            gt_mask = gt_img * mask
+
+            per_frame_results[cnt]['full']['psnr']  += psnr(gt_img, test_img).item()
+            per_frame_results[cnt]['full']['ssim']  += ssim(gt_img, test_img, window_size=3).item()
+            # Masked
+            per_frame_results[cnt]['mask']['psnr']  += psnr(gt_mask, test_mask).item()
+            per_frame_results[cnt]['mask']['m_psnr']  += psnr(gt_img, test_img, mask.squeeze(0)).item()
+            per_frame_results[cnt]['mask']['ssim']  += ssim(gt_mask, test_mask, window_size=3).item()
             
-            idx += 1
+            cnt += 1
 
-            if idx % 4 == 0 and self.gui:
-                with torch.no_grad():
-                    self.viewer_step()
-                    dpg.render_dearpygui_frame()
+        average = {
+            'full': {k: 0. for k in ['psnr', 'ssim']},
+            'mask': {k: 0. for k in ['psnr', 'm_psnr', 'ssim']}
+        }
 
+        # Accumulate
+        for frame_data in per_frame_results.values():
+            for category in ['full', 'mask']:
+                for metric in average[category]:
+                    average[category][metric] += frame_data[category].get(metric, 0.0)
 
-        # Loss
-        # dumbPSNR = dumbPSNR.item()/len(viewpoint_cams)
-        fullPSNR = fullPSNR.item()/len(viewpoint_cams)
-        fullSSIM = fullSSIM/len(viewpoint_cams)
-        # PSNR = PSNR.item()/len(viewpoint_cams)
-        # SSIM = SSIM/len(viewpoint_cams)
-
-        save_file = os.path.join(self.results_dir, f'{self.iteration}.json')
-        with open(save_file, 'w') as f:
-            obj = {
-                'full-psnr': fullPSNR,
-                'full-ssim': fullSSIM.item(),
-                # 'psnr': PSNR,
-                # 'ssim': SSIM.item(),
-                'points':self.gaussians._xyz.shape[0]}
-            json.dump(obj, f)
+        # Average
+        num_frames = len(viewpoint_cams)
+        for category in average:
+            for metric in average[category]:
+                average[category][metric] /= num_frames
+        print(f'Test {self.iteration} | {average}')
         
-        # # Only compute extra metrics at the end of training -> can be slow
-        # if self.gui:
-        #     if self.iteration < (self.final_iter -1):
-        #         dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
-        #         dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
-
-        #     else:
-        #         dpg.set_value("_log_psnr_test", "PSNR : {:>12.7f}".format(PSNR, ".5"))
-        #         dpg.set_value("_log_ssim", "SSIM : {:>12.7f}".format(SSIM, ".5"))
-
     @torch.no_grad()
     def render_video_step(self):
 
         viewpoint_cams = self.scene.getVideoCameras() #.copy()
 
-        idx = 0
+        cnt = 0
         # Render and return preds
         for viewpoint_cam in tqdm(viewpoint_cams, desc="Processing viewpoints"):
-            render_pkg = render(
+            save_novel_views(render(
+                viewpoint_cam, 
+                self.gaussians, 
+                self.pipe, 
+                self.background, 
+                stage='test-full'
+            )["render"], cnt, self.args.expname)
+            save_novel_views_foreground(render(
                 viewpoint_cam, 
                 self.gaussians, 
                 self.pipe, 
                 self.background, 
                 stage='test-foreground'
-            )
-            image = render_pkg["render"]
-            save_video(image, idx, self.args.expname)
+            )["render"], cnt, self.args.expname)
             
-            idx += 1
+            cnt += 1
 
 
 def setup_seed(seed):
@@ -833,6 +824,77 @@ def setup_seed(seed):
      np.random.seed(seed)
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
+
+def save_novel_views(pred, idx, name):
+
+    pred = (pred.permute(1, 2, 0)
+        # .contiguous()
+        .clamp(0, 1)
+        .contiguous()
+        .detach()
+        .cpu()
+        .numpy()
+    )*255
+
+    pred = pred.astype(np.uint8)
+
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+
+    if not os.path.exists(f'output/{name}/nvs/'):
+        os.mkdir(f'output/{name}/nvs/')
+        os.mkdir(f'output/{name}/nvs/full/')
+    elif not os.path.exists(f'output/{name}/nvs/full/'):
+        os.mkdir(f'output/{name}/nvs/full/')
+    cv2.imwrite(f'output/{name}/nvs/full/{idx}.png', pred_bgr)
+
+    return pred_bgr
+def save_novel_views_foreground(pred, idx, name):
+
+    pred = (pred.permute(1, 2, 0)
+        # .contiguous()
+        .clamp(0, 1)
+        .contiguous()
+        .detach()
+        .cpu()
+        .numpy()
+    )*255
+
+    pred = pred.astype(np.uint8)
+
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+
+    if not os.path.exists(f'output/{name}/nvs/'):
+        os.mkdir(f'output/{name}/nvs/')
+        os.mkdir(f'output/{name}/nvs/foreground/')
+    elif not os.path.exists(f'output/{name}/nvs/foreground/'):
+        os.mkdir(f'output/{name}/nvs/foreground/')
+    cv2.imwrite(f'output/{name}/nvs/foreground/{idx}.png', pred_bgr)
+
+    return pred_bgr
+
+def save_gt_pred_mask(pred, idx, name):
+
+    pred = (pred.permute(1, 2, 0)
+        # .contiguous()
+        .clamp(0, 1)
+        .contiguous()
+        .detach()
+        .cpu()
+        .numpy()
+    )*255
+
+    pred = pred.astype(np.uint8)
+
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+
+    if not os.path.exists(f'output/{name}/foreground/'):
+        os.mkdir(f'output/{name}/foreground/')
+    cv2.imwrite(f'output/{name}/foreground/{idx}.png', pred_bgr)
+
+    return pred_bgr
 
 def save_gt_pred_full(pred, idx, name):
 

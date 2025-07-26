@@ -786,11 +786,6 @@ class GaussianModel:
                 for grid in wavelets[index]:
                     l1total += torch.abs(grid).mean()
                     
-            elif index in [6, 7, 8]:
-                for grid in wavelets[index]: # space time
-                    col += torch.abs(grid).mean()
-                    
-        wavelets = self._deformation.deformation_net.background_grid.waveplanes_list()
         # # model.grids is 6 x [1, rank * F_dim, reso, reso]
         for index, grids in enumerate(self._deformation.deformation_net.background_grid.grids_()):
             if index in [0,1,3]: # space only
@@ -800,7 +795,7 @@ class GaussianModel:
                 for grid in grids: # space time
                     tstotal += compute_plane_smoothness(grid)       
         
-        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total + minview_weight*col
+        return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total # + minview_weight*col
 
     def generate_neighbours(self, points):
         edge_index = knn_graph(points, k=5, batch=None, loop=False)

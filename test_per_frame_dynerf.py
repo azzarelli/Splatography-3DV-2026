@@ -17,10 +17,10 @@ root = "/home/barry/Desktop/PhD/SparseViewPaper/DYNERF_RESULTS"
 gt_root = os.path.join(root, "GT")
 
 scenes = ["CSP", "FST", "FSM"]
-scenes = ["CSP"]
+scenes = ["FST"]
 
 # models = ["4DGS", "W4DGS"]
-models = ["Ours"]
+models = ["4DGS"]
 
 # Frame-wise results dictionary
 
@@ -61,6 +61,7 @@ with torch.no_grad():
                 test_img = cv2.imread(test_fp, cv2.IMREAD_UNCHANGED) / 255.0
                 gt_img_full = cv2.imread(gt_fp, cv2.IMREAD_UNCHANGED) / 255.0
 
+                import matplotlib.pyplot as plt
                 # Extract
                 gt_img = gt_img_full[:, :, :3]
                 mask = np.expand_dims( gt_img_full[:, :, -1], axis=-1)
@@ -68,6 +69,22 @@ with torch.no_grad():
                 test_mask = test_img * mask
                 gt_mask = gt_img * mask
                 
+                
+                # plt.figure(figsize=(10, 5))
+
+                # plt.subplot(1, 2, 1)
+                # plt.imshow(test_mask)
+                # plt.title("Test Image")
+                # plt.axis("off")
+
+                # plt.subplot(1, 2, 2)
+                # plt.imshow(gt_mask)
+                # plt.title("Ground Truth Image")
+                # plt.axis("off")
+
+                # plt.tight_layout()
+                # plt.show()
+                # exit()
                 # LPIPS (GPU, no gradient tracking)
                 gt_tensor = preprocess(gt_img)
                 test_tensor = preprocess(test_img)
@@ -87,7 +104,7 @@ with torch.no_grad():
                 per_frame_results[cnt]['mask']['psnr']  += psnr(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
                 per_frame_results[cnt]['mask']['m_psnr']  += psnr(gt_tensor, test_tensor, mask_tensor.squeeze(0)).item()
                 per_frame_results[cnt]['mask']['ssim']  += ssim(gt_mask, test_mask, win_size=3, channel_axis=-1, data_range=1.0)
-                
+                print(per_frame_results[cnt])
                 # per_frame_results[cnt]['mask']['lpips_vgg'] += lpips_vgg(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
                 # per_frame_results[cnt]['mask']['lpips_alex'] += lpips_alex(gt_tensor*mask_tensor, test_tensor*mask_tensor).item()
 
@@ -133,5 +150,5 @@ with torch.no_grad():
                 "per-frame": per_frame_results
             }
 import json
-with open("debugging/our_res.json", 'w') as json_file:
+with open("debugging/resulta.json", 'w') as json_file:
     json.dump(finaldictionary, json_file,  indent=4)

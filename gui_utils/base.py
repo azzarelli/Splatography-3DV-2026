@@ -108,18 +108,17 @@ class GUIBase:
                     self.iteration += 1
 
 
-                # if (self.iteration % 4000) == 0:
-                #     if self.stage == 'fine':
-                #         self.test_step()
+                if (self.iteration % 1000) == 0 and  self.stage == 'fine':
+                    self.test_step()
 
                 if self.iteration > self.final_iter and self.stage == 'fine':
                     self.stage = 'done'
                     dpg.stop_dearpygui() 
                     # exit()
-            elif tested:
-                # self.test_step()
-                tested = False
-                dpg.stop_dearpygui() 
+            # elif tested:
+            #     # self.test_step()
+            #     tested = False
+            #     dpg.stop_dearpygui() 
 
             # self.render_video_step()
             # self.test_step()
@@ -159,8 +158,8 @@ class GUIBase:
                 self.iteration += 1
                 pbar.update(1)
 
-            if self.iteration % 1000 == 0 and self.stage == 'fine':
-                self.test_step()
+            # if self.iteration % 1000 == 0 and self.stage == 'fine':
+            #     self.test_step()
 
             if self.iteration > self.final_iter and self.stage == 'fine':
                 self.stage = 'done'

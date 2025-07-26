@@ -73,13 +73,13 @@ def interpolate_features_MUL(data, M, kplanes):
         elif i in [2, 4, 5]:
             spacetime = spacetime * feature
 
-    coords = [[3,0], [3,1], [3,2]]
-    for i in range(len(coords)):
-        q,r = coords[i]
-        feature = kplanes[6+i](data[..., (q, r)])
-        feature = feature.view(-1, M, feature.shape[-1]).mean(dim=1)
+    # coords = [[3,0], [3,1], [3,2]]
+    # for i in range(len(coords)):
+    #     q,r = coords[i]
+    #     feature = kplanes[6+i](data[..., (q, r)])
+    #     feature = feature.view(-1, M, feature.shape[-1]).mean(dim=1)
 
-        coltime = coltime * feature
+    #     coltime = coltime * feature
 
     return space, spacetime, coltime
    
@@ -198,24 +198,24 @@ class WavePlaneField(nn.Module):
 
             self.grids.append(gridset)
 
-        for i in range(3): # for the color
-            what = 'spacetime'
-            res = [self.grid_config['resolution'][0], self.grid_config['resolution'][1]]
+        # for i in range(3): # for the color
+        #     what = 'spacetime'
+        #     res = [self.grid_config['resolution'][0], self.grid_config['resolution'][1]]
             
-            gridset = GridSet(
-                what=what,
-                resolution=res,
-                J=self.grid_config['wavelevel'],
-                config={
-                    'feature_size': self.grid_config["output_coordinate_dim"],
-                    'a': 0.1,
-                    'b': 0.5,
-                    'wave': 'coif4',
-                    'wave_mode': 'periodization',
-                },
-                cachesig=self.cacheplanes
-            )
-            self.grids.append(gridset)
+        #     gridset = GridSet(
+        #         what=what,
+        #         resolution=res,
+        #         J=self.grid_config['wavelevel'],
+        #         config={
+        #             'feature_size': self.grid_config["output_coordinate_dim"],
+        #             'a': 0.1,
+        #             'b': 0.5,
+        #             'wave': 'coif4',
+        #             'wave_mode': 'periodization',
+        #         },
+        #         cachesig=self.cacheplanes
+        #     )
+        #     self.grids.append(gridset)
 
 
     def compact_save(self, fp):
