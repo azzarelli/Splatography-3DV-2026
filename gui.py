@@ -358,8 +358,6 @@ class GUI(GUIBase):
             if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
                 self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
 
-            # if self.iteration % self.opt.opacity_reset_interval == 0 and self.iteration > 1000:
-            #     self.gaussians.reset_opacity_background()
             
     def train_foreground_step(self):
         torch.cuda.empty_cache()
@@ -537,7 +535,7 @@ class GUI(GUIBase):
             if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
                 self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
             
-            if self.iteration % self.opt.opacity_reset_interval == 0 and self.iteration < 8001:# and self.stage == 'fine':
+            if self.iteration % self.opt.opacity_reset_interval == 0 and self.iteration < (self.final_iter - 100):# and self.stage == 'fine':
                 self.gaussians.reset_opacity()
 
     def train_depth_step(self):
@@ -586,7 +584,7 @@ class GUI(GUIBase):
     
     
     @torch.no_grad()
-    def full_evaluation(self):
+    def full_evaluation(self,):
         print('Full Eval')
         import lpips
         # from skimage.metrics import structural_similarity as ssim
@@ -616,19 +614,24 @@ class GUI(GUIBase):
         cnt = 0
         # Render and return preds
         for viewpoint_cam in tqdm(viewpoint_cams, desc="Processing viewpoints"):
-            try: # If we have seperate depth
-                viewpoint_cam, depth_cam = viewpoint_cam
-            except:
-                depth_cam = None
-
+            # viewpoint_cam = self.scene.getTestCameras()[335]
+            test_img = render(
+                viewpoint_cam, 
+                self.gaussians, 
+                self.pipe, 
+                self.background, 
+                stage='test-full'
+            )["render"]
+            
             render_pkg = render(
                 viewpoint_cam, 
                 self.gaussians, 
                 self.pipe, 
                 self.background, 
-                stage='test-full' #foreground
+                stage='test-foreground'
             )
-            test_img = render_pkg["render"]
+            _, alpha_fg = render_pkg["render"], render_pkg["extras"]
+            
             gt_img = viewpoint_cam.original_image.cuda()
             mask = viewpoint_cam.gt_alpha_mask.cuda().unsqueeze(0)
             
@@ -639,25 +642,14 @@ class GUI(GUIBase):
                 D=1405
                 
                 test_img = test_img[:, A:B,C:D]
+                alpha_fg = alpha_fg[:, A:B,C:D]
+
                 gt_img = gt_img[:, A:B,C:D]
                 mask = mask[:, A:B,C:D]
             
-            save_gt_pred_full(test_img, cnt, self.args.expname)
-            
-            # import matplotlib.pyplot as plt
-            # plt.figure(figsize=(10, 5))  # Adjust figure size if needed
-            # plt.subplot(1, 2, 1)  # Left side
-            # plt.imshow(test_img.permute(1,2,0).cpu().detach().numpy(), cmap='gray')  # Use 'gray' if it's a grayscale image
-            # plt.title("Test Image")
-            # plt.axis('off')
-            
-            # plt.subplot(1, 2, 2)  # Right side
-            # plt.imshow(gt_img.permute(1,2,0).cpu().detach().numpy(), cmap='gray')
-            # plt.title("Ground Truth Image")
-            # plt.axis('off')
-            
-            # plt.show()
-            # exit()
+            # save_gt_pred_full(test_img, cnt, self.args.expname)
+            save_gt_pred_mask(torch.cat([test_img, alpha_fg], dim=0), cnt, self.args.expname)
+
             test_mask = test_img * mask
             gt_mask = gt_img * mask
 
@@ -673,18 +665,6 @@ class GUI(GUIBase):
             
             per_frame_results[cnt]['mask']['lpips_vgg'] += lpips_vgg(gt_mask, test_mask).item()
             per_frame_results[cnt]['mask']['lpips_alex'] += lpips_alex(gt_mask, test_mask).item()
-
-            
-            render_pkg = render(
-                viewpoint_cam, 
-                self.gaussians, 
-                self.pipe, 
-                self.background, 
-                stage='test-foreground' #foreground
-            )
-            test_img = render_pkg["render"]
-            save_gt_pred_mask(test_img, cnt, self.args.expname)
-
             cnt += 1
 
         average = {
@@ -703,14 +683,14 @@ class GUI(GUIBase):
         for category in average:
             for metric in average[category]:
                 average[category][metric] /= num_frames
-                
+
         import json
-        with open(f'output/{self.args.expname}/results.json', 'w') as json_file:
+        with open(f'output/{self.args.expname}/results_redone.json', 'w') as json_file:
             json.dump({
                 "average":average,
                 "per-frame":per_frame_results
                 }, json_file,  indent=4)
-     
+    
     @torch.no_grad()
     def test_step(self):
         @torch.no_grad()
@@ -888,11 +868,11 @@ def save_gt_pred_mask(pred, idx, name):
     pred = pred.astype(np.uint8)
 
     # Convert RGB to BGR for OpenCV
-    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGBA2BGRA)
 
-    if not os.path.exists(f'output/{name}/foreground/'):
-        os.mkdir(f'output/{name}/foreground/')
-    cv2.imwrite(f'output/{name}/foreground/{idx}.png', pred_bgr)
+    if not os.path.exists(f'output/{name}/masked/'):
+        os.mkdir(f'output/{name}/masked/')
+    cv2.imwrite(f'output/{name}/masked/{idx}.png', pred_bgr)
 
     return pred_bgr
 

@@ -155,12 +155,12 @@ class GUIBase:
                 else:
                     self.train_step()
 
+                if (self.iteration % 1000) == 0 and  self.stage == 'fine':
+                    self.test_step()
+                    
                 self.iteration += 1
                 pbar.update(1)
-
-            # if self.iteration % 1000 == 0 and self.stage == 'fine':
-            #     self.test_step()
-
+            
             if self.iteration > self.final_iter and self.stage == 'fine':
                 self.stage = 'done'
                 break  # Exit the loop instead of calling exit()
