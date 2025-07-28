@@ -53,11 +53,6 @@ class Deformation(nn.Module):
         super(Deformation, self).__init__()
         self.W = W
         self.grid = WavePlaneField(args.bounds, args.target_config)
-        # self.color_grid = WavePlaneField(args.bounds, args.scene_config)
-        self.background_grid = WavePlaneField(args.bounds, args.scene_config)
-        # self.fine_grid = WavePlaneField(args.bounds, args.scene_config, rotate=True)
-
-        # self.target_grid.aabb = None
 
         self.args = args
 
@@ -74,20 +69,16 @@ class Deformation(nn.Module):
         self.covariance_activation = build_covariance_from_scaling_rotation
 
         
-    def set_aabb(self, xyz_max, xyz_min, grid_type='target'):
-        if grid_type=='target':
-            self.grid.set_aabb(xyz_max, xyz_min)
-        elif grid_type=='background':
-            self.background_grid.set_aabb(xyz_max, xyz_min)
+    def set_aabb(self, xyz_max, xyz_min):
+        self.grid.set_aabb(xyz_max, xyz_min)
+
     
     
     def create_net(self):
         # Prep features for decoding
         net_size = self.W
         self.spacetime_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
-        self.background_spacetime_enc = nn.Sequential(nn.Linear(self.background_grid.feat_dim,net_size))
         
-        self.background_pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
         self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
@@ -98,8 +89,8 @@ class Deformation(nn.Module):
         
         if mask is not None:
             space, spacetime, coltime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances[mask])
-            space_b, spacetime_b, _ = self.background_grid(rays_pts_emb[~mask,:3], time[~mask,:], covariances[~mask])
-            st_b = self.background_spacetime_enc(space_b * spacetime_b)
+            space_b, spacetime_b, _ = self.grid(rays_pts_emb[~mask,:3], time[~mask,:], covariances[~mask])
+            st_b = self.spacetime_enc(space_b * spacetime_b)
         else:
             space, spacetime, coltime = self.grid(rays_pts_emb[:,:3], time, covariances)
             st_b = None
@@ -138,7 +129,7 @@ class Deformation(nn.Module):
         # Position
         pts = rays_pts_emb + 0. #.clone()        
         pts[target_mask] += self.pos_coeffs(dyn_feature)
-        pts[~target_mask] += self.background_pos_coeffs(background_feature)
+        pts[~target_mask] += self.pos_coeffs(background_feature)
         
         # Opacity
         opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)

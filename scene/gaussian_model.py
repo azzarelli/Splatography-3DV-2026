@@ -365,11 +365,10 @@ class GaussianModel:
             err = 0.1
         xyz_min = fused_point_cloud[target_mask].min(0).values - err
         xyz_max = fused_point_cloud[target_mask].max(0).values + err
-        self._deformation.deformation_net.set_aabb(xyz_max, xyz_min)
         
         xyz_min = fused_point_cloud[~target_mask].min(0).values
         xyz_max = fused_point_cloud[~target_mask].max(0).values
-        self._deformation.deformation_net.set_aabb(xyz_max, xyz_min, grid_type='background')
+        self._deformation.deformation_net.set_aabb(xyz_max, xyz_min)
         
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
@@ -435,9 +434,6 @@ class GaussianModel:
             {'params': list(self._deformation.get_mlp_parameters()), 'lr': training_args.deformation_lr_init * self.spatial_lr_scale, "name": "deformation"},
             {'params': list(self._deformation.get_grid_parameters()), 'lr': training_args.grid_lr_init * self.spatial_lr_scale, "name": "grid"},
             
-            {'params': list(self._deformation.get_background_mlp_parameters()), 'lr': training_args.deformation_lr_init * self.spatial_lr_scale_background, "name": "deformation_background"},
-            {'params': list(self._deformation.get_background_grid_parameters()), 'lr': training_args.grid_lr_init * self.spatial_lr_scale_background, "name": "grid_background"},
-            
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},            
             # {'params': [self._colors], 'lr': training_args.feature_lr, "name": "color"},
@@ -459,21 +455,13 @@ class GaussianModel:
                                                     lr_final=training_args.deformation_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.deformation_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
-        
-        self.deformation_background_scheduler_args = get_expon_lr_func(lr_init=training_args.deformation_lr_init*self.spatial_lr_scale_background,
-                                                    lr_final=training_args.deformation_lr_final*self.spatial_lr_scale_background,
-                                                    lr_delay_mult=training_args.deformation_lr_delay_mult,
-                                                    max_steps=training_args.position_lr_max_steps)
+
         
         self.grid_scheduler_args = get_expon_lr_func(lr_init=training_args.grid_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.grid_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.deformation_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
-        
-        self.grid_background_scheduler_args = get_expon_lr_func(lr_init=training_args.grid_lr_init*self.spatial_lr_scale_background,
-                                                    lr_final=training_args.grid_lr_final*self.spatial_lr_scale_background,
-                                                    lr_delay_mult=training_args.deformation_lr_delay_mult,
-                                                    max_steps=training_args.position_lr_max_steps)
+
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -486,18 +474,10 @@ class GaussianModel:
                 lr = self.grid_scheduler_args(iteration)
                 param_group['lr'] = lr
                 
-            elif  "grid_background" in param_group["name"]:
-                lr = self.grid_background_scheduler_args(iteration)
-                param_group['lr'] = lr
-                
             elif param_group["name"] == "deformation":
                 lr = self.deformation_scheduler_args(iteration)
                 param_group['lr'] = lr
                 
-            elif param_group["name"] == "deformation_background":
-                lr = self.deformation_background_scheduler_args(iteration)
-                param_group['lr'] = lr
-
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         # All channels except the 3 DC
@@ -786,15 +766,7 @@ class GaussianModel:
                 for grid in wavelets[index]:
                     l1total += torch.abs(grid).mean()
                     
-        # # model.grids is 6 x [1, rank * F_dim, reso, reso]
-        for index, grids in enumerate(self._deformation.deformation_net.background_grid.grids_()):
-            if index in [0,1,3]: # space only
-                for grid in grids:
-                    tvtotal += compute_plane_smoothness(grid)
-            elif index in [2, 4, 5]:
-                for grid in grids: # space time
-                    tstotal += compute_plane_smoothness(grid)       
-        
+
         return plane_tv_weight * tvtotal + time_smoothness_weight*tstotal + l1_time_planes_weight*l1total # + minview_weight*col
 
     def generate_neighbours(self, points):
