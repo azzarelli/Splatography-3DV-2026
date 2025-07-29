@@ -504,8 +504,6 @@ def render_coarse_batch_vanilla(
         colors_final = colors[mask]
         opacity_final = opacity[mask]
 
-        background = torch.rand(1, 3).cuda() 
-
         rgb, _, _ = rasterization(
             means3D_final, rotations_final, scales_final, 
             opacity_final.squeeze(-1),colors_final,
@@ -517,16 +515,14 @@ def render_coarse_batch_vanilla(
             rasterize_mode='antialiased',
             eps2d=0.1,
             sh_degree=pc.active_sh_degree,
-            backgrounds=background
         )
         rgb = rgb.squeeze(0).permute(2,0,1)
         
         # Train the backgroudn
-        gt_img = viewpoint_camera.original_image.cuda()
         mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
         inv_mask = 1. - mask.float() 
-        gt = gt_img * inv_mask + (mask)*background.permute(1,0).unsqueeze(-1)
-
+        gt = viewpoint_camera.original_image.cuda() * inv_mask
+        
         L1 += l1_loss(rgb, gt)
     
     return  L1

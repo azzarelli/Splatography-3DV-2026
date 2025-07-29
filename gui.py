@@ -293,20 +293,20 @@ class GUI(GUIBase):
 
         
         L1 = torch.tensor(0.).cuda()
-        if self.scene.dataset_type == "condense" or  self.scene.dataset_type == "dynerf":
-            L1 = render_coarse_batch(
-                viewpoint_cams, 
-                self.gaussians, 
-                self.pipe,
-                self.background, 
-                stage=self.stage,
-                iteration=self.iteration
-            )
-        else:
-            L1 = render_coarse_batch_vanilla(
-                viewpoint_cams, 
-                self.gaussians, 
-            )
+        # if self.scene.dataset_type == "condense" or  self.scene.dataset_type == "dynerf":
+        #     L1 = render_coarse_batch(
+        #         viewpoint_cams, 
+        #         self.gaussians, 
+        #         self.pipe,
+        #         self.background, 
+        #         stage=self.stage,
+        #         iteration=self.iteration
+        #     )
+        # else:
+        L1 = render_coarse_batch_vanilla(
+            viewpoint_cams, 
+            self.gaussians, 
+        )
         
         hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
         wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
