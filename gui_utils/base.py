@@ -151,7 +151,7 @@ class GUIBase:
                 # Train background and/or foreground depending on stage
                 if self.stage == 'coarse':
                     self.train_background_step()
-                    self.train_foreground_step()
+                    # self.train_foreground_step()
                 else:
                     self.train_step()
 

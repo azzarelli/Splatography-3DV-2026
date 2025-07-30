@@ -487,11 +487,11 @@ def render_coarse_batch_vanilla(
     colors = pc.get_features
     opacity = pc.get_fine_opacity_with_3D_filter(pc.get_hopac)
 
-    means3D = means3D[~pc.target_mask]
-    rotations = rotations[~pc.target_mask]
-    scales = scales[~pc.target_mask]
-    colors = colors[~pc.target_mask]
-    opacity = opacity[~pc.target_mask]
+    # means3D = means3D[~pc.target_mask]
+    # rotations = rotations[~pc.target_mask]
+    # scales = scales[~pc.target_mask]
+    # colors = colors[~pc.target_mask]
+    # opacity = opacity[~pc.target_mask]
     
     L1 = 0.
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
@@ -519,9 +519,9 @@ def render_coarse_batch_vanilla(
         rgb = rgb.squeeze(0).permute(2,0,1)
         
         # Train the backgroudn
-        mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
-        inv_mask = 1. - mask.float() 
-        gt = viewpoint_camera.original_image.cuda() * inv_mask
+        # mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
+        # inv_mask = 1. - mask.float() 
+        gt = viewpoint_camera.original_image.cuda()# * inv_mask
         
         L1 += l1_loss(rgb, gt)
     
