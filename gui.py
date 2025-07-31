@@ -24,7 +24,7 @@ from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss, l1_loss_intense
 from pytorch_msssim import ms_ssim
 import cv2
 
-from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_vanilla,render_coarse_batch_target, render_depth_batch
+from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_vanilla,render_coarse_batch_target, render_depth_batch, render_cool_video
 import json
 import open3d as o3d
 # from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
@@ -827,7 +827,30 @@ class GUI(GUIBase):
             for metric in average[category]:
                 average[category][metric] /= num_frames
         print(f'Test {self.iteration} | {average}')
+    
+    @torch.no_grad()
+    def cool_video(self, audio, sample_rate):
+        import torchaudio
+        audio_pth = f'output/{self.args.expname}/audio.wav'
+        torchaudio.save(audio_pth, audio.unsqueeze(0), sample_rate)
+            
+        viewpoint_cams = self.scene.getVideoCameras() #.copy()
+
+        cnt = 0
+        # Render and return preds
+        for i, viewpoint_cam in tqdm(enumerate(viewpoint_cams), desc="Processing viewpoints"):
+            frame_start = i * 512
+            frame = audio[frame_start:frame_start + 1024]
         
+            save_cool_views(render_cool_video(
+                viewpoint_cam, 
+                self.gaussians,
+                frame
+            )["render"], cnt, self.args.expname)
+
+            cnt += 1
+
+    
     @torch.no_grad()
     def render_video_step(self):
 
@@ -860,7 +883,31 @@ def setup_seed(seed):
      np.random.seed(seed)
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
+     
+def save_cool_views(pred, idx, name):
 
+    pred = (pred.permute(1, 2, 0)
+        # .contiguous()
+        .clamp(0, 1)
+        .contiguous()
+        .detach()
+        .cpu()
+        .numpy()
+    )*255
+
+    pred = pred.astype(np.uint8)
+
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+
+    if not os.path.exists(f'output/{name}/cool/'):
+        os.mkdir(f'output/{name}/cool/')
+        os.mkdir(f'output/{name}/cool/full/')
+    elif not os.path.exists(f'output/{name}/cool/full/'):
+        os.mkdir(f'output/{name}/cool/full/')
+    cv2.imwrite(f'output/{name}/cool/full/{idx}.png', pred_bgr)
+
+    return pred_bgr
 def save_novel_views(pred, idx, name):
 
     pred = (pred.permute(1, 2, 0)

@@ -49,7 +49,6 @@ class Scene:
             num_cams = 4
             scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, '4', max_frames)
             dataset_type="dynerf"
-            
 
         self.maxtime = scene_info.maxtime
         self.maxframes = max_frames
@@ -90,6 +89,8 @@ class Scene:
         if self.dataset_type == "condense":
             from scene.dataset_readers import format_condense_infos
             self.video_camera  = format_condense_infos(scene_info.train_cameras, "val", pos=self.gaussians.get_xyz[self.gaussians.target_mask].mean(1))
+        else:
+            self.video_camera = scene_info.video_cameras 
 
         
     def get_pseudo_view(self):

@@ -17,7 +17,7 @@ import torch.nn.functional as F
 # from gaussian_renderer.pytorch_render import GaussRenderer
 
 from gsplat.rendering import rasterization
-
+from math import sin
 # RENDER = GaussRenderer()
 
 def quaternion_rotate(q, v):
@@ -123,6 +123,171 @@ def compute_alpha_interval(A, B, cov6A, cov6B, alpha_threshold=0.1):
     alpha = torch.exp(-0.5* λA) # * t_BA.pow(2))
     return alpha
 
+def project_to_yz_circle(points: torch.Tensor, radius: float = 1.0) -> torch.Tensor:
+    # Extract y and z
+    y = points[:, 1]
+    z = points[:, 2]
+
+    # Compute angle with respect to origin in YZ plane
+    theta = torch.atan2(z, y)
+
+    # Project to circle in YZ plane
+    y_new = radius * torch.cos(theta)
+    z_new = radius * torch.sin(theta)
+
+    # Construct new points with x=0
+    x_new = torch.zeros_like(y_new)
+    projected_points = torch.stack((x_new, y_new, z_new), dim=1)
+    
+    return projected_points, theta
+
+def render_cool_video(viewpoint_camera, pc, audio):
+    """
+    Render the scene.
+    """
+
+    extras = None
+
+    means3D_ = pc.get_xyz
+    time = torch.tensor(viewpoint_camera.time).to(means3D_.device).repeat(means3D_.shape[0], 1)
+    # colors = pc.get_color
+    colors = pc.get_features
+
+    opacity = pc.get_opacity.clone().detach()
+
+    scales = pc.get_scaling_with_3D_filter
+    rotations = pc._rotation
+
+    means3D, rotations, opacity, colors, extras = pc._deformation(
+        point=means3D_, 
+        rotations=rotations,
+        scales=scales,
+        times_sel=time, 
+        h_emb=opacity,
+        shs=colors,
+        view_dir=None,
+        target_mask=pc.target_mask
+    )
+    
+    opacity = pc.get_fine_opacity_with_3D_filter(opacity)
+    rotation = pc.rotation_activation(rotations)
+    
+    # Clean the view
+    distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
+    mask = distances < .5
+    mask = torch.logical_and(~pc.target_mask, mask)
+    mask = ~mask
+    means3D = means3D[mask]
+    rotation = rotation[mask]
+    scales = scales[mask]
+    opacity = opacity[mask]
+    colors = colors[mask]
+    
+    pc_mask = pc.target_mask[mask]
+    
+    # Now the cool rendering effects
+    time = viewpoint_camera.time
+
+    # Duration for each section (total time is 10s for 0 < t <1, so .1 is 1 second)
+    A = -0.0000000001
+    B = 0.05
+    C = 0.3
+    
+    # A = 0.001
+    # B = 0.001
+    # C = 0.001
+    
+    if time < A:
+        # normalize the time within this section
+        tick = time/A
+        # Get the distance from the center of the scene
+        distance = torch.norm((means3D.mean(0).unsqueeze(0)- means3D).abs(), dim=1)
+        
+        # Normalize (0 to 1)
+        dist_norm  = (distance - distance.min())/(distance.max()- distance.min())
+        mask = (dist_norm > (1.-tick)) # as time goes on (1-t) from 1 to 0, so start hiding points in this masked region by reducing their opacity to 0.
+        
+        # mask = torch.logical_and(mask, ~pc_mask) # only for background points
+        opacity[mask] = opacity[mask] *0.
+    elif time < (A+B): # wait for a bit
+        opacity *= 0.
+    elif time < (A+B+C): # pop the fg into action with a wave
+        tick = (time-(A+B))/(C)
+        
+        distance = torch.norm((means3D.mean(0).unsqueeze(0)- means3D).abs(), dim=1)
+        dist_norm  = (distance - distance.min())/(distance.max()- distance.min())
+        mask = (dist_norm > tick) # grow with tick
+        
+        mask = torch.logical_and(mask, pc_mask) # only for the foreground points
+        opacity[mask] *= 0.
+        colors[mask, :] = 0.
+
+        tick_ = (tick - 0.1)
+        if tick_ < 0. : tick_ = 0.
+        mask = (dist_norm > tick_) & (dist_norm < tick) & pc_mask# fringe points lagging behind the fringe by 0.1*C
+        # mask = torch.logical_and(mask, pc_mask) # only for the foreground points
+        colors[mask, :] *= 0.
+        opacity[mask, :] *= 0.5
+        colors[mask, 0, 0] = 1.
+        colors[mask, 0, 1] = 1.
+        colors[mask, 0, 2] = 1.
+
+           
+    else:
+        tick = (time - (A+B+C))/(1.-A-B-C) # for the remaining time
+    
+    colors[~pc_mask] *= 0.
+    colors[~pc_mask, 0, 0] = 0.
+    colors[~pc_mask, 0, 1] = 1.
+    colors[~pc_mask, 0, 2] = 1.     
+    
+    scales[~pc_mask] *= .5
+    means3D[~pc_mask], theta = project_to_yz_circle(means3D[~pc_mask], 6)
+    rotation[~pc_mask] *= 0.
+    rotation[~pc_mask, 2] += 1.
+
+    audio = audio.cuda()
+    audio_len = audio.shape[0]
+    theta_norm = (theta + torch.pi) / (2 * torch.pi)  # shape: (N,)
+    audio_idx = theta_norm * (audio_len - 1)  # shape: (N,), values in [0, audio_len - 1]
+    idx_lower = torch.floor(audio_idx).long()
+    idx_upper = torch.clamp(idx_lower + 1, max=audio_len - 1)
+    weight = audio_idx - idx_lower.float()
+    audio_mapped = audio[idx_lower] * (1 - weight) + audio[idx_upper] * weight  # shape: (N,)
+
+    audio_energy = audio_mapped / (audio_mapped.max() + 1e-6)  # normalize to [0, 1]
+
+    # Inject into scale
+    scales[~pc_mask, 0] += audio_energy + torch.rand_like(audio_energy) * 0.05
+    values = scales[~pc_mask, 0]
+    values_norm = (values - values.min()) / (values.max() - values.min() + 1e-8)
+    values_scaled = .2 + values_norm * 1.
+
+    # Assign back
+    scales[~pc_mask, 0] = values_scaled
+    opacity[~pc_mask, 0] = 1.
+ 
+    rendered_image, alpha, _ = rasterization(
+        means3D, rotation, scales, opacity.squeeze(-1), colors,
+        viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
+        viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
+        viewpoint_camera.image_width, 
+        viewpoint_camera.image_height,
+        
+        rasterize_mode='antialiased',
+        eps2d=0.1,
+        sh_degree=3
+    )
+    rendered_image = rendered_image.squeeze(0).permute(2,0,1)
+    extras = alpha.squeeze(0).permute(2,0,1)
+
+        
+    return {
+        "render": rendered_image,
+        "extras":extras # A dict containing mor point info
+        # 'norms':rendered_norm, 'alpha':rendered_alpha
+        }
+    
 def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=1.0,
            stage="fine", view_args=None, G=None, kernel_size=0.1):
     """
@@ -495,15 +660,14 @@ def render_coarse_batch_vanilla(
     
     L1 = 0.
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
-        
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 0.3
+        mask = (means3D != 0.0000000000)
         
-        means3D_final = means3D[mask]
-        rotations_final = rotations[mask]
-        scales_final = scales[mask]
-        colors_final = colors[mask]
-        opacity_final = opacity[mask]
+        means3D_final = means3D #[mask]
+        rotations_final = rotations #[mask]
+        scales_final = scales#[mask]
+        colors_final = colors#[mask]
+        opacity_final = opacity#[mask]
 
         rgb, _, _ = rasterization(
             means3D_final, rotations_final, scales_final, 
@@ -522,7 +686,7 @@ def render_coarse_batch_vanilla(
         # Train the backgroudn
         # mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
         # inv_mask = 1. - mask.float() 
-        gt = viewpoint_camera.original_image.cuda()# * inv_mask
+        gt = viewpoint_camera.original_image.cuda() # * inv_mask
         
         L1 += l1_loss(rgb, gt)
     

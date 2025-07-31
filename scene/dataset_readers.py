@@ -43,6 +43,9 @@ class CameraInfo(NamedTuple):
     height: int
     time : float
     mask: np.array
+    
+    def direction_normal(self):
+        return None
    
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -367,7 +370,6 @@ def format_infos(dataset,split):
             cameras.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                                 image_path=image_path, image_name=image_name, width=image.shape[2], height=image.shape[1],
                                 time = time, mask=None))
-
     return cameras
 
 
@@ -399,7 +401,8 @@ def readHyperDataInfos(datadir,use_bg_points,eval):
                            )
 
     return scene_info
-def format_render_poses(poses,data_infos):
+
+def format_render_poses(poses, data_infos):
     cameras = []
     tensor_to_pil = transforms.ToPILImage()
     len_poses = len(poses)
@@ -419,9 +422,25 @@ def format_render_poses(poses,data_infos):
         T = -pose[:3,3].dot(R)
         FovX = focal2fov(data_infos.focal[0], image.shape[2])
         FovY = focal2fov(data_infos.focal[0], image.shape[1])
-        cameras.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.shape[2], height=image.shape[1],
-                            time = time, mask=None))
+        cameras.append(Camera(
+                uid=idx,
+                R=R,
+                T=T,
+                FoVy=FovY,
+                FoVx=FovX,
+                image=None,
+                width=image.shape[2],
+                height=image.shape[1],
+                time=idx / (len(poses)-1),
+                mask=None,
+                colmap_id=0,
+                gt_alpha_mask=None,
+                image_name=f"{idx}"
+            ))
+                       
+        # CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        #     image_path=image_path, image_name=image_name, width=image.shape[2], height=image.shape[1],
+        #     time = time, mask=None))
     return cameras
 
 def add_points(pointsclouds, xyz_min, xyz_max):
@@ -604,7 +623,7 @@ def readdynerfInfo(datadir,num_cams, maxframes):
         maxframes=maxframes
     )
     train_cam_infos = format_infos(train_dataset,"train")
-    val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset)
+    val_cam_infos = format_render_poses(test_dataset.val_poses, test_dataset)
     nerf_normalization = getNerfppNorm(train_cam_infos)
     print(f'Number of training cameras: {len(train_dataset)/maxframes}')
 

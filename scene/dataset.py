@@ -31,9 +31,13 @@ class FourDGSdataset(Dataset):
             
         if split == 'train':
             print(f'Zero Indexs are: {self.zero_idxs}')
-            
-        self.vert_poses = self.dataset.poses
-
+        
+        try:
+            self.vert_poses = self.dataset.poses
+        
+        except:
+            pass
+        
         self.fovx = focal2fov(self.dataset.focal[0], self.dataset.W)
         self.fovy = focal2fov(self.dataset.focal[1], self.dataset.H)
         

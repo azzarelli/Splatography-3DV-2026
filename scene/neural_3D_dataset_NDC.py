@@ -216,7 +216,7 @@ class Neural3D_NDC_Dataset(Dataset):
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
 
         # Sample N_views poses for validation - NeRF-like camera trajectory.
-        self.val_poses = get_spiral(poses, self.near_fars, N_views=self.maxframes)
+        self.val_poses = get_spiral(poses, self.near_fars, N_views=300)
         # self.val_poses = self.directions
         self.poses = poses[self.selected_cams]
         self.poses_all = poses #[[0]+poses_i_train]

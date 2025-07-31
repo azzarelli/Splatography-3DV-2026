@@ -6,18 +6,16 @@ from tqdm import tqdm
 from natsort import natsorted
 import numpy as np
 # === Configuration ===
-FOLDER="masked"
-SAVEDIR="Piano"
-OUTPUT="test"
+FOLDER="cool/full"
+SAVEDIR="Bassist"
+OUTPUT="cool_render"
 DATSET="Condense"
 
-
-exp_names = ["fg_loss", "no_bgloss", "unifiedH"]
-exp_names = [ "unifieddyn4_nostaticdupe2"]
-
+# 
+# exp_names = ["fg_loss", "no_bgloss", "unifiedH"]
+exp_names = [ "unifieddyn4_nostaticdupe"]
 
 fps = 30
-
 # === Helper to crop image to dimensions divisible by 8 ===
 def crop_to_divisible_by_8(img):
     h, w = img.shape[:2]
@@ -50,13 +48,16 @@ def process_video(input_folder, output_video, fps):
 
         img = crop_to_divisible_by_8(img)
 
-        b, g, r, a = cv2.split(img)
-        alpha = a.astype(float) / 255.0
-        alpha = cv2.merge([alpha, alpha, alpha])  # 3 channel alpha
-        rgb = cv2.merge([b, g, r]).astype(float)
-        black = np.zeros_like(rgb)
-        blended = (rgb * alpha + black * (1 - alpha)).astype(np.uint8)
-
+        try:
+            b, g, r, a = cv2.split(img)
+            alpha = a.astype(float) / 255.0
+            alpha = cv2.merge([alpha, alpha, alpha])  # 3 channel alpha
+            rgb = cv2.merge([b, g, r]).astype(float)
+            black = np.zeros_like(rgb)
+            blended = (rgb * alpha + black * (1 - alpha)).astype(np.uint8)
+        except:
+            b, g, r = cv2.split(img)
+            blended = cv2.merge([b, g, r]).astype(np.uint8)
 
         blended = cv2.resize(blended, (width, height))
         video_writer.write(blended)
