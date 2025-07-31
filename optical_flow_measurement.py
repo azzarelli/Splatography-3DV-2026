@@ -99,10 +99,10 @@ def optical_flow_mse(test_folder, gt_folder, model):
 
 
 # Paths
-scenes=[ "Pony", "Piano"] #"Pony",
+scenes=[ "Bassist", "Fruit", "Curling", "Pony", "Piano"] #"Pony",
 # scenes=["Pony"]
 
-models = ["fg_loss", "unifiedH"]#, "unifieddyn4_nostaticdupe"] #, "bg_loss",
+models = ["panop_canon"] #, "unifiedH"]#, "unifieddyn4_nostaticdupe"] #, "bg_loss",
 # models = [ "unifieddyn4_nostaticdupe"] #, "bg_loss",
 
 final_res = {}

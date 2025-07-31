@@ -1,6 +1,5 @@
 {
-    "fg_loss-Pony": 160.16848754882812,
-    "unifiedH-Pony": 161.94688415527344,
-    "fg_loss-Piano": 351.1949157714844,
-    "unifiedH-Piano": 639.2962036132812
+    "bg_loss-Bassist": 715.67431640625,
+    "bg_loss-Fruit": 329.50811767578125,
+    "bg_loss-Curling": 579.6443481445312
 }

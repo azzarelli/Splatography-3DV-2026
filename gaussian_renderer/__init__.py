@@ -495,6 +495,7 @@ def render_coarse_batch_vanilla(
     
     L1 = 0.
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
+        
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
         mask = distances > 0.3
         
