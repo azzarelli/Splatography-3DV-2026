@@ -105,9 +105,23 @@ if __name__ == "__main__":
         raise ValueError("Audio too short to extract requested segment.")
 
     audio_segment = waveform[start_sample:end_sample]  # shape: (total_samples,)
+    def smooth_audio(audio, kernel_size=101):
+        import torch.nn.functional as F
+        # Ensure odd kernel size for symmetry
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        kernel = torch.ones(kernel_size) / kernel_size
+        kernel = kernel.to(audio.device)
 
+        # Add batch and channel dims: (1, 1, samples)
+        audio_ = audio.unsqueeze(0).unsqueeze(0)
+        kernel_ = kernel.view(1, 1, -1)
+
+        # Apply 1D convolution (padding='same')
+        smoothed = F.conv1d(audio_, kernel_, padding=kernel_size // 2)
+        return smoothed.squeeze(0).squeeze(0)
     # --- Slice into overlapping frames ---
     audio_frames = audio_segment.unfold(0, frame_size, hop_length)  # shape: (num_frames, frame_size)
-
+    audio_segment = smooth_audio(audio_segment)
     
     gui.cool_video(audio_segment, sample_rate)

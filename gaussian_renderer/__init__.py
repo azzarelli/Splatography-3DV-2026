@@ -189,59 +189,21 @@ def render_cool_video(viewpoint_camera, pc, audio):
     time = viewpoint_camera.time
 
     # Duration for each section (total time is 10s for 0 < t <1, so .1 is 1 second)
-    A = -0.0000000001
-    B = 0.05
-    C = 0.3
+    A = 0.3
+
     
     # A = 0.001
     # B = 0.001
     # C = 0.001
-    
-    if time < A:
-        # normalize the time within this section
-        tick = time/A
-        # Get the distance from the center of the scene
-        distance = torch.norm((means3D.mean(0).unsqueeze(0)- means3D).abs(), dim=1)
-        
-        # Normalize (0 to 1)
-        dist_norm  = (distance - distance.min())/(distance.max()- distance.min())
-        mask = (dist_norm > (1.-tick)) # as time goes on (1-t) from 1 to 0, so start hiding points in this masked region by reducing their opacity to 0.
-        
-        # mask = torch.logical_and(mask, ~pc_mask) # only for background points
-        opacity[mask] = opacity[mask] *0.
-    elif time < (A+B): # wait for a bit
-        opacity *= 0.
-    elif time < (A+B+C): # pop the fg into action with a wave
-        tick = (time-(A+B))/(C)
-        
-        distance = torch.norm((means3D.mean(0).unsqueeze(0)- means3D).abs(), dim=1)
-        dist_norm  = (distance - distance.min())/(distance.max()- distance.min())
-        mask = (dist_norm > tick) # grow with tick
-        
-        mask = torch.logical_and(mask, pc_mask) # only for the foreground points
-        opacity[mask] *= 0.
-        colors[mask, :] = 0.
+     
+    colors[~pc_mask] = 0.
+    colors[~pc_mask, 0,0] = 1.5  # DC term
+    colors[~pc_mask, 3,0] = 0.5  # X direction (Y₁₁) for added red directionality
+    colors[~pc_mask, 6,0] = 0.3  # Z² lobe (Y₂₀)
+    colors[~pc_mask, 10,0] = 0.2 # Z³ lobe (Y₃₀) - optional
 
-        tick_ = (tick - 0.1)
-        if tick_ < 0. : tick_ = 0.
-        mask = (dist_norm > tick_) & (dist_norm < tick) & pc_mask# fringe points lagging behind the fringe by 0.1*C
-        # mask = torch.logical_and(mask, pc_mask) # only for the foreground points
-        colors[mask, :] *= 0.
-        opacity[mask, :] *= 0.5
-        colors[mask, 0, 0] = 1.
-        colors[mask, 0, 1] = 1.
-        colors[mask, 0, 2] = 1.
 
-           
-    else:
-        tick = (time - (A+B+C))/(1.-A-B-C) # for the remaining time
-    
-    colors[~pc_mask] *= 0.
-    colors[~pc_mask, 0, 0] = 0.
-    colors[~pc_mask, 0, 1] = 1.
-    colors[~pc_mask, 0, 2] = 1.     
-    
-    scales[~pc_mask] *= .5
+    scales[~pc_mask] = .5
     means3D[~pc_mask], theta = project_to_yz_circle(means3D[~pc_mask], 6)
     rotation[~pc_mask] *= 0.
     rotation[~pc_mask, 2] += 1.
@@ -261,11 +223,42 @@ def render_cool_video(viewpoint_camera, pc, audio):
     scales[~pc_mask, 0] += audio_energy + torch.rand_like(audio_energy) * 0.05
     values = scales[~pc_mask, 0]
     values_norm = (values - values.min()) / (values.max() - values.min() + 1e-8)
-    values_scaled = .2 + values_norm * 1.
+    values_scaled = .15 + values_norm * .5
 
     # Assign back
     scales[~pc_mask, 0] = values_scaled
-    opacity[~pc_mask, 0] = 1.
+    
+    if time < A: # pop the fg into action with a wave
+        tick = (time)/(A)
+        
+        distance = torch.norm((means3D.mean(0).unsqueeze(0)- means3D).abs(), dim=1)
+        dist_norm  = (distance - distance.min())/(distance.max()- distance.min())
+        mask = (dist_norm > tick) # grow with tick
+        
+        mask = torch.logical_and(mask, pc_mask) # only for the foreground points
+        opacity[mask] *= 0.
+        colors[mask, :] = 0.
+
+        tick_ = (tick - 0.01)
+        if tick_ < 0. : tick_ = 0.
+        mask = (dist_norm > tick_) & (dist_norm < tick) & pc_mask# fringe points lagging behind the fringe by 0.1*C
+        # mask = torch.logical_and(mask, pc_mask) # only for the foreground points
+        opacity[mask, :] *= 1.
+        colors[mask] = 0.
+        colors[mask, 0,0] = 1.5  # DC term
+        colors[mask, 3,0] = 0.5  # X direction (Y₁₁) for added red directionality
+        colors[mask, 6,0] = 0.3  # Z² lobe (Y₂₀)
+        colors[mask, 10,0] = 0.2 # Z³ lobe (Y₃₀) - optional
+
+
+        scales[~pc_mask, 0] *= tick
+        opacity[~pc_mask, 0] *= tick
+        
+    else:
+        tick = (time - (A))/(1.-A) # for the remaining time
+        opacity[~pc_mask, 0] =opacity[pc_mask, 0].max().item()
+
+    
  
     rendered_image, alpha, _ = rasterization(
         means3D, rotation, scales, opacity.squeeze(-1), colors,
@@ -276,7 +269,7 @@ def render_cool_video(viewpoint_camera, pc, audio):
         
         rasterize_mode='antialiased',
         eps2d=0.1,
-        sh_degree=3
+        sh_degree=pc.active_sh_degree
     )
     rendered_image = rendered_image.squeeze(0).permute(2,0,1)
     extras = alpha.squeeze(0).permute(2,0,1)
