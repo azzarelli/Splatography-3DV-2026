@@ -23,7 +23,7 @@ class GUIBase:
         # Set the width and height of the expected image
         self.W, self.H = self.scene.getTestCameras()[0].image_width, self.scene.getTestCameras()[0].image_height
         self.fov = (self.scene.getTestCameras()[0].FoVy, self.scene.getTestCameras()[0].FoVx)
-
+        self.original_HW = [self.W, self.H]
         if self.H > 1200 and self.scene != "dynerf":
             self.W = self.W//2
             self.H = self.H //2
@@ -150,9 +150,36 @@ class GUIBase:
             if self.iteration <= self.final_iter:
                 # Train background and/or foreground depending on stage
                 if self.stage == 'coarse':
-                    # self.train_background_step()
-                    # self.train_foreground_step()
-                    self.train_4dgs_canon_step()
+                    W,H = self.original_HW[0],self.original_HW[1]
+                    radii, visibility_filter, viewspace_point_tensor_grad = self.train_background_step()
+                    # assuming square radii
+                    visibility_filter = visibility_filter[:, 0]
+                    radii = radii[:, 0]
+                    self.gaussians.max_radii2D[~self.gaussians.target_mask][visibility_filter] = torch.max(self.gaussians.max_radii2D[~self.gaussians.target_mask][visibility_filter], radii[visibility_filter])
+                    self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter, W, H, 'bg')
+
+                    # Densification step
+                    radii, visibility_filter, viewspace_point_tensor_grad = self.train_foreground_step()
+                    visibility_filter = visibility_filter[:, 0]
+                    radii = radii[:, 0]
+                    self.gaussians.max_radii2D[self.gaussians.target_mask][visibility_filter] = torch.max(self.gaussians.max_radii2D[self.gaussians.target_mask][visibility_filter], radii[visibility_filter])
+                    self.gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter, W, H, 'fg')
+
+
+                    opacity_threshold = 0.005
+                    densify_threshold = 0.0002
+                    
+                    if  self.iteration > 500 and self.iteration % 100 == 0 and self.gaussians.get_xyz.shape[0]<360000:
+                        size_threshold = 20 if self.iteration > 60000 else None
+                        self.gaussians.densify(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold, 5, 5, self.args.model_path, self.iteration)
+                        self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+
+                    if  self.iteration > 500 and self.iteration % 100 == 0 and self.gaussians.get_xyz.shape[0]>200000:
+                        size_threshold = 20 if self.iteration > 60000 else None
+
+                        self.gaussians.prune(densify_threshold, opacity_threshold, self.scene.cameras_extent, size_threshold)
+                        self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+
                 else:
                     self.train_step()
 

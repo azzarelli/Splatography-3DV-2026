@@ -67,6 +67,11 @@ class GaussianModel:
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         
+        self.max_radii2D = torch.empty(0)
+        self.xyz_gradient_accum = torch.empty(0)
+        self.denom = torch.empty(0)
+        self._deformation_table = torch.empty(0)
+       
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
@@ -82,12 +87,16 @@ class GaussianModel:
             self.active_sh_degree,
             self._xyz,
             self._deformation.state_dict(),
+            self._deformation_table,
             self._features_dc,
             self._features_rest,
             self._colors,
             self._scaling,
             self._rotation,
             self._opacity,
+            self.max_radii2D,
+            self.xyz_gradient_accum,
+            self.denom,
             self.filter_3D,
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
@@ -99,19 +108,24 @@ class GaussianModel:
         (self.active_sh_degree,
         self._xyz,
         deform_state,
+        self._deformation_table,
         self._features_dc,
         self._features_rest,
         self._colors,
         self._scaling,
         self._rotation,
         self._opacity,
+        self.max_radii2D, 
+        xyz_gradient_accum, 
+        denom,
         self.filter_3D,
         opt_dict,
         self.spatial_lr_scale,self.spatial_lr_scale_background, self.target_mask) = model_args
 
         self._deformation.load_state_dict(deform_state)
         self.training_setup(training_args)
-
+        self.xyz_gradient_accum = xyz_gradient_accum
+        self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
     @property
@@ -420,7 +434,8 @@ class GaussianModel:
         mean_foreground = fused_point_cloud[~target_mask].mean(dim=0).unsqueeze(0)
         dist_foreground = torch.norm(fused_point_cloud[~target_mask] - mean_foreground, dim=1)
         self.spatial_lr_scale_background = torch.max(dist_foreground).detach().cpu().numpy()
-
+        self.max_radii2D = torch.zeros((self._xyz.shape[0]), device="cuda")
+        self._deformation_table = torch.gt(torch.ones((self._xyz.shape[0]),device="cuda"),0)
         if dataset_type == "dynerf": # For the dynerf scene the background lr scale is too large
             self.spatial_lr_scale_background *= 0.1
         print(f"Target lr scale: {self.spatial_lr_scale} | Background lr scale: {self.spatial_lr_scale_background}")
@@ -428,7 +443,10 @@ class GaussianModel:
     
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
-    
+        self.xyz_gradient_accum = torch.zeros((self._xyz.shape[0], 1), device="cuda")
+        self.denom = torch.zeros((self._xyz.shape[0], 1), device="cuda")
+        self._deformation_accum = torch.zeros((self._xyz.shape[0],3),device="cuda")
+        
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             
@@ -521,9 +539,18 @@ class GaussianModel:
         weight_dict = torch.load(os.path.join(path,"deformation.pth"),map_location="cuda")
         self._deformation.load_state_dict(weight_dict)
         self._deformation = self._deformation.to("cuda")
+        self._deformation_table = torch.gt(torch.ones((self._xyz.shape[0]),device="cuda"),0)
+        self._deformation_accum = torch.zeros((self.get_xyz.shape[0],3),device="cuda")
+        if os.path.exists(os.path.join(path, "deformation_table.pth")):
+            self._deformation_table = torch.load(os.path.join(path, "deformation_table.pth"),map_location="cuda")
+        if os.path.exists(os.path.join(path, "deformation_accum.pth")):
+            self._deformation_accum = torch.load(os.path.join(path, "deformation_accum.pth"),map_location="cuda")
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         
     def save_deformation(self, path):
         torch.save(self._deformation.state_dict(),os.path.join(path, "deformation.pth"))
+        torch.save(self._deformation_table,os.path.join(path, "deformation_table.pth"))
+        torch.save(self._deformation_accum,os.path.join(path, "deformation_accum.pth"))
     
     def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
@@ -653,10 +680,12 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
+
             if len(group["params"]) > 1:
                 continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
+
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                 stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
 
@@ -682,9 +711,29 @@ class GaussianModel:
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         
+        self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
+        self.denom = self.denom[valid_points_mask]
+        self.max_radii2D = self.max_radii2D[valid_points_mask]
+        self._deformation_table = self._deformation_table[valid_points_mask]
+        self._deformation_accum = self._deformation_accum[valid_points_mask]
+
         self.target_mask = self.target_mask[valid_points_mask]
+    
+    def add_densification_stats(self, viewspace_point_tensor, update_filter, width, height, scene_type='none'):
+        grad = viewspace_point_tensor.squeeze(0) # [N, 2]
+        grad[:, 0] *= width * 0.5
+        grad[:, 1] *= height * 0.5
         
-    def densification_postfix(self, new_xyz,new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation):
+        if scene_type == 'fg':
+            mask = self.target_mask
+        elif scene_type == 'bg':
+            mask = ~self.target_mask
+        else:
+            mask = torch.ones_like(self.target_mask)
+        self.xyz_gradient_accum[mask][update_filter] += torch.norm(grad[update_filter,:2], dim=-1, keepdim=True)        
+        self.denom[mask][update_filter] += 1
+        
+    def densification_postfix(self, new_xyz,new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_deformation_table):
         d = {
             "xyz": new_xyz,
             "scaling" : new_scaling,
@@ -702,60 +751,91 @@ class GaussianModel:
         # self._colors = optimizable_tensors["color"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
+        
+        self._deformation_table = torch.cat([self._deformation_table,new_deformation_table],-1)
+        self._deformation_accum = torch.zeros((self.get_xyz.shape[0], 3), device="cuda")
+
+        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        # self._deformation_accum = torch.zeros((self.get_xyz.shape[0], 3), device="cuda")
+        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+    def densify(self, max_grad, min_opacity, extent, max_screen_size, density_threshold, displacement_scale, model_path=None, iteration=None, stage=None):
+        grads = self.xyz_gradient_accum / self.denom
+        grads[grads.isnan()] = 0.0
+
+        self.densify_and_clone(grads, max_grad, extent, density_threshold, displacement_scale, model_path, iteration, stage)
+        self.densify_and_split(grads, max_grad, extent)
     
-    def dupelicate(self):
-        selected_pts_mask = self.target_mask #torch.logical_and()
-        new_xyz = self._xyz[selected_pts_mask] + torch.rand_like(self._xyz[selected_pts_mask])*0.005
+    def densify_and_clone(self, grads, grad_threshold, scene_extent, density_threshold=20, displacement_scale=20, model_path=None, iteration=None, stage=None):
+        grads_accum_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
+        
+
+        selected_pts_mask = torch.logical_and(grads_accum_mask,
+                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        new_xyz = self._xyz[selected_pts_mask] 
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
+        new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
-        new_opacities = self._opacity[selected_pts_mask]
-        # new_colors = self._colors[selected_pts_mask]
-        
-        # Update target mask
+        # new_deformation_table = self._deformation_table[selected_pts_mask]
+        new_deformation_table = self._deformation_table[selected_pts_mask]
+
         new_target_mask = self.target_mask[selected_pts_mask]
         self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
+        
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_deformation_table)
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
+    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
+        n_init_points = self.get_xyz.shape[0]
+        # Extract points that satisfy the gradient condition
+        padded_grad = torch.zeros((n_init_points), device="cuda")
+        padded_grad[:grads.shape[0]] = grads.squeeze()
+        selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
 
-    def dynamic_dupelication(self):
-        """Duplicate points with highly dynamic motion - maybe the top 10% of points with the largest motions?
-        """
+        # breakpoint()
+        selected_pts_mask = torch.logical_and(selected_pts_mask,
+                                              torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        if not selected_pts_mask.any():
+            return
+        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
+        means =torch.zeros((stds.size(0), 3),device="cuda")
+        samples = torch.normal(mean=means, std=stds)
+        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
+        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
+        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
+        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
+        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
+        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+        new_deformation_table = self._deformation_table[selected_pts_mask].repeat(N)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_deformation_table)
         
-        selected_pts_mask = render_motion_point_mask(self)
-        
-        new_xyz = self._xyz[selected_pts_mask] + torch.rand_like(self._xyz[selected_pts_mask])*0.005
-        new_features_dc = self._features_dc[selected_pts_mask]
-        new_features_rest = self._features_rest[selected_pts_mask]
-        new_scaling = self._scaling[selected_pts_mask]
-        new_rotation = self._rotation[selected_pts_mask]
-        new_opacities = self._opacity[selected_pts_mask]
-        # new_colors = self._colors[selected_pts_mask]
-        
-        # Update target mask
         new_target_mask = self.target_mask[selected_pts_mask]
         self.target_mask = torch.cat([self.target_mask, new_target_mask], dim=0)
-
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
-
-    def prune(self,cam_list): # h_thresold, extent, max_screen_size,):
-        """
-        """
-        h = self.get_coarse_opacity_with_3D_filter
-        h_mask = (h < 0.05).squeeze(-1)
         
-        prune_mask = torch.zeros_like(self.target_mask, dtype=torch.uint8).cuda()
-        for cam in cam_list:
-            prune_mask += get_in_view_dyn_mask(cam, self.get_xyz)
+        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
+        self.prune_points(prune_filter)
 
-        prune_mask = prune_mask < len(cam_list)-2
-        prune_mask = torch.logical_and(prune_mask, self.target_mask)
+    @torch.no_grad()
+    def update_deformation_table(self,threshold):
+        # print("origin deformation point nums:",self._deformation_table.sum())
+        self._deformation_table = torch.gt(self._deformation_accum.max(dim=-1).values/100,threshold)
+   
+   
+    def prune(self,max_grad, min_opacity, extent, max_screen_size): # h_thresold, extent, max_screen_size,):
+        prune_mask = (self.get_hopac < min_opacity).squeeze()
+        if max_screen_size:
+            big_points_vs = self.max_radii2D > max_screen_size
+            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+            prune_mask = torch.logical_or(prune_mask, big_points_vs)
 
-        prune_mask = torch.logical_or(prune_mask, h_mask)
+            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         
         self.prune_points(prune_mask)
         torch.cuda.empty_cache()
+        
           
     def reset_opacity(self):
         print('resetting opacity')

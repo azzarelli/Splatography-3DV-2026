@@ -93,7 +93,7 @@ class FourDGSdataset(Dataset):
             #     image_name=f"{index}", uid=index, data_device=torch.device("cuda"), time=time
             # )
 
-            return rgb_cam#, depth_cam
+            return rgb_cam #, depth_cam
         else:
             try:
                 image, w2c, time, mask, depth = self.dataset[index]

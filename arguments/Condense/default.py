@@ -28,7 +28,7 @@ OptimizationParams = dict(
     coarse_iterations=3000,
     batch_size=2, # Was 4
 
-    opacity_reset_interval=3000,    
+    opacity_reset_interval=60000,    
     
     lambda_dssim = 0., #0.1,
     

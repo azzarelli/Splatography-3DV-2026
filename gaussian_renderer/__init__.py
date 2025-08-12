@@ -686,8 +686,7 @@ def render_coarse_batch_vanilla(
     return  L1
 
 def render_coarse_batch(
-    viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
-    stage="fine", iteration=0,kernel_size=0.1):
+    viewpoint_cams, pc, kernel_size=0.1):
     """
     Render the scene.
     """
@@ -705,24 +704,24 @@ def render_coarse_batch(
     opacity = opacity[~pc.target_mask]
     
     L1 = 0.
+    radii_list, visibility_filter_list, viewspace_point_tensor_list = [], [], []
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
-        distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 0.3
         
-        means3D_final = means3D[mask]
-        rotations_final = rotations[mask]
-        scales_final = scales[mask]
-        colors_final = colors[mask]
-        opacity_final = opacity[mask]
+        means3D_final = means3D
+        rotations_final = rotations
+        scales_final = scales
+        colors_final = colors
+        opacity_final = opacity
 
-        rgb, _, _ = rasterization(
+        rgb, _, meta = rasterization(
             means3D_final, rotations_final, scales_final, 
             opacity_final.squeeze(-1),colors_final,
             viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
             viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
-            
+            packed=False,
+
             rasterize_mode='antialiased',
             eps2d=0.1,
             sh_degree=pc.active_sh_degree
@@ -745,8 +744,16 @@ def render_coarse_batch(
         gt[mask] = blurred[mask]
 
         L1 += l1_loss(rgb, gt)
-    
-    return  L1
+
+        radii = meta["radii"].squeeze(0) # [N,]
+
+        meta["means2d"].retain_grad() # [1, N, 2]
+        radii_list.append(radii.unsqueeze(0))
+        visibility_filter_list.append((radii > 0).unsqueeze(0))
+        viewspace_point_tensor_list.append(meta["means2d"])
+        
+    return  L1, radii_list, visibility_filter_list, viewspace_point_tensor_list
+
 
 def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
     stage="fine", iteration=0,kernel_size=0.1):
@@ -770,6 +777,8 @@ def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,
     colors = colors[pc.target_mask]
     
     L1 = 0.
+    radii_list, visibility_filter_list, viewspace_point_tensor_list = [], [], []
+
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
         time = time*0. + viewpoint_camera.time
@@ -791,14 +800,15 @@ def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,
         if (iteration % 500 == 0 and idx == 0) or pc.target_neighbours is None:
             pc.update_neighbours(means3D_final)
         background = torch.rand(1, 3).cuda() 
-        rgb, _, _ = rasterization(
+        rgb, _, meta = rasterization(
             means3D_final, rotations_final, scales, 
             opacity_final.squeeze(-1), colors_final,
             viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
             viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
             viewpoint_camera.image_width, 
             viewpoint_camera.image_height,
-            
+            packed=False,
+
             rasterize_mode='antialiased',
             eps2d=0.1,
             sh_degree=pc.active_sh_degree,
@@ -812,7 +822,14 @@ def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,
         gt = gt*mask + (1.-mask)*background.permute(1,0).unsqueeze(-1)
         
         L1 += l1_loss(rgb, gt)
-    return  L1
+        
+        radii = meta["radii"].squeeze(0) # [N,]
+        meta["means2d"].retain_grad() # [1, N, 2]
+        radii_list.append(radii.unsqueeze(0))
+        visibility_filter_list.append((radii > 0).unsqueeze(0))
+        viewspace_point_tensor_list.append(meta["means2d"])
+        
+    return  L1, radii_list, visibility_filter_list, viewspace_point_tensor_list
 
 
 
@@ -830,6 +847,7 @@ def render_batch(
     opacity = pc.get_opacity
     
     L1 = 0.
+    radii_list, visibility_filter_list, viewspace_point_tensor_list = [], [], []
 
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
@@ -851,19 +869,11 @@ def render_batch(
         rotations_final = pc.rotation_activation(rotations_final)
         
         # For vivo
-        if datasettype == 'condense':
-            distances = torch.norm(means3D_final - viewpoint_camera.camera_center.cuda(), dim=1)
-            mask = distances > 0.3
-            means3D_final = means3D_final[mask]
-            rotations_final = rotations_final[mask]
-            scales_final = scales[mask]
-            opacity_final = opacity_final[mask]
-            colors_final = colors_final[mask]
-        else:
-            scales_final = scales
+
+        scales_final = scales
         
         # Set up rasterization configuration
-        rgb, alpha, _ = rasterization(
+        rgb, alpha, meta = rasterization(
             means3D_final, rotations_final, scales_final, 
             opacity_final.squeeze(-1), colors_final,
             viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
@@ -872,6 +882,7 @@ def render_batch(
             viewpoint_camera.image_height,
             
             rasterize_mode='antialiased',
+            packed=False,
             eps2d=0.1,
             sh_degree=pc.active_sh_degree
         )
@@ -883,8 +894,14 @@ def render_batch(
             L1 += l1_loss(rgb[:, 100:-100, 100:-100], gt_img[:, 100:-100, 100:-100])
         else:
             L1 += l1_loss(rgb, gt_img)
-   
-    return L1
+    
+        radii = meta["radii"].squeeze(0) # [N,]
+        meta["means2d"].retain_grad() # [1, N, 2]
+        radii_list.append(radii.unsqueeze(0))
+        visibility_filter_list.append((radii > 0).unsqueeze(0))
+        viewspace_point_tensor_list.append(meta["means2d"])
+            
+    return  L1, radii_list, visibility_filter_list, viewspace_point_tensor_list
 
 
 def render_depth_batch(

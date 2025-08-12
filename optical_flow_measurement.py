@@ -102,7 +102,7 @@ def optical_flow_mse(test_folder, gt_folder, model):
 scenes=[ "Bassist", "Fruit", "Curling", "Pony", "Piano"] #"Pony",
 # scenes=["Pony"]
 
-models = ["unifieddyn4_nostaticdupe"] #, "unifiedH"]#, "unifieddyn4_nostaticdupe"] #, "bg_loss",
+models = ["4dgs_densification"] #, "unifiedH"]#, "unifieddyn4_nostaticdupe"] #, "bg_loss",
 # models = [ "unifieddyn4_nostaticdupe"] #, "bg_loss",
 
 final_res = {}
@@ -110,13 +110,13 @@ for scene in scenes:
     for mod in models:
 
         gt_folder = f"/home/barry/Desktop/PhD/SparseViewPaper/SuppMat_workingdir/Flow/GT_{scene}"
-        test_folder = "output/Condense/"+scene+"/"+mod+"/images/"
+        test_folder = "output/Condense/"+scene+"/"+mod+"/masked/"
 
         op = optical_flow_mse(test_folder, gt_folder, model)
         final_res[f"{mod}-{scene}"] = float(op)
         print(f'{mod}-{scene}: {float(op):4f}')
         
 import json 
-with open("./optical_flow.json", "w") as fp:
+with open("./optical_flow_4dgscanon.json", "w") as fp:
     json.dump(final_res, fp, indent=4)
     
