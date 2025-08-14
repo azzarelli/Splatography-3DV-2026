@@ -109,7 +109,7 @@ class Deformation(nn.Module):
             rotations = rotations_emb # + self.rotations_deform(dyn_feature)
             
             opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
-            w = (h_emb[:,1]**2).unsqueeze(-1)
+            w = (h_emb[:,1]).unsqueeze(-1)
             mu = torch.sigmoid(h_emb[:,2]).unsqueeze(-1)
             t = time_emb[0:1].squeeze(0)
             feat_exp = torch.exp(-w * (t-mu)**2)
