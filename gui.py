@@ -24,7 +24,7 @@ from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss, l1_loss_intense
 from pytorch_msssim import ms_ssim
 import cv2
 
-from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_vanilla,render_coarse_batch_target, render_depth_batch
+from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_vanilla,render_coarse_batch_target, render_cool_video
 import json
 import open3d as o3d
 # from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
@@ -399,44 +399,6 @@ class GUI(GUIBase):
         self.gaussians.optimizer.zero_grad(set_to_none = True)
         self.iter_end.record()
 
-    def train_foreground_fine_step(self):
-        """Train canon foreground GS using the t=0 (as was initialized)
-        """
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        self.iter_start.record()
-        if self.iteration < self.opt.iterations:
-            self.gaussians.optimizer.zero_grad(set_to_none=True)
-        
-        try:
-            viewpoint_cams = next(self.coarse_loader)
-        except StopIteration:
-            viewpoint_stack_loader = DataLoader(self.coarse_viewpoint_stack, batch_size=1, shuffle=self.random_loader,
-                                                num_workers=8, collate_fn=list)
-            self.coarse_loader = iter(viewpoint_stack_loader)
-            viewpoint_cams = next(self.coarse_loader)
-            
-        L1 = torch.tensor(0.).cuda()
-        L1 = render_coarse_batch_target(
-            viewpoint_cams, 
-            self.gaussians, 
-            self.pipe,
-            self.background, 
-            stage=self.stage,
-            iteration=self.iteration
-        )
-        
-        loss = L1
-
-        with torch.no_grad():
-            if torch.isnan(loss).any():
-                print("loss is nan, end training, reexecv program now.")
-                os.execv(sys.executable, [sys.executable] + sys.argv)
-        loss.backward()
-        self.gaussians.optimizer.step()
-        self.gaussians.optimizer.zero_grad(set_to_none = True)
-        self.iter_end.record()
-            
     def train_step(self):
 
         # Start recording step duration
@@ -538,51 +500,6 @@ class GUI(GUIBase):
             if self.iteration % self.opt.opacity_reset_interval == 0 and self.iteration < (self.final_iter - 100):# and self.stage == 'fine':
                 self.gaussians.reset_opacity()
 
-    def train_depth_step(self):
-
-        # Start recording step duration
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        self.iter_start.record()
-
-        zero_cam_idxs = self.scene.train_camera.zero_idxs
-        
-        
-        
-        C = self.scene.max_frames #300 if self.scene.dataset_type == 'dynerf' else 300
-        
-        canon_cams = []
-        view_cams = []
-        while view_cams == []:
-            viewpoint_cams = self.get_batch_views
-            # Sample the image at t=0 as the reference
-            for cam in viewpoint_cams:
-                if cam.uid % C != 0:
-                    idx = zero_cam_idxs.index(cam.uid - (cam.uid % C))
-                    canon_cams.append(self.coarse_viewpoint_stack[idx])
-                    view_cams.append(cam)
-        
-        loss = render_depth_batch(
-            view_cams, canon_cams,
-            self.gaussians
-        )
-      
-        with torch.no_grad():
-            if self.gui:
-                dpg.set_value("_log_knn", f"Depth: {loss.item()} | cov {0.} ")
-       
-            # Error if loss becomes nan
-            if torch.isnan(loss).any():
-                print("loss is nan for `gui.py:train_depth_step(...)`, end training, reexecv program now.")
-                os.execv(sys.executable, [sys.executable] + sys.argv)
-                
-        # Backpass
-        loss.backward()
-        self.gaussians.optimizer.step()
-        self.gaussians.optimizer.zero_grad(set_to_none = True)
-        self.iter_end.record()
-    
-    
     @torch.no_grad()
     def full_evaluation(self,):
         print('Full Eval')
@@ -797,6 +714,30 @@ class GUI(GUIBase):
             
             cnt += 1
 
+    
+    @torch.no_grad()
+    def cool_video(self, audio, sample_rate):
+        import torchaudio
+        audio_pth = f'output/{self.args.expname}/audio.wav'
+        torchaudio.save(audio_pth, audio.unsqueeze(0), sample_rate)
+        
+        viewpoint_cams = self.scene.getVideoCameras() #.copy()
+        
+        global_randn = torch.rand_like(self.gaussians.get_scaling_with_3D_filter).cuda()
+        cnt = 0
+        # Render and return preds
+        for i, viewpoint_cam in tqdm(enumerate(viewpoint_cams), desc="Processing viewpoints"):
+            frame_start = i * 512
+            frame = audio[frame_start:frame_start + 1024]
+        
+            save_cool_views(render_cool_video(
+                viewpoint_cam, 
+                self.gaussians,
+                frame,
+                global_randn
+            )["render"], cnt, self.args.expname)
+
+            cnt += 1
 
 def setup_seed(seed):
      torch.manual_seed(seed)
@@ -804,6 +745,32 @@ def setup_seed(seed):
      np.random.seed(seed)
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
+
+def save_cool_views(pred, idx, name):
+
+    pred = (pred.permute(1, 2, 0)
+        # .contiguous()
+        .clamp(0, 1)
+        .contiguous()
+        .detach()
+        .cpu()
+        .numpy()
+    )*255
+
+    pred = pred.astype(np.uint8)
+
+    # Convert RGB to BGR for OpenCV
+    pred_bgr = cv2.cvtColor(pred, cv2.COLOR_RGB2BGR)
+
+    if not os.path.exists(f'output/{name}/cool/'):
+        os.mkdir(f'output/{name}/cool/')
+        os.mkdir(f'output/{name}/cool/full/')
+    elif not os.path.exists(f'output/{name}/cool/full/'):
+        os.mkdir(f'output/{name}/cool/full/')
+    cv2.imwrite(f'output/{name}/cool/full/{idx}.png', pred_bgr)
+
+    return pred_bgr
+
 
 def save_novel_views(pred, idx, name):
 

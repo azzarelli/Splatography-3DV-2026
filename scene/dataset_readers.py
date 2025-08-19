@@ -461,7 +461,7 @@ def format_condense_infos(dataset,split, pos=None):
         key_poses = dataset.poses[0:4]  # (R, T) tuples
 
         # Interpolate 300-frame loop at constant velocity
-        interp_poses = interpolate_constant_speed_circle(key_poses, frames_total=300)
+        interp_poses = interpolate_constant_speed_circle(key_poses,pos, frames_total=1800)
 
         for idx, (R_mat, T_vec) in enumerate(interp_poses):
             FovX, FovY = dataset.load_fov(0)
@@ -485,59 +485,23 @@ def format_condense_infos(dataset,split, pos=None):
 
     return cameras
 
-def interpolate_constant_speed_circle(poses, frames_total=300):
-    from scipy.spatial.transform import Rotation as R, Slerp
-    rot_objs = [R.from_matrix(Rm) for Rm, _ in poses]
-    trans_vecs = [T for _, T in poses]
 
-    # Compute segment distances
-    d0 = np.linalg.norm(trans_vecs[1] - trans_vecs[0])
-    d1 = np.linalg.norm(trans_vecs[2] - trans_vecs[1])
-    d2 = np.linalg.norm(trans_vecs[3] - trans_vecs[2])
-    d3 = np.linalg.norm(trans_vecs[0] - trans_vecs[3])
-    distances = np.array([d0, d1, d2, d3])
-    total_dist = np.sum(distances)
+def interpolate_constant_speed_circle(poses,pos, frames_total=300):
+    """
+    Orbit the camera around the world X axis while looking at the target.
+    The loop closes: first frame == last frame.
+    """
+    R0, T0 = poses[0]   # initial pose (R0: (3,3), T0: (3,))
 
-    # Proportional frame counts per segment
-    raw_segment_frames = distances / total_dist * frames_total
-    segment_frames = np.floor(raw_segment_frames).astype(int)
+    all_rots, all_trans = [], []
+    for theta in range(frames_total):
+        T_cw =  T0
+        R_cw = R0
 
-    # Distribute leftover frames
-    remainder = frames_total - np.sum(segment_frames)
-    for i in range(remainder):
-        segment_frames[i % 4] += 1
+        all_rots.append(R_cw.astype(np.float32))
+        all_trans.append(T_cw.astype(np.float32))
 
-    all_rots = []
-    all_trans = []
-
-    for i in range(4):
-        j = (i + 1) % 4
-        n = segment_frames[i]
-        if n <= 1:
-            continue  # skip segments with 1 or fewer frames
-
-        times = np.linspace(0, 1, n, endpoint=False)
-
-        # SLERP
-        key_rots = R.from_quat([
-            rot_objs[i].as_quat(),
-            rot_objs[j].as_quat()
-        ])
-        slerp = Slerp([0, 1], key_rots)
-        interp_rots = slerp(times)
-
-        # LERP for translations
-        Ti, Tj = trans_vecs[i], trans_vecs[j]
-        interp_Ts = (1.0 - times)[:, None] * Ti + times[:, None] * Tj
-
-        all_rots.extend(interp_rots.as_matrix())
-        all_trans.extend(interp_Ts)
-
-    # Add final frame exactly back at pose 0
-    all_rots.append(rot_objs[0].as_matrix())
-    all_trans.append(trans_vecs[0])
-
-    return list(zip(all_rots, all_trans))  
+    return list(zip(all_rots, all_trans))
 
 def readCondenseSceneInfo(datadir, eval):
     from scene.condense_dataset import CondenseData
