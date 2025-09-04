@@ -140,8 +140,11 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
 
     scales = pc.get_scaling_with_3D_filter
     rotations = pc._rotation
+    target_mask = pc.target_mask
 
     if view_args is not None:
+
+        
         if view_args['finecoarse_flag']:
             means3D, rotations, opacity, colors, extras = pc._deformation(
                 point=means3D_, 
@@ -151,12 +154,14 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
                 h_emb=opacity,
                 shs=colors,
                 view_dir=viewpoint_camera.direction_normal(),
-                target_mask=pc.target_mask
+                target_mask=target_mask
             )
         else:
             means3D, extras = means3D_, None
             opacity = pc.get_coarse_opacity_with_3D_filter
 
+        
+            
     else:
         means3D, rotations, opacity, colors, extras = pc._deformation(
             point=means3D_, 
@@ -166,7 +171,7 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
             h_emb=opacity,
             shs=colors,
             view_dir=viewpoint_camera.direction_normal(),
-            target_mask=pc.target_mask
+            target_mask=target_mask
         )
     
     opacity = pc.get_fine_opacity_with_3D_filter(opacity)
@@ -175,17 +180,16 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
     show_mask = 0
     if view_args is not None and stage != 'test':
         if view_args['viewer_status']:
-
             show_mask = view_args['show_mask'] 
             
-            mask = (pc.get_wopac.abs() > view_args['w_thresh'])
+            mask = ((pc.get_wopac**2 *2000.) > view_args['w_thresh'])
             mask = torch.logical_and(mask, (pc.get_hopac > view_args['h_thresh']).squeeze(-1))
 
             mask = mask.squeeze(-1)
             if show_mask == 1:
-                mask = torch.logical_and(pc.target_mask, mask)
+                mask = torch.logical_and(target_mask, mask)
             elif show_mask == -1:
-                mask = torch.logical_and(~pc.target_mask, mask)
+                mask = torch.logical_and(~target_mask, mask)
             
             if mask is not None:
                 means3D = means3D[mask]
@@ -199,12 +203,14 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
                 colors = (means3D - means3D_).abs()
     else:
         view_args= {'vis_mode':'render'}
+
+            
     # print(.shape, means3D.shape)
     rendered_image, rendered_depth, norms = None, None, None
     if stage == 'test-foreground':
         # distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
         # mask = distances > 0.3
-        mask = pc.target_mask #torch.logical_and(, mask)
+        mask = target_mask #torch.logical_and(, mask)
 
         means3D = means3D[mask]
         rotation = rotation[mask]
@@ -229,7 +235,7 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
     elif stage == 'test-full':
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
         mask = distances < 2.
-        mask = torch.logical_and(~pc.target_mask, mask)
+        mask = torch.logical_and(~target_mask, mask)
         mask = ~mask
         means3D = means3D[mask]
         rotation = rotation[mask]
