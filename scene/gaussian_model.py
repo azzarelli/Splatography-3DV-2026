@@ -140,9 +140,13 @@ class GaussianModel:
         scales = self.get_scaling
         filter3D = self.filter_3D
         if opacity.shape[0] != scales.shape[0]:
-            scales = scales[self.target_mask]
-            filter3D = filter3D[self.target_mask]
-            
+            if opacity.shape[0] == self.target_mask.sum().item():
+                scales = scales[self.target_mask]
+                filter3D = filter3D[self.target_mask]
+            else:
+                scales = scales[~self.target_mask]
+                filter3D = filter3D[~self.target_mask]
+                
         scales_square = torch.square(scales)
         det1 = scales_square.prod(dim=1)
         

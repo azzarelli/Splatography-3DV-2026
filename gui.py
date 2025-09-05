@@ -20,11 +20,11 @@ import torch.nn.functional as F
 from utils.timer import Timer
 
 from utils.image_utils import psnr
-from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss, l1_loss_intense
+from utils.loss_utils import ssim
 from pytorch_msssim import ms_ssim
 import cv2
 
-from gaussian_renderer import render,render_batch,render_coarse_batch,render_coarse_batch_vanilla,render_coarse_batch_target, render_cool_video
+from gaussian_renderer import render,render_batch,render_coarse_background,render_coarse_foreground
 import json
 import open3d as o3d
 # from submodules.DAV2.depth_anything_v2.dpt import DepthAnythingV2
@@ -292,21 +292,11 @@ class GUI(GUIBase):
             viewpoint_cams = next(self.coarse_loader)
 
         
-        L1 = torch.tensor(0.).cuda()
-        if self.scene.dataset_type == "condense" or  self.scene.dataset_type == "dynerf":
-            L1 = render_coarse_batch(
-                viewpoint_cams, 
-                self.gaussians, 
-                self.pipe,
-                self.background, 
-                stage=self.stage,
-                iteration=self.iteration
-            )
-        else:
-            L1 = render_coarse_batch_vanilla(
-                viewpoint_cams, 
-                self.gaussians, 
-            )
+        L1 = render_coarse_background(
+            viewpoint_cams, 
+            self.gaussians
+        )
+
         
         hopacloss = 0.01*((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
         wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
@@ -357,7 +347,6 @@ class GUI(GUIBase):
 
             if self.iteration % 100 == 0 and self.iteration < self.final_iter - 200:
                 self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
-
             
     def train_foreground_step(self):
         torch.cuda.empty_cache()
@@ -369,16 +358,11 @@ class GUI(GUIBase):
         
         viewpoint_cams = self.get_batch_views
         
-        loss = render_coarse_batch_target(
+        loss = render_coarse_foreground(
             viewpoint_cams, 
-            self.gaussians, 
-            self.pipe,
-            self.background, 
-            stage=self.stage,
-            iteration=self.iteration
+            self.gaussians
         )
         
-
         # print( planeloss ,depthloss,hopacloss ,wopacloss ,normloss ,pg_loss,covloss)
         with torch.no_grad():
             if self.gui:
@@ -712,31 +696,6 @@ class GUI(GUIBase):
                 stage='test-foreground'
             )["render"], cnt, self.args.expname)
             
-            cnt += 1
-
-    
-    @torch.no_grad()
-    def cool_video(self, audio, sample_rate):
-        import torchaudio
-        audio_pth = f'output/{self.args.expname}/audio.wav'
-        torchaudio.save(audio_pth, audio.unsqueeze(0), sample_rate)
-        
-        viewpoint_cams = self.scene.getVideoCameras() #.copy()
-        
-        global_randn = torch.rand_like(self.gaussians.get_scaling_with_3D_filter).cuda()
-        cnt = 0
-        # Render and return preds
-        for i, viewpoint_cam in tqdm(enumerate(viewpoint_cams), desc="Processing viewpoints"):
-            frame_start = i * 512
-            frame = audio[frame_start:frame_start + 1024]
-        
-            save_cool_views(render_cool_video(
-                viewpoint_cam, 
-                self.gaussians,
-                frame,
-                global_randn
-            )["render"], cnt, self.args.expname)
-
             cnt += 1
 
 def setup_seed(seed):

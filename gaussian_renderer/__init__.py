@@ -78,7 +78,6 @@ def differentiable_cdf_match(source, target, eps=1e-5):
 
     return matched
         
-from torch_cluster import knn
 def compute_alpha_interval(A, B, cov6A, cov6B, alpha_threshold=0.1):
     """
     A is the target point
@@ -131,93 +130,28 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
 
     extras = None
 
-    means3D_ = pc.get_xyz
-    time = torch.tensor(viewpoint_camera.time).to(means3D_.device).repeat(means3D_.shape[0], 1)
-    # colors = pc.get_color
-    colors = pc.get_features
-
-    opacity = pc.get_opacity.clone().detach()
-
-    scales = pc.get_scaling_with_3D_filter
-    rotations = pc._rotation
-    target_mask = pc.target_mask
-
-    if view_args is not None:
-
-        
-        if view_args['finecoarse_flag']:
-            means3D, rotations, opacity, colors, extras = pc._deformation(
-                point=means3D_, 
-                rotations=rotations,
-                scales=scales,
-                times_sel=time, 
-                h_emb=opacity,
-                shs=colors,
-                view_dir=viewpoint_camera.direction_normal(),
-                target_mask=target_mask
-            )
-        else:
-            means3D, extras = means3D_, None
-            opacity = pc.get_coarse_opacity_with_3D_filter
-
-        
-            
-    else:
-        means3D, rotations, opacity, colors, extras = pc._deformation(
-            point=means3D_, 
-            rotations=rotations,
-            scales=scales,
-            times_sel=time, 
-            h_emb=opacity,
-            shs=colors,
-            view_dir=viewpoint_camera.direction_normal(),
-            target_mask=target_mask
-        )
+    pc_stage = 'fine'
+    pc_return_type = 'full'  
     
-    opacity = pc.get_fine_opacity_with_3D_filter(opacity)
-    rotation = pc.rotation_activation(rotations)
+    if stage == 'test-foreground':
+        pc_return_type = 'foreground'
+    
+    elif view_args is not None:
+        if view_args['finecoarse_flag']:
+            pc_stage = 'fine'
+        else:
+            pc_stage = 'coarse'
 
-    show_mask = 0
-    if view_args is not None and stage != 'test':
-        if view_args['viewer_status']:
-            show_mask = view_args['show_mask'] 
-            
-            mask = ((pc.get_wopac**2 *2000.) > view_args['w_thresh'])
-            mask = torch.logical_and(mask, (pc.get_hopac > view_args['h_thresh']).squeeze(-1))
+        if view_args['show_mask'] == 1:
+            pc_return_type = 'foreground'
+        elif view_args['show_mask'] == -1:
+            pc_return_type = 'background'
 
-            mask = mask.squeeze(-1)
-            if show_mask == 1:
-                mask = torch.logical_and(target_mask, mask)
-            elif show_mask == -1:
-                mask = torch.logical_and(~target_mask, mask)
-            
-            if mask is not None:
-                means3D = means3D[mask]
-                colors = colors[mask]
-                opacity = opacity[mask]
-                scales = scales[mask]
-                rotation = rotation[mask]
-                
-            if view_args['full_opac']:
-                opacity = torch.ones_like(opacity).cuda()
-                colors = (means3D - means3D_).abs()
-    else:
-        view_args= {'vis_mode':'render'}
 
+    means3D, rotation,opacity, colors, scales = process_gaussians(pc, viewpoint_camera.time, pc_stage, pc_return_type)
             
-    # print(.shape, means3D.shape)
     rendered_image, rendered_depth, norms = None, None, None
     if stage == 'test-foreground':
-        # distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        # mask = distances > 0.3
-        mask = target_mask #torch.logical_and(, mask)
-
-        means3D = means3D[mask]
-        rotation = rotation[mask]
-        scales = scales[mask]
-        opacity = opacity[mask]
-        colors = colors[mask]
-
         rendered_image, alpha, _ = rasterization(
                         means3D, rotation, scales, opacity.squeeze(-1), colors,
 
@@ -235,7 +169,6 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
     elif stage == 'test-full':
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
         mask = distances < 2.
-        mask = torch.logical_and(~target_mask, mask)
         mask = ~mask
         means3D = means3D[mask]
         rotation = rotation[mask]
@@ -356,78 +289,13 @@ def render(viewpoint_camera, pc, pipe, bg_color: torch.Tensor, scaling_modifier=
             # sh_degree=pc.active_sh_degree
         )
         rendered_image = rendered_image.squeeze(0).permute(2,0,1)
-    elif view_args['vis_mode'] == 'dxyz_1':
-        residual = torch.norm(means3D-means3D_, dim=-1).unsqueeze(-1).repeat(1,3)
-        rendered_image, _, _ = rasterization(
-            means3D, rotation, scales, opacity.squeeze(-1),residual,
-            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
-            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
-            viewpoint_camera.image_width, 
-            viewpoint_camera.image_height,
-            
-            rasterize_mode='antialiased',
-            eps2d=0.1,
-            # sh_degree=pc.active_sh_degree
-        )
-        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
-    elif view_args['vis_mode'] == 'dxyz_3':
-        residual = (means3D-means3D_).abs()
-        rendered_image, _, _ = rasterization(
-            means3D, rotation, scales, opacity.squeeze(-1),residual,
-            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
-            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
-            viewpoint_camera.image_width, 
-            viewpoint_camera.image_height,
-            
-            rasterize_mode='antialiased',
-            eps2d=0.1,
-            # sh_degree=pc.active_sh_degree
-        )
-        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
-    elif view_args['vis_mode'] == 'extra':
-        # get the nearest xyz neighbours 
-        x = means3D
-        K=3
-        edge_index = knn(x, x, k=K)
-        row, col = edge_index
-        # 1. Get features of the neighbors
-        neighbors = x[col]  # shape: (N*K, 3)
-        # 2. Build index matrix to reshape into (N, K, 3)
-        sorted_row, perm = row.sort(stable=True)
-        sorted_col = col[perm]
-        neighbors = x[sorted_col]  # (N*K, 3), sorted by query index
-        neighbors = neighbors.view(means3D.shape[0],K ,3)
-        cov6A = pc.covariance_activation(scales.detach(), 1, rotation.detach())
-        cov6B = cov6A[sorted_col].view(means3D.shape[0],K ,6)
         
-        # colors = colors[sorted_col].view(means3D.shape[0],K ,3)[:,1, :]
-
-        for k in range(K):
-            if k == 0:
-                alpha = compute_alpha_interval(x, neighbors[:, 1, :], cov6A, cov6B[:, 1, :]) #.repeat(1,3) #.unsqueeze(-1)
-            else:
-                alpha += compute_alpha_interval(x, neighbors[:, 1, :], cov6A, cov6B[:, 1, :]) #.repeat(1,3) #.unsqueeze(-1)
-
-        alpha = alpha / K
-        rendered_image, alpha, _ = rasterization(
-            means3D, rotation, scales, alpha.squeeze(-1), colors,
-            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
-            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
-            viewpoint_camera.image_width, 
-            viewpoint_camera.image_height,
-            
-            rasterize_mode='antialiased',
-            eps2d=0.1,
-            sh_degree=pc.active_sh_degree
-        )
-        rendered_image = rendered_image.squeeze(0).permute(2,0,1)
         
     return {
         "render": rendered_image,
         "extras":extras # A dict containing mor point info
         # 'norms':rendered_norm, 'alpha':rendered_alpha
         }
-
 
 def srgb_to_linear_rgb(srgb: torch.Tensor) -> torch.Tensor:
     """
@@ -441,7 +309,6 @@ def srgb_to_linear_rgb(srgb: torch.Tensor) -> torch.Tensor:
     linear[below] = srgb[below] / 12.92
     linear[above] = ((srgb[above] + 0.055) / 1.055) ** 2.4
     return linear
-
 
 def linear_rgb_to_srgb(linear_rgb: torch.Tensor) -> torch.Tensor:
     """
@@ -480,82 +347,46 @@ def get_edges(mask):
     interior = (mask - mask_).clamp(0, 1)
     return interior.squeeze(0).squeeze(0)
 
-from utils.loss_utils import l1_loss, l1_loss_masked,local_triplet_ranking_loss
-def render_coarse_batch_vanilla(
-    viewpoint_cams, pc):
+from utils.loss_utils import l1_loss
+
+
+def process_gaussians(pc, time, stage, return_type='full'): # return_type: [full, foreground, background]
+    """Process the Gaussians depending on our stage
     """
-    Render the scene.
-    """
-    means3D = pc.get_xyz    
+    means = pc.get_xyz
     scales = pc.get_scaling_with_3D_filter
-    rotations = pc.rotation_activation(pc._rotation)
-    # colors = pc.get_color
-    colors = pc.get_features
-    opacity = pc.get_fine_opacity_with_3D_filter(pc.get_hopac)
 
-    means3D = means3D[~pc.target_mask]
-    rotations = rotations[~pc.target_mask]
-    scales = scales[~pc.target_mask]
-    colors = colors[~pc.target_mask]
-    opacity = opacity[~pc.target_mask]
+    pts, rotations, opacity, shs = pc._deformation(
+        point=means, 
+        time=time,
+        target_mask=pc.target_mask,
+        stage=stage,
+        return_type=return_type
+    )
     
-    L1 = 0.
-    for idx, viewpoint_camera in enumerate(viewpoint_cams):
-        distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-        mask = distances > 0.3
+    opacity = pc.get_fine_opacity_with_3D_filter(opacity)
+    rotations = pc.rotation_activation(rotations)
+    
+    if return_type == 'full':
+        scales = torch.cat([scales[pc.target_mask], scales[~pc.target_mask]], dim=0)
+    elif return_type == 'foreground':
+        scales = scales[pc.target_mask]
+    elif return_type == 'background':
+        scales = scales[~pc.target_mask]
+    else:
+        raise f'Issue with return_type in process_gaussians in the renderer'
+    
+    
+    shs = shs.view(-1, 16, 3)
+    return pts, rotations, opacity, shs, scales
         
-        means3D_final = means3D[mask]
-        rotations_final = rotations[mask]
-        scales_final = scales[mask]
-        colors_final = colors[mask]
-        opacity_final = opacity[mask]
-
-        background = torch.rand(1, 3).cuda() 
-
-        rgb, _, _ = rasterization(
-            means3D_final, rotations_final, scales_final, 
-            opacity_final.squeeze(-1),colors_final,
-            viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
-            viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
-            viewpoint_camera.image_width, 
-            viewpoint_camera.image_height,
-            
-            rasterize_mode='antialiased',
-            eps2d=0.1,
-            sh_degree=pc.active_sh_degree,
-            backgrounds=background
-        )
-        rgb = rgb.squeeze(0).permute(2,0,1)
-        
-        # Train the backgroudn
-        gt_img = viewpoint_camera.original_image.cuda()
-        mask = viewpoint_camera.mask.cuda() > 0. # invert binary mask
-        inv_mask = 1. - mask.float() 
-        gt = gt_img * inv_mask + (mask)*background.permute(1,0).unsqueeze(-1)
-
-        L1 += l1_loss(rgb, gt)
-    
-    return  L1
-
-def render_coarse_batch(
-    viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
-    stage="fine", iteration=0,kernel_size=0.1):
+def render_coarse_background(viewpoint_cams, pc, kernel_size=0.1):
     """
-    Render the scene.
+    Background Rendering and Loss
     """
-    means3D = pc.get_xyz    
-    scales = pc.get_scaling_with_3D_filter
-    rotations = pc.rotation_activation(pc._rotation)
-    # colors = pc.get_color
-    colors = pc.get_features
-    opacity = pc.get_fine_opacity_with_3D_filter(pc.get_hopac)
-
-    means3D = means3D[~pc.target_mask]
-    rotations = rotations[~pc.target_mask]
-    scales = scales[~pc.target_mask]
-    colors = colors[~pc.target_mask]
-    opacity = opacity[~pc.target_mask]
     
+    means3D, rotations,opacity, colors, scales = process_gaussians(pc,-1, 'coarse', 'background')
+
     L1 = 0.
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
         distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
@@ -600,52 +431,22 @@ def render_coarse_batch(
     
     return  L1
 
-def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,scaling_modifier=1.0,
-    stage="fine", iteration=0,kernel_size=0.1):
+def render_coarse_foreground(viewpoint_cams, pc):
     """
-    Render the scene.
+    Foreground Rendering and Loss
     """
-    # means3D = pc.get_xyz    
-    # scales = pc.get_scaling_with_3D_filter
-    # rotations = pc._rotation
-    # # colors = pc.get_color
-    # colors = pc.get_features
 
-    means3D = pc.get_xyz    
-    scales = pc.get_scaling_with_3D_filter
-    rotations = pc._rotation
-    colors = pc.get_features
+    means3D, rotations, opacity, colors, scales = process_gaussians(pc, -1, 'coarse', 'foreground')
 
-    means3D = means3D[pc.target_mask]
-    rotations = rotations[pc.target_mask]
-    scales = scales[pc.target_mask]
-    colors = colors[pc.target_mask]
-    
     L1 = 0.
     time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
     for idx, viewpoint_camera in enumerate(viewpoint_cams):
         time = time*0. + viewpoint_camera.time
 
-        means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
-            point=means3D, 
-            rotations=rotations,
-            scales = scales,
-            times_sel=time, 
-            h_emb=pc.get_opacity[pc.target_mask],
-            shs=colors,
-            view_dir=viewpoint_camera.direction_normal(),
-            target_mask=None,
-        )
-        
-        opacity_final = pc.get_fine_opacity_with_3D_filter(opacity_final)
-        rotations_final = pc.rotation_activation(rotations_final)
-        # As we take the NN from some random time step, lets re-calc it frequently
-        if (iteration % 500 == 0 and idx == 0) or pc.target_neighbours is None:
-            pc.update_neighbours(means3D_final)
         background = torch.rand(1, 3).cuda() 
         rgb, _, _ = rasterization(
-            means3D_final, rotations_final, scales, 
-            opacity_final.squeeze(-1), colors_final,
+            means3D, rotations, scales, 
+            opacity.squeeze(-1), colors,
             viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
             viewpoint_camera.intrinsics.unsqueeze(0).cuda(),
             viewpoint_camera.image_width, 
@@ -666,56 +467,28 @@ def render_coarse_batch_target(viewpoint_cams, pc, pipe, bg_color: torch.Tensor,
         L1 += l1_loss(rgb, gt)
     return  L1
 
-
-
 def render_batch(
     viewpoint_cams, pc, datasettype):
     """
     Render the scene.
     """
-    means3D = pc.get_xyz
-    scales = pc.get_scaling_with_3D_filter
-    rotations = pc._rotation
-    # colors = pc.get_color
-    colors = pc.get_features
-
-    opacity = pc.get_opacity
-    
     L1 = 0.
 
-    time = torch.tensor(viewpoint_cams[0].time).to(means3D.device).repeat(means3D.shape[0], 1).detach()
-    for idx, viewpoint_camera in enumerate(viewpoint_cams):
-        time = time*0. +viewpoint_camera.time
-        
-        
-        means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
-            point=means3D, 
-            rotations=rotations,
-            scales = scales,
-            times_sel=time, 
-            h_emb=opacity,
-            shs=colors,
-            view_dir=viewpoint_camera.direction_normal(),
-            target_mask=pc.target_mask,
-        )
-                
-        opacity_final = pc.get_fine_opacity_with_3D_filter(opacity_final)        
-        rotations_final = pc.rotation_activation(rotations_final)
-        
-        # For vivo
+    for idx, viewpoint_camera in enumerate(viewpoint_cams):        
+        means3D_final, rotations_final,opacity_final, colors_final, scales_final = process_gaussians(pc, viewpoint_camera.time, 'fine', 'full')
+
+        # For ViVo mask out near by Gaussians that may be distractors
         if datasettype == 'condense':
             distances = torch.norm(means3D_final - viewpoint_camera.camera_center.cuda(), dim=1)
             mask = distances > 0.3
             means3D_final = means3D_final[mask]
             rotations_final = rotations_final[mask]
-            scales_final = scales[mask]
+            scales_final = scales_final[mask]
             opacity_final = opacity_final[mask]
             colors_final = colors_final[mask]
-        else:
-            scales_final = scales
         
         # Set up rasterization configuration
-        rgb, alpha, _ = rasterization(
+        rgb, _, _ = rasterization(
             means3D_final, rotations_final, scales_final, 
             opacity_final.squeeze(-1), colors_final,
             viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda(), 
@@ -843,10 +616,7 @@ def render_motion_point_mask(pc):
     Render the scene.
     """
     means3D = pc.get_xyz.detach()
-    scales = pc.get_scaling_with_3D_filter.detach()
-    rotations = pc._rotation.detach()
-    colors = pc.get_features.detach()
-    opacity = pc.get_opacity.detach()
+
     
     L1 = 0.
 
@@ -855,16 +625,8 @@ def render_motion_point_mask(pc):
     for i in range(10):
         time = time*0. + float(i)*0.1
 
-        means3D_final, rotations_final, opacity_final, colors_final, norms = pc._deformation(
-            point=means3D, 
-            rotations=rotations,
-            scales = scales,
-            times_sel=time, 
-            h_emb=opacity,
-            shs=colors,
-            view_dir=None,
-            target_mask=pc.target_mask,
-        )
+        means3D_final, rotations_final,opacity_final, colors_final, scales_final = process_gaussians(pc, time, 'fine', 'full')
+
         
         means3D_collection.append(means3D_final[pc.target_mask].unsqueeze(0))
     
@@ -880,326 +642,3 @@ def render_motion_point_mask(pc):
     final_mask[pc.target_mask] = mask
     return final_mask
 
-def make_T(p):
-    """4x4 translation by +p (world space)."""
-    T = torch.eye(4, device=p.device, dtype=p.dtype)
-    T[:3, 3] = p
-    return T
-
-def make_Rx(theta, device, dtype):
-    """4x4 rotation about world X axis by theta (right-handed)."""
-    c, s = torch.cos(theta), torch.sin(theta)
-    R = torch.eye(4, device=device, dtype=dtype)
-    R[1,1] =  c; R[1,2] = -s
-    R[2,1] =  s; R[2,2] =  c
-    return R
-
-def rotate_view(viewmat, viewpoint_camera, cent, offset=0):
-    T = (int(viewpoint_camera.time * 1800) % 900)+offset
-    th = torch.linspace(0, 2 * math.pi, 900)[T]
-    
-    # --- build orbit transform in world space about 'cent' ---
-    cx, cy, cz = cent[0]                           # [3]
-    T_neg = make_T(-torch.tensor([cx, cy, cz], device=viewmat.device, dtype=viewmat.dtype))
-    T_pos = make_T( torch.tensor([cx, cy, cz], device=viewmat.device, dtype=viewmat.dtype))
-    R_x  = make_Rx(th, viewmat.device, viewmat.dtype)
-
-    # Current world->camera and its inverse (camera pose in world)
-    W2C = viewmat[0]                               # [4,4]
-    C2W = torch.inverse(W2C)                       # [4,4]
-
-    # Rotate the *camera pose* around world X axis about 'cent'
-    # cam_to_world' = T_pos * R_x * T_neg * cam_to_world
-    C2W_new = T_pos @ R_x @ T_neg @ C2W
-
-    # Back to world->camera for the rasterizer
-    return torch.inverse(C2W_new).unsqueeze(0)  # [1,4,4]
-
-def click_red_then_blue(means3D, rotation, scales, opacity, colors, mask, time):
-    tick = float((time*1800) % 270) #/270. # 9 sec
-    if tick > 20 and tick < 60:
-
-        colors[~mask] *= 0.
-        colors[~mask, 0, 0] = 5.
-    
-    elif tick >= 60 and tick <= 100:
-        colors[mask] *= 0.
-        colors[mask, 0, 1] = 5.       
-    else:
-        pass
-
-    return means3D, rotation, scales, opacity, colors, mask
- 
-
-def chromatic_abbr(means3D, rotation, scales, opacity, colors, mask, time):
-    tick = float((time*1800) %360)/100.
-
-    nn = 0.05
-    meanR = means3D[~mask].clone() + torch.tensor([[nn,nn,nn]]).cuda()*tick
-    meanB = means3D[~mask].clone() - torch.tensor([[nn,nn,nn]]).cuda()*tick
-    colsA = colors[~mask].clone() 
-    colsB = colors[~mask].clone() 
-    
-    colsA[:, :, 0] += 0.5*tick
-    colsB[:, :, 2] += 0.5*tick
-    
-    
-    means3D = torch.cat([means3D, meanR, meanB], dim=0)
-    colors = torch.cat([colors, colsA, colsB], dim=0)
-    
-    rotation = torch.cat([rotation, rotation[~mask], rotation[~mask]], dim=0)
-    opacity = torch.cat([opacity, opacity[~mask], opacity[~mask]], dim=0)
-    scales = torch.cat([scales, scales[~mask], scales[~mask]], dim=0)
-    mask = torch.cat([mask, mask[~mask], mask[~mask]], dim=0)
-
-    return means3D, rotation, scales, opacity, colors, mask
-
-def bloom(
-    means3D, rotation, scales, opacity, colors_, mask, time,
-    threshold=0.7,            # luminance threshold in [0,1]
-    scale_factor=1.5,         # max scale multiplier for bright points
-):
-    tick = float((time*1800)) #/270. # 9 sec
-    # if tick > 20 and tick < 60:
-    
-    colors = colors_.clone()
-    device = colors.device
-    dtype  = colors.dtype
-
-    scales[~mask] = 0.*scales[~mask] + 0.05
-    # --- Brightness from DC (l=0) SH term ---
-    dc = colors[:, 0, :]  # (N, 3)
-    # Perceived luminance weights, kept on same device/dtype
-    w = torch.tensor([0.2126, 0.7152, 0.0722], device=device, dtype=dtype)
-    brightness = (dc * w).sum(dim=-1)  # (N,)
-
-    # --- Build a smooth intensity in [0,1] only for unmasked points ---
-    # Intensity grows linearly beyond threshold, zero otherwise.
-    # Also zero-out masked points (your convention is to act on ~mask).
-    raw = (brightness - threshold) / max(1e-6, 1.0 - threshold)
-    intensity = torch.clamp(raw, min=0.0, max=1.0)
-    intensity = intensity * (~mask).to(dtype)  # zero if masked
-
-    # --- Scale splat size ---
-    # Multiplier is 1 for non-bright points, up to scale_factor for very bright ones.
-    scale_mult_1d = 1.0 + (scale_factor - 1.0) * intensity  # (N,)
-    scales[~mask] = scales[~mask] * scale_mult_1d[~mask].unsqueeze(-1)
-
-    colors[~mask] *= 10.
-    colors[~mask,:, 0] = 10.
-    colors[~mask,:, 1] = 5.
-    colors[~mask,:, 2] = 2.5
-    colors[~mask,1:] *= 0.
-    
-    # colors = (tick)*colors  + colors_*(1.-tick)
-    
-    return means3D, rotation, scales, opacity, colors, mask
-
-def float_up(means3D, rotation, scales, opacity, colors, mask, time, global_rand):
-    
-    # tick is time for effect 0 to 1
-    tick = float((time*1800) % 700)/120.
-    current_radius = tick
-     
-    distance = torch.norm((means3D.mean(0).unsqueeze(0)- means3D).abs(), dim=1)
-        
-    dist_norm  = (distance - distance.min())/(distance.max()- distance.min())
-    mask_r = (dist_norm < current_radius) & (~mask) # grow with tick
-    dist_rad = current_radius - dist_norm
-    # Function for determining position at current tick
-    k = (10.*global_rand[:,0])
-    
-    # print(k.shape)
-    delta_x = - torch.log(1-(dist_rad)**k)
-    means3D[mask_r, 0] += delta_x[mask_r]
-
-    # scales[mask_r] = (1.-tick)*scales[mask_r]
-    
-    colors[mask_r] *= 10.
-    colors[mask_r,:, 0] = 10.
-    colors[mask_r,:, 1] = 5.
-    colors[mask_r,:, 2] = 2.5
-    colors[mask_r,1:] *= 0.
-    
-    a = 4.5
-    m = 10
-    
-    tick = dist_rad[mask_r].unsqueeze(-1) #(dist_rad + ((tick+0.1)*global_rand[mask_r])/10.)
-    scales[mask_r] = (torch.exp(-a*tick)*torch.cos(m*tick)*scales[mask_r]).abs()
-    
-    return means3D, rotation, scales, opacity, colors, mask
-
-def ripple_on(means3D, rotation, scales, opacity, colors, mask, time):
-    
-    # tick is time for effect 0 to 1
-    tick = float((time*1800) % 90)/90.
-    current_radius = tick
-    
-    distance = torch.norm((means3D.mean(0).unsqueeze(0)- means3D).abs(), dim=1)
-        
-    dist_norm  = (distance - distance.min())/(distance.max()- distance.min())
-    mask_r = (dist_norm < current_radius) & (~mask) # grow with tick
-
-    scales[mask_r] = (1.-tick)*scales[mask_r]
-    
-    colors[mask_r] *= 10.
-    colors[mask_r,:, 0] = 10.
-    colors[mask_r,:, 1] = 5.
-    colors[mask_r,:, 2] = 2.5
-    colors[mask_r,1:] *= 0.
-    return means3D, rotation, scales, opacity, colors, mask
-
-
-def nonlinfade(means3D, rotation, scales, opacity, colors, mask, time, global_rand):
-    
-    # tick is time for effect 0 to 1
-    tick = float((time*1800) % 570)/130.
-            
-    mask_r = (~mask) # grow with tick
-
-    a = 4.5
-    m = 39
-    
-    tick = (tick + (tick*global_rand[mask_r])/10.)
-    scales[mask_r] = torch.exp(-a*tick)*torch.cos(m*tick)*scales[mask_r]
-    
-    # colors[mask_r] *= 10.
-    # colors[mask_r,:, 0] = 10.
-    # colors[mask_r,:, 1] = 5.
-    # colors[mask_r,:, 2] = 2.5
-    # colors[mask_r,1:] *= 0.
-    
-    return means3D, rotation, scales, opacity, colors, mask
-
-def render_cool_video(viewpoint_camera, pc, audio, global_rand):
-    """
-    Render the scene.
-    """
-    # local_randn = torch.rand_like(pc.get_scaling_with_3D_filter).cuda()
-
-    extras = None
-
-    means3D_ = pc.get_xyz
-    time = torch.tensor(viewpoint_camera.time).to(means3D_.device).repeat(means3D_.shape[0], 1)
-    # colors = pc.get_color
-    colors = pc.get_features
-
-    opacity = pc.get_opacity.clone().detach()
-
-    scales = pc.get_scaling_with_3D_filter
-    rotations = pc._rotation
-
-    means3D, rotations, opacity, colors, extras = pc._deformation(
-        point=means3D_, 
-        rotations=rotations,
-        scales=scales,
-        times_sel=torch.tensor((((viewpoint_camera.time*1800)% 600 ))/600.).to(means3D_.device).repeat(means3D_.shape[0], 1), 
-        h_emb=opacity,
-        shs=colors,
-        view_dir=None,
-        target_mask=pc.target_mask
-    )
-    
-    opacity = pc.get_fine_opacity_with_3D_filter(opacity)
-    rotation = pc.rotation_activation(rotations)
-    
-    # Clean the view
-    distances = torch.norm(means3D - viewpoint_camera.camera_center.cuda(), dim=1)
-    mask = distances < .9
-    mask = torch.logical_and(~pc.target_mask, mask)
-    mask = ~mask
-    means3D = means3D[mask]
-    rotation = rotation[mask]
-    scales = scales[mask]
-    opacity = opacity[mask]
-    colors = colors[mask]
-    global_rand = global_rand[mask]
-    pc_mask = pc.target_mask[mask]
-    
-    ##### Dealing with the view rotation #####
-    viewmat = viewpoint_camera.world_view_transform.transpose(0,1).unsqueeze(0).cuda()
-    cent = means3D[pc_mask].mean(0).unsqueeze(0)
-    K = viewpoint_camera.intrinsics.unsqueeze(0).cuda()
-    W,H = viewpoint_camera.image_width, viewpoint_camera.image_height
-    viewmat = rotate_view(viewmat, viewpoint_camera, cent) #offset=290)
-    
-    # means3D, rotation, scales, opacity, colors, pc_mask = click_red_then_blue(means3D, rotation, scales, opacity, colors, pc_mask, viewpoint_camera.time)
-
-    # means3D, rotation, scales, opacity, colors, pc_mask = chromatic_abbr(means3D, rotation, scales, opacity, colors, pc_mask, viewpoint_camera.time)
-    # means3D, rotation, scales, opacity, colors, pc_mask = bloom(means3D, rotation, scales, opacity, colors, pc_mask, viewpoint_camera.time)
-    # means3D, rotation, scales, opacity, colors, pc_mask = ripple_on(means3D, rotation, scales, opacity, colors, pc_mask, viewpoint_camera.time)
-    # means3D, rotation, scales, opacity, colors, pc_mask = float_up(means3D, rotation, scales, opacity, colors, pc_mask, viewpoint_camera.time, global_rand)
-    # means3D, rotation, scales, opacity, colors, pc_mask = nonlinfade(means3D, rotation, scales, opacity, colors, pc_mask, viewpoint_camera.time, global_rand)
-    means3D, rotation, scales, opacity, colors, pc_mask = float_up(means3D, rotation, scales, opacity, colors, pc_mask, viewpoint_camera.time, global_rand)
-
-
-    
-    rendered_image, alpha, _ = rasterization(
-        means3D, rotation, scales, opacity.squeeze(-1), colors,
-        viewmat,
-        K,
-        W,
-        H,
-        rasterize_mode='antialiased',
-        eps2d=0.1,
-        sh_degree=pc.active_sh_degree
-    )
-
-    rendered_image = rendered_image.squeeze(0).permute(2,0,1)
-    extras = alpha.squeeze(0).permute(2,0,1)
-
-        
-    return {
-        "render": rendered_image,
-        "extras":extras # A dict containing mor point info
-        # 'norms':rendered_norm, 'alpha':rendered_alpha
-        }
-
-def fix_camera_global_x(viewmat, x_fixed):
-    """
-    viewmat: [B,4,4] world->camera
-    x_fixed: float or tensor broadcastable to [B]
-    returns: adjusted viewmat with camera center's global X locked
-    """
-    assert viewmat.shape[-2:] == (4, 4), "Expected [B,4,4]"
-
-    B = viewmat.shape[0]
-    device = viewmat.device
-    dtype = viewmat.dtype
-
-    R = viewmat[:, :3, :3]                 # [B,3,3]
-    t = viewmat[:, :3, 3:4]                # [B,3,1]
-
-    # camera center in world coords: C = -R^T t
-    C = -(R.transpose(1, 2) @ t)           # [B,3,1]
-
-    # set global X
-    x_fixed = torch.as_tensor(x_fixed, device=device, dtype=dtype).view(-1, *([1]*(C.ndim-1)))
-    if x_fixed.numel() == 1:               # scalar -> broadcast
-        x_fixed = x_fixed.expand(B, 1, 1)
-    C[:, 0:1, :] = x_fixed                 # lock X
-
-    # recompute translation: t_new = -R * C_new
-    t_new = -(R @ C)                       # [B,3,1]
-
-    view_new = viewmat.clone()
-    view_new[:, :3, 3:4] = t_new
-    return view_new
-
-def project_to_yz_circle(points: torch.Tensor, radius: float = 1.0) -> torch.Tensor:
-    # Extract y and z
-    y = points[:, 1]
-    z = points[:, 2]
-
-    # Compute angle with respect to origin in YZ plane
-    theta = torch.atan2(z, y)
-
-    # Project to circle in YZ plane
-    y_new = radius * torch.cos(theta)
-    z_new = radius * torch.sin(theta)
-
-    # Construct new points with x=0
-    x_new = torch.zeros_like(y_new)
-    projected_points = torch.stack((x_new, y_new, z_new), dim=1)
-    
-    return projected_points, theta

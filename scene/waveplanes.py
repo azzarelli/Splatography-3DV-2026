@@ -50,105 +50,28 @@ def sample_from_cov(points, cov6, M):
     
     return samples 
 
-def interpolate_features_MUL(data, M, kplanes):
+def interpolate_features_MUL(data, kplanes):
     """Generate features for each point
     """
     # time m feature
     space = 1.
-    spacetime = 1.
-    coltime = 1.
-    
+    spacetime = 1.    
 
     # q,r are the coordinate combinations needed to retrieve pts
     coords = [[0,1], [0,2],[3,0], [1,2], [3,1], [3,2]]
     for i in range(len(coords)):
         q,r = coords[i]
         feature = kplanes[i](data[..., (q, r)])
-        feature = feature.view(-1, M, feature.shape[-1]).mean(dim=1)
-        # feature = torch.prod(feature, dim=1)
 
         if i in [0,1,3]:
             space = space * feature
 
         elif i in [2, 4, 5]:
             spacetime = spacetime * feature
-
-    # coords = [[3,0], [3,1], [3,2]]
-    # for i in range(len(coords)):
-    #     q,r = coords[i]
-    #     feature = kplanes[6+i](data[..., (q, r)])
-    #     feature = feature.view(-1, M, feature.shape[-1]).mean(dim=1)
-
-    #     coltime = coltime * feature
-
-    return space, spacetime, coltime
+            
+    return space, spacetime
    
 
-def interpolate_features_theta(pts, angle, kplanes):
-    """Generate features for each point
-    """
-    feature = 1.
-    
-    data = torch.cat([pts, angle], dim=-1)
-    
-    # q,r are the coordinate combinations needed to retrieve pts
-    coords = [[0,3], [1,3],[2,3]]
-    for i in range(len(coords)):
-        q,r = coords[i]
-
-        feature = feature * kplanes[6+i](data[..., (q,r)])
-    return feature
-   
-
-import matplotlib.pyplot as plt
-
-def visualize_grid_and_coords(grid: torch.Tensor, coords: torch.Tensor, align_corners: bool = True):
-    """
-    Visualizes the mean grid (averaged over batch) and overlays the sampling coordinates.
-    
-    Args:
-        grid (torch.Tensor): Input tensor of shape [1, B, H, W] or [B, H, W].
-        coords (torch.Tensor): Normalized coordinates in [-1, 1] of shape [N, 2] or [1, N, 2].
-        align_corners (bool): Whether the coords use align_corners=True (affects projection).
-    """
-    # Remove singleton channel dimension if present (e.g. [1, B, H, W] -> [B, H, W])
-    if grid.dim() == 4 and grid.shape[0] == 1:
-        grid = grid.squeeze(0)
-    
-    if grid.dim() != 3:
-        raise ValueError("Expected grid shape [B, H, W]")
-
-    # Mean across batch axis
-    grid_mean = grid.mean(dim=0)  # [H, W]
-
-    H, W = grid_mean.shape
-    # Handle coordinate dimensions
-    if coords.dim() == 3:
-        coords = coords.squeeze(0)  # [N, 2]
-
-    if coords.shape[-1] != 2:
-        raise ValueError("Coordinates must be 2D")
-    
-    # Convert normalized coordinates [-1, 1] to image coordinates
-    def denorm_coords(coords, H, W, align_corners):
-        if align_corners:
-            x = ((coords[:, 0] + 1) / 2) * (W - 1)
-            y = ((coords[:, 1] + 1) / 2) * (H - 1)
-        else:
-            x = ((coords[:, 0] + 1) * W - 1) / 2
-            y = ((coords[:, 1] + 1) * H - 1) / 2
-        return x, y
-
-    x, y = denorm_coords(coords, H, W, align_corners)
-
-    # exit()
-    # Plotting
-    plt.figure(figsize=(6, 6))
-    plt.imshow(grid_mean.cpu().numpy(), cmap='gray', origin='upper')
-    plt.scatter(x.cpu().numpy(), y.cpu().numpy(), color='red', s=20)
-    plt.title("Grid Mean with Sampled Coords")
-    plt.axis('off')
-    plt.show()
 
 class WavePlaneField(nn.Module):
     def __init__(
@@ -198,26 +121,6 @@ class WavePlaneField(nn.Module):
 
             self.grids.append(gridset)
 
-        # for i in range(3): # for the color
-        #     what = 'spacetime'
-        #     res = [self.grid_config['resolution'][0], self.grid_config['resolution'][1]]
-            
-        #     gridset = GridSet(
-        #         what=what,
-        #         resolution=res,
-        #         J=self.grid_config['wavelevel'],
-        #         config={
-        #             'feature_size': self.grid_config["output_coordinate_dim"],
-        #             'a': 0.1,
-        #             'b': 0.5,
-        #             'wave': 'coif4',
-        #             'wave_mode': 'periodization',
-        #         },
-        #         cachesig=self.cacheplanes
-        #     )
-        #     self.grids.append(gridset)
-
-
     def compact_save(self, fp):
         import lzma
         import pickle
@@ -244,10 +147,6 @@ class WavePlaneField(nn.Module):
         self.aabb = nn.Parameter(aabb, requires_grad=False)
         print("Voxel Plane: set aabb=", self.aabb)
 
-    def update_J(self):
-        for grid in self.grids:
-            grid.update_J()
-        print(f'Updating J to {self.grids[0].current_J}')
 
     def waveplanes_list(self):
         planes = []
@@ -274,32 +173,42 @@ class WavePlaneField(nn.Module):
 
         return ms_planes
 
-    def forward(self, pts, time, cov6):
+    def forward(self, pts, time):
         """
             Notes:
                 - to visualize samples and projection use display_projection(pts, cov6)
                     - you can modify the constants K_a and K_b to see that the samples get plotted closer to the edge
         """
-        M = 13 # total of 13 samples
-        pts = structured_gaussian_samples(pts, cov6)
-        # display_projection(pts, cov6) # re:notes
+        pts = normalize_aabb(pts, self.aabb)
+        pts = torch.cat([pts, time], dim=-1)
         
-        time = (time*2.)-1. # go from 0 to 1 to -1 to +1 for grid interp
-        time = time.repeat(pts.shape[1], 1)
+        feature = 1.
+        coords = [[0,1], [0,2],[3,0], [1,2], [3,1], [3,2]]
+        for i in range(len(coords)):
+            if i in [2, 4, 5]:
+                q,r = coords[i]
+                feature = feature * self.grids[i](pts[..., (q, r)])
                 
-        pts = normalize_aabb(pts, self.aabb)
-        pts = pts.reshape(-1, pts.shape[-1])
-        
-        pts = torch.cat([pts.view(-1, 3), time], dim=-1)
-        
-        return interpolate_features_MUL(
-            pts, M, self.grids)
+        return feature
 
-    def theta(self, pts, angle):
+        
+    def space_only(self, pts):
+        """
+            Notes:
+                - to visualize samples and projection use display_projection(pts, cov6)
+                    - you can modify the constants K_a and K_b to see that the samples get plotted closer to the edge
+        """
         pts = normalize_aabb(pts, self.aabb)
-        pts = pts.reshape(-1, pts.shape[-1])
-        return interpolate_features_theta(
-            pts,angle, self.grids)
+        
+        feature = 1.
+        coords = [[0,1], [0,2],[3,0], [1,2]]
+        for i in range(len(coords)):
+            if i in [0,1,3]:
+                q,r = coords[i]
+                feature = feature * self.grids[i](pts[..., (q, r)])
+                
+        return feature
+
 
 def display_projection(pts, cov6):
     B = 5

@@ -84,73 +84,180 @@ class Deformation(nn.Module):
     def create_net(self):
         # Prep features for decoding
         net_size = self.W
-        self.spacetime_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
-        self.background_spacetime_enc = nn.Sequential(nn.Linear(self.background_grid.feat_dim,net_size))
+        self.deform_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
+        self.canon_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
+        self.background_canon_enc = nn.Sequential(nn.Linear(self.background_grid.feat_dim,net_size))
+        self.background_deform_enc = nn.Sequential(nn.Linear(self.background_grid.feat_dim,net_size))
         
-        self.background_pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.background_pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
 
-        self.pos_coeffs = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
-        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
+        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
+        self.rot_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
         
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
+        self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
     
-    def query_spacetime(self, rays_pts_emb, time, covariances, mask=None):
+        # Shared color, rotation and opacity canonical feature decoder
+        self.shs_canon = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
+        self.rot_canon = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
+        self.opacity_canon = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
         
-        if mask is not None:
-            space, spacetime, coltime = self.grid(rays_pts_emb[mask,:3], time[mask,:], covariances[mask])
-            space_b, spacetime_b, _ = self.background_grid(rays_pts_emb[~mask,:3], time[~mask,:], covariances[~mask])
-            st_b = self.background_spacetime_enc(space_b * spacetime_b)
+
+    def forward_canon(self, pts, mask,return_type):
+        if return_type == 'foreground':
+            pts = pts[mask]
+            feature = self.canon_enc(self.grid.space_only(pts))
+            
+            rotations = self.rot_canon(feature)
+            opacity = self.opacity_canon(feature)
+            shs = self.shs_canon(feature)
+            
+            return pts, rotations, opacity, shs
+        
+        elif return_type == 'background':
+            pts = pts[~mask]
+            feature = self.background_canon_enc(self.background_grid.space_only(pts))
+            
+            rotations = self.rot_canon(feature)
+            opacity = self.opacity_canon(feature)
+            shs = self.shs_canon(feature)
+            
+            return pts, rotations, opacity, shs
+        
+        elif return_type == 'full':
+            pts_fg = pts[mask]
+            feature_fg = self.canon_enc(self.grid.space_only(pts_fg))
+            pts_bg = pts[~mask]
+            feature_bg = self.background_canon_enc(self.background_grid.space_only(pts_bg))
+            
+            batch_features = torch.cat([feature_fg, feature_bg], dim=0)
+            
+            rotations = self.rot_canon(batch_features)
+            opacity = self.opacity_canon(batch_features)
+            shs = self.shs_canon(batch_features)
+            
+            return torch.cat([pts_fg, pts_bg], dim=0), rotations, opacity, shs
+            
+    def forward_fine(self, pts, time, mask, return_type):
+        time = (time*2.)-1. # go from 0 to 1 to -1 to +1 for grid interp
+        time = torch.zeros_like(pts[:, 0].unsqueeze(-1), dtype=torch.float, device=pts.device)
+        if return_type == 'foreground':
+            pts = pts[mask]
+            time = time[mask]
+            canon_feature = self.grid.space_only(pts)
+            
+            deformation_feature = self.deform_enc(self.grid(pts, time) * canon_feature)
+            canon_feature = self.canon_enc(canon_feature)
+            
+            pts += self.pos_deform(deformation_feature)
+            rotations = self.rot_canon(canon_feature) + self.rot_deform(deformation_feature)
+            opacity = self.opacity_canon(canon_feature) + self.opacity_deform(deformation_feature)
+            shs = self.shs_canon(canon_feature) + self.shs_deform(deformation_feature)
+            
+            return pts, rotations, opacity, shs
+        
+        elif return_type == 'background':
+            pts = pts[~mask]
+            time = time[~mask]
+
+            canon_feature = self.background_grid.space_only(pts)
+            
+            deformation_feature = self.background_deform_enc(self.background_grid(pts, time) * canon_feature)
+            canon_feature = self.background_canon_enc(canon_feature)
+
+            
+            pts += self.pos_deform(deformation_feature)
+            rotations = self.rot_canon(canon_feature) + self.rot_deform(deformation_feature)
+            opacity = self.opacity_canon(canon_feature) + self.opacity_deform(deformation_feature)
+            shs = self.shs_canon(canon_feature) + self.shs_deform(deformation_feature)
+            
+            return pts, rotations, opacity, shs
+        
+        elif return_type == 'full':
+            pts_fg = pts[mask]
+            canon_feature_fg = self.grid.space_only(pts_fg)
+            deformation_feature_fg = self.deform_enc(self.grid(pts_fg, time[mask]) * canon_feature_fg)
+            canon_feature_fg = self.canon_enc(canon_feature_fg)
+            
+            fg_count = canon_feature_fg.shape[0]
+            
+            pts_bg = pts[~mask]
+            canon_feature_bg = self.background_grid.space_only(pts_bg)
+            deformation_feature_bg = self.background_deform_enc(self.background_grid(pts_bg, time[~mask]) * canon_feature_bg)
+            canon_feature_bg = self.background_canon_enc(canon_feature_bg)
+            
+            batch_canon = torch.cat([canon_feature_fg, canon_feature_bg], dim=0)
+            
+            pts = torch.cat([pts_fg, pts_bg], dim=0)
+            rotations = self.rot_canon(batch_canon)
+            opacity = self.opacity_canon(batch_canon)
+            shs = self.shs_canon(batch_canon)
+            
+            pts[:fg_count, ...] += self.pos_deform(deformation_feature_fg)
+            pts[fg_count:, ...] += self.background_pos_deform(deformation_feature_bg)
+            
+            rotations[:fg_count, ...] += self.rot_deform(deformation_feature_fg)
+            opacity[:fg_count, ...] += self.opacity_deform(deformation_feature_fg)
+            shs[:fg_count, ...] += self.shs_deform(deformation_feature_fg)
+            
+            return pts, rotations, opacity, shs
+            
+
+    def forward(self,
+            xyz,
+            time,
+            target_mask,
+            stage,
+            return_type
+        ):
+        if stage == 'coarse':
+            pts, rotations, opacity, shs = self.forward_canon(xyz, target_mask, return_type)
+        elif stage == 'fine':
+            pts, rotations, opacity, shs = self.forward_fine(xyz, time, target_mask, return_type)
         else:
-            space, spacetime, coltime = self.grid(rays_pts_emb[:,:3], time, covariances)
-            st_b = None
-
-        st = self.spacetime_enc(space * spacetime) # TODO: Different encoders for color and space time? Its only one layer though
-        ct = None #self.spacetime_enc(space * coltime)
-        return st, ct, st_b # * spacetime # *  sp_fine_features# or maybe multiply and use scale to modulate the sp_fine e.g. low scale high influence
-
-    def forward(self,rays_pts_emb, rotations_emb, scale_emb, shs_emb, view_dir, time_emb, h_emb, target_mask):
-        # Features
+            raise f"No implement stage {stage} in deformation forward function"
         
-        if target_mask is None: # Sample features at the 
-            shs = shs_emb # + self.shs_deform(color_feature).view(-1, 16, 3)
+        return pts, rotations, opacity, shs
+        # if target_mask is None: # Sample features at the 
+        #     shs = shs_emb # + self.shs_deform(color_feature).view(-1, 16, 3)
             
-            pts = rays_pts_emb # + self.pos_coeffs(dyn_feature)
-            rotations = rotations_emb # + self.rotations_deform(dyn_feature)
+        #     pts = rays_pts_emb # + self.pos_coeffs(dyn_feature)
+        #     rotations = rotations_emb # + self.rotations_deform(dyn_feature)
             
-            opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
-            w = (h_emb[:,1]**2).unsqueeze(-1)
-            mu = torch.sigmoid(h_emb[:,2]).unsqueeze(-1)
-            t = time_emb[0:1].squeeze(0)
-            feat_exp = torch.exp(-w * (t-mu)**2)
-            opacity = feat_exp # h_emb[target_mask] * feat_exp
-            return pts, rotations, opacity, shs, None
+        #     opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
+        #     w = (h_emb[:,1]**2).unsqueeze(-1)
+        #     mu = torch.sigmoid(h_emb[:,2]).unsqueeze(-1)
+        #     t = time_emb[0:1].squeeze(0)
+        #     feat_exp = torch.exp(-w * (t-mu)**2)
+        #     opacity = feat_exp # h_emb[target_mask] * feat_exp
+        #     return pts, rotations, opacity, shs, None
 
-        covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
-        dyn_feature, color_feature, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
+        # covariances = self.covariance_activation(scale_emb, 1., rotations_emb)
+        # dyn_feature, color_feature, background_feature = self.query_spacetime(rays_pts_emb,time_emb, covariances, target_mask)
         
-        # Rotation
-        rotations = rotations_emb + 0.
-        rotations[target_mask] += self.rotations_deform(dyn_feature)
+        # # Rotation
+        # rotations = rotations_emb + 0.
+        # rotations[target_mask] += self.rotations_deform(dyn_feature)
         
-        shs = shs_emb + 0.
-        shs[target_mask] += self.shs_deform(dyn_feature).view(-1, 16, 3)
+        # shs = shs_emb + 0.
+        # shs[target_mask] += self.shs_deform(dyn_feature).view(-1, 16, 3)
          
-        # Position
-        pts = rays_pts_emb + 0. #.clone()        
-        pts[target_mask] += self.pos_coeffs(dyn_feature)
-        pts[~target_mask] += self.background_pos_coeffs(background_feature)
+        # # Position
+        # pts = rays_pts_emb + 0. #.clone()        
+        # pts[target_mask] += self.pos_coeffs(dyn_feature)
+        # pts[~target_mask] += self.background_pos_coeffs(background_feature)
         
-        # Opacity
-        opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
-        w = (h_emb[target_mask,1]**2).unsqueeze(-1)
-        mu = torch.sigmoid(h_emb[target_mask,2]).unsqueeze(-1)
+        # # Opacity
+        # opacity = torch.sigmoid(h_emb[:,0]).unsqueeze(-1)
+        # w = (h_emb[target_mask,1]**2).unsqueeze(-1)
+        # mu = torch.sigmoid(h_emb[target_mask,2]).unsqueeze(-1)
         
-        t = time_emb[0:1].squeeze(0)
-        feat_exp = torch.exp(-w * (t-mu)**2)
-        opacity = opacity.clone()
-        opacity[target_mask] = feat_exp # h_emb[target_mask] * feat_exp
+        # t = time_emb[0:1].squeeze(0)
+        # feat_exp = torch.exp(-w * (t-mu)**2)
+        # opacity = opacity.clone()
+        # opacity[target_mask] = feat_exp # h_emb[target_mask] * feat_exp
  
-        return pts, rotations, opacity, shs, None
+        # return pts, rotations, opacity, shs
     
     def get_mlp_parameters(self):
         parameter_list = []
@@ -190,17 +297,14 @@ class deform_network(nn.Module):
 
         self.apply(initialize_weights)
 
-    def forward(self, point, rotations=None, scales=None, shs=None,view_dir=None, times_sel=None, h_emb=None, iteration=None, target_mask=None):
+    def forward(self, point=None,time=None,target_mask=None, stage=None, return_type='full'):
 
         return  self.deformation_net(
             point,
-            rotations,
-            scales,
-            shs,
-            view_dir,
-            times_sel, 
-            h_emb=h_emb, 
-            target_mask=target_mask
+            time,
+            target_mask,
+            stage,
+            return_type
         )
 
     def get_mlp_parameters(self):
