@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Assign the first argument to a variable
-EXP_NAME=unifieddyn4_nostaticdupe2
+EXP_NAME=$1
 ARGS=default.py
 
 # SAVEDIR=Pony

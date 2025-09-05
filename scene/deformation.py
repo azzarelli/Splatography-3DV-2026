@@ -84,136 +84,125 @@ class Deformation(nn.Module):
     def create_net(self):
         # Prep features for decoding
         net_size = self.W
+        
         self.deform_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
-        self.canon_enc = nn.Sequential(nn.Linear(self.grid.feat_dim,net_size))
-        self.background_canon_enc = nn.Sequential(nn.Linear(self.background_grid.feat_dim,net_size))
         self.background_deform_enc = nn.Sequential(nn.Linear(self.background_grid.feat_dim,net_size))
         
         self.background_pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
-
         self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 3))
         self.rot_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
-        
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
         self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 1))
     
-        # Shared color, rotation and opacity canonical feature decoder
-        self.shs_canon = nn.Sequential(nn.ReLU(),nn.Linear(net_size, net_size),nn.ReLU(),nn.Linear(net_size, 16*3))
-        self.rot_canon = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 4))
-        self.opacity_canon = nn.Sequential(nn.ReLU(),nn.Linear(net_size,net_size),nn.ReLU(),nn.Linear(net_size, 1))
-        
 
-    def forward_canon(self, pts, mask,return_type):
+    def forward_canon(self, pts, rotations, colors, opacity, mask, return_type):
+        pts = pts + 0.
+        rotations = rotations + 0.
+        opacity = opacity + 0.
+        colors = colors + 0.
         if return_type == 'foreground':
             pts = pts[mask]
-            feature = self.canon_enc(self.grid.space_only(pts))
             
-            rotations = self.rot_canon(feature)
-            opacity = self.opacity_canon(feature)
-            shs = self.shs_canon(feature)
+            rotations = rotations[mask] 
+            opacity = opacity[mask]
+            shs = colors[mask]
             
-            return pts, rotations, opacity, shs
-        
         elif return_type == 'background':
             pts = pts[~mask]
-            feature = self.background_canon_enc(self.background_grid.space_only(pts))
             
-            rotations = self.rot_canon(feature)
-            opacity = self.opacity_canon(feature)
-            shs = self.shs_canon(feature)
+            rotations = rotations[~mask] 
+            opacity = opacity[~mask]
+            shs = colors[~mask]
             
-            return pts, rotations, opacity, shs
-        
         elif return_type == 'full':
-            pts_fg = pts[mask]
-            feature_fg = self.canon_enc(self.grid.space_only(pts_fg))
-            pts_bg = pts[~mask]
-            feature_bg = self.background_canon_enc(self.background_grid.space_only(pts_bg))
+            shs=colors
+
+        opacity = torch.sigmoid(opacity[:,0]).unsqueeze(-1)            
+        
+        return pts, rotations, opacity, shs
             
-            batch_features = torch.cat([feature_fg, feature_bg], dim=0)
-            
-            rotations = self.rot_canon(batch_features)
-            opacity = self.opacity_canon(batch_features)
-            shs = self.shs_canon(batch_features)
-            
-            return torch.cat([pts_fg, pts_bg], dim=0), rotations, opacity, shs
-            
-    def forward_fine(self, pts, time, mask, return_type):
-        time = (time*2.)-1. # go from 0 to 1 to -1 to +1 for grid interp
+    def forward_fine(self, pts, rotations, colors, opacity, time, mask, return_type):
+        t = (time*2.)-1. # go from 0 to 1 to -1 to +1 for grid interp
         time = torch.zeros_like(pts[:, 0].unsqueeze(-1), dtype=torch.float, device=pts.device)
+        time += t
+        pts = pts + 0.
+        rotations = rotations + 0.
+        opacity = opacity + 0.
+        colors = colors + 0.
+        
         if return_type == 'foreground':
             pts = pts[mask]
             time = time[mask]
             canon_feature = self.grid.space_only(pts)
-            
-            deformation_feature = self.deform_enc(self.grid(pts, time) * canon_feature)
-            canon_feature = self.canon_enc(canon_feature)
-            
+            dynamic_feature = self.grid(pts, time)
+            deformation_feature = self.deform_enc(dynamic_feature* canon_feature)
+
             pts += self.pos_deform(deformation_feature)
-            rotations = self.rot_canon(canon_feature) + self.rot_deform(deformation_feature)
-            opacity = self.opacity_canon(canon_feature) + self.opacity_deform(deformation_feature)
-            shs = self.shs_canon(canon_feature) + self.shs_deform(deformation_feature)
+            rotations = rotations[mask] + self.rot_deform(deformation_feature)
+            opacity = opacity[mask, 0].unsqueeze(-1) + self.opacity_deform(deformation_feature)
+            shs = colors[mask] + self.shs_deform(deformation_feature).view(-1, 16, 3)
             
-            return pts, rotations, opacity, shs
         
         elif return_type == 'background':
             pts = pts[~mask]
             time = time[~mask]
 
             canon_feature = self.background_grid.space_only(pts)
+            dynamic_feature = self.background_grid(pts, time)
+            deformation_feature = self.background_deform_enc(dynamic_feature * canon_feature)
             
-            deformation_feature = self.background_deform_enc(self.background_grid(pts, time) * canon_feature)
-            canon_feature = self.background_canon_enc(canon_feature)
-
-            
-            pts += self.pos_deform(deformation_feature)
-            rotations = self.rot_canon(canon_feature) + self.rot_deform(deformation_feature)
-            opacity = self.opacity_canon(canon_feature) + self.opacity_deform(deformation_feature)
-            shs = self.shs_canon(canon_feature) + self.shs_deform(deformation_feature)
-            
-            return pts, rotations, opacity, shs
+            pts += self.background_pos_deform(deformation_feature)
+            rotations = rotations[~mask]
+            opacity = opacity[~mask,0].unsqueeze(-1)
+            shs = colors[~mask]            
         
         elif return_type == 'full':
+            shs = colors
+            opacity = opacity[:,0].unsqueeze(-1)
+
             pts_fg = pts[mask]
-            canon_feature_fg = self.grid.space_only(pts_fg)
-            deformation_feature_fg = self.deform_enc(self.grid(pts_fg, time[mask]) * canon_feature_fg)
-            canon_feature_fg = self.canon_enc(canon_feature_fg)
-            
-            fg_count = canon_feature_fg.shape[0]
-            
+            deformation_feature_fg = self.deform_enc(self.grid(pts_fg, time[mask]) * self.grid.space_only(pts_fg))
+       
             pts_bg = pts[~mask]
-            canon_feature_bg = self.background_grid.space_only(pts_bg)
-            deformation_feature_bg = self.background_deform_enc(self.background_grid(pts_bg, time[~mask]) * canon_feature_bg)
-            canon_feature_bg = self.background_canon_enc(canon_feature_bg)
+            deformation_feature_bg = self.background_deform_enc(self.background_grid(pts_bg, time[~mask]) * self.background_grid.space_only(pts_bg))
+
+            # Positional deformations
+            pts[mask] += self.pos_deform(deformation_feature_fg)
+            pts[~mask] += self.background_pos_deform(deformation_feature_bg)
             
-            batch_canon = torch.cat([canon_feature_fg, canon_feature_bg], dim=0)
-            
-            pts = torch.cat([pts_fg, pts_bg], dim=0)
-            rotations = self.rot_canon(batch_canon)
-            opacity = self.opacity_canon(batch_canon)
-            shs = self.shs_canon(batch_canon)
-            
-            pts[:fg_count, ...] += self.pos_deform(deformation_feature_fg)
-            pts[fg_count:, ...] += self.background_pos_deform(deformation_feature_bg)
-            
-            rotations[:fg_count, ...] += self.rot_deform(deformation_feature_fg)
-            opacity[:fg_count, ...] += self.opacity_deform(deformation_feature_fg)
-            shs[:fg_count, ...] += self.shs_deform(deformation_feature_fg)
-            
-            return pts, rotations, opacity, shs
-            
+            # Other Fg deformations
+            rotations[mask] += self.rot_deform(deformation_feature_fg)
+            opacity[mask] += self.opacity_deform(deformation_feature_fg)
+            shs[mask] += self.shs_deform(deformation_feature_fg).view(-1, 16, 3)
+        
+        opacity = torch.sigmoid(opacity)
+        return pts, rotations, opacity, shs
+    
+       
 
     def forward(self,
             xyz,
+            rotations,colors,opacity,
             time,
             target_mask,
             stage,
             return_type
         ):
         if stage == 'coarse':
-            pts, rotations, opacity, shs = self.forward_canon(xyz, target_mask, return_type)
+            pts, rotations, opacity, shs = self.forward_canon(xyz,rotations,colors,opacity, target_mask, return_type)
         elif stage == 'fine':
-            pts, rotations, opacity, shs = self.forward_fine(xyz, time, target_mask, return_type)
+            # LERP time between keyframes
+            kf = [0.0, 0.1806020066889632, 0.36789297658862874, 0.8896321070234113, 1.0]
+            t_hex = [ 0., 0.25, 0.5, 0.75]
+            t_interval = 0.25
+            # Equivalent to 
+            #      0    0.25,                 0.5,              0.75,                 1
+            for idx in range(len(kf)-1):
+                if time > kf[idx] and time < kf[idx+1]:
+                    time = (time - kf[idx])/(kf[idx+1]-kf[idx])*t_interval + t_hex[idx]
+                    break
+                    
+            pts, rotations, opacity, shs = self.forward_fine(xyz,rotations,colors,opacity, time, target_mask, return_type)
         else:
             raise f"No implement stage {stage} in deformation forward function"
         
@@ -297,10 +286,11 @@ class deform_network(nn.Module):
 
         self.apply(initialize_weights)
 
-    def forward(self, point=None,time=None,target_mask=None, stage=None, return_type='full'):
+    def forward(self, point=None, rotations=None, colors=None, opacity=None,time=None,target_mask=None, stage=None, return_type='full'):
 
         return  self.deformation_net(
             point,
+            rotations,colors,opacity,
             time,
             target_mask,
             stage,

@@ -271,13 +271,13 @@ class GUI(GUIBase):
             self.gaussians.optimizer.zero_grad(set_to_none=True)
         
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if self.iteration % 500 == 0:
+        if self.iteration % 200 == 0:
             self.gaussians.oneupSHdegree()
             
         # Update Gaussian lr for current iteration
         self.gaussians.update_learning_rate(self.iteration)          
         
-        if self.iteration == int(self.final_iter/2):
+        if self.iteration == int(self.final_iter/2) or self.iteration == self.final_iter-20:
             print("Dupelication")
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
@@ -397,10 +397,10 @@ class GUI(GUIBase):
            
         viewpoint_cams = self.get_batch_views
         
-        if (self.scene.dataset_type == "dynerf" and self.iteration in [3000]) or (self.scene.dataset_type == "condense" and self.iteration in [3000, 6000]):
-            print("Dupelicating Dynamics")
-            self.gaussians.dynamic_dupelication()
-            self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
+        # if (self.scene.dataset_type == "dynerf" and self.iteration in [3000]) or (self.scene.dataset_type == "condense" and self.iteration in [3000, 6000]):
+        #     print("Dupelicating Dynamics")
+        #     self.gaussians.dynamic_dupelication()
+        #     self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
         
         # if self.iteration == -1 and self.scene.dataset_type == "condense": # TODO: Maybe this is unecessary?
         #     print("Dupelicating Dynamics")
@@ -415,9 +415,6 @@ class GUI(GUIBase):
             self.scene.dataset_type
         )
         
-        hopacloss = ((1.0 - self.gaussians.get_hopac)**2).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
-        wopacloss = ((self.gaussians.get_wopac).abs()).mean()  #+ ((self.gaussians.get_h_opacity[self.gaussians.get_h_opacity < 0.2])**2).mean()
-
         scale_exp = self.gaussians.get_scaling_with_3D_filter
         # pg_loss = 0.001*(scale_exp.max(dim=1).values / scale_exp.min(dim=1).values).mean()
         max_gauss_ratio = 10
@@ -438,15 +435,14 @@ class GUI(GUIBase):
         )
 
         loss = L1 +  planeloss + \
-                        pg_loss + \
-                            0.01*(hopacloss) + (wopacloss)
+                        pg_loss
                    
         # print( planeloss ,depthloss,hopacloss ,wopacloss ,normloss ,pg_loss,covloss)
         with torch.no_grad():
             if self.gui:
                     dpg.set_value("_log_iter", f"{self.iteration} / {self.final_iter} its")
                     dpg.set_value("_log_loss", f"Loss: {L1.item()}")
-                    dpg.set_value("_log_opacs", f"h/w: {hopacloss}  | {wopacloss} ")
+                    # dpg.set_value("_log_opacs", f"L_diff {L_diff}")
                     dpg.set_value("_log_depth", f"PhysG: {pg_loss} ")
                     dpg.set_value("_log_dynscales", f"Plane Reg: {planeloss} ")
 

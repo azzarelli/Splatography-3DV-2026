@@ -43,7 +43,7 @@ class GUIBase:
         # Set-up the camera for visualization
         self.show_scene_target = 0
 
-        self.finecoarse_flag = True        
+        self.finecoarse_flag = False        
         self.switch_off_viewer = False
         self.switch_off_viewer_args = False
         self.full_opacity = False
@@ -86,8 +86,7 @@ class GUIBase:
 
         allocated = torch.cuda.memory_allocated() / (1024 ** 2)  # Convert to MB
         reserved = torch.cuda.memory_reserved() / (1024 ** 2)  # Convert to MB
-        print(
-            f'[{self.stage} {self.iteration}] Time: {time:.2f} | Allocated Memory: {allocated:.2f} MB, Reserved Memory: {reserved:.2f} MB | CPU Memory Usage: {memory_mb:.2f} MB')
+        print(f'[{self.stage} {self.iteration}] Time: {time:.2f} | Allocated Memory: {allocated:.2f} MB, Reserved Memory: {reserved:.2f} MB | CPU Memory Usage: {memory_mb:.2f} MB')
     
     def render(self):
         tested = True
@@ -108,27 +107,13 @@ class GUIBase:
                     self.iteration += 1
 
 
-                if (self.iteration % 1000) == 0 and  self.stage == 'fine':
+                if (self.iteration % 2000) == 0 and  self.stage == 'fine':
                     self.test_step()
 
                 if self.iteration > self.final_iter and self.stage == 'fine':
                     self.stage = 'done'
                     dpg.stop_dearpygui() 
-                    # exit()
-            # elif tested:
-            #     # self.test_step()
-            #     tested = False
-            #     dpg.stop_dearpygui() 
 
-            # self.render_video_step()
-            # self.test_step()
-            # exit()
-
-            # if self.view_test == True:
-            #     self.train_depth()
-            # with torch.no_grad():
-            #     self.test_step()
-            #     exit()
             with torch.no_grad():
                 self.viewer_step()
                 dpg.render_dearpygui_frame()
@@ -173,11 +158,6 @@ class GUIBase:
     def viewer_step(self):
         
         if self.switch_off_viewer == False:
-            # self.viewpoint_stack = self.scene.getTrainCameras()
-            
-            # self.scene.getTrainCameras().dataset.get_mask = True
-            # dyn_mask =  self.get_target_mask()
-            # self.scene.getTrainCameras().dataset.get_mask = False
 
             cam = self.free_cams[self.current_cam_index]
             cam.time = self.time
