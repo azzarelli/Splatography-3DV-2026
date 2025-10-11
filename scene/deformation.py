@@ -200,7 +200,6 @@ class Deformation(nn.Module):
             for idx in range(len(kf)-1):
                 if time > kf[idx] and time < kf[idx+1]:
                     time = (time - kf[idx])/(kf[idx+1]-kf[idx])*t_interval + t_hex[idx]
-                    break
                     
             pts, rotations, opacity, shs = self.forward_fine(xyz,rotations,colors,opacity, time, target_mask, return_type)
         else:

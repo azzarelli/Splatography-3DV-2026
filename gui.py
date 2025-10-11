@@ -231,8 +231,8 @@ class GUI(GUIBase):
             if self.stage == 'coarse': 
                 print('Loading Coarse (t=0) dataset')
                 self.scene.getTrainCameras().dataset.get_mask = True
-                self.viewpoint_stack = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs] * 100
-                self.coarse_viewpoint_stack = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs] * 100
+                self.viewpoint_stack = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
+                self.coarse_viewpoint_stack = [self.scene.getTrainCameras()[idx] for idx in self.scene.train_camera.zero_idxs]
 
                 self.scene.getTrainCameras().dataset.get_mask = False
                 self.loader = iter(DataLoader(self.viewpoint_stack, batch_size=self.opt.batch_size, shuffle=self.random_loader,
@@ -277,7 +277,7 @@ class GUI(GUIBase):
         # Update Gaussian lr for current iteration
         self.gaussians.update_learning_rate(self.iteration)          
         
-        if self.iteration == int(self.final_iter/2) or self.iteration == self.final_iter-20:
+        if self.iteration == int(self.final_iter/2):
             print("Dupelication")
             self.gaussians.dupelicate()
             self.gaussians.compute_3D_filter(cameras=self.filter_3D_stack)
