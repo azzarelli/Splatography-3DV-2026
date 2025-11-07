@@ -65,6 +65,9 @@ Having experience in GS research I am painfully aware of the high coding standar
 
 If you have improvements feel free to fork and push! 
 
+### Branches
+I have left the `git-branches` open for public viewing. This is mainly to show development process as each branch investigates a different aspect of 4-D reconstruction. This includes, using Bezier functions to model smooth per-param deformation functions, or using [Rotation Continuity](https://github.com/papagina/RotationContinuity/tree/master) for modelling rotational deformations.
+
 
 ## Viewer & Checkpoints
 
