@@ -6,3 +6,9 @@ plyfile
 pytorch_msssim
 open3d
 imageio[ffmpeg]
+tqdm
+opencv-python
+PyWavelets
+ninja
+jaxtyping
+rich
