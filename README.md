@@ -2,7 +2,7 @@
 
 ## 3DV 2026
 
-### [Project Page]([https://interims-git.github.io/](https://azzarelli.github.io/splatographypage/index.html))| [arXiv Paper](https://arxiv.org/abs/2511.05152)
+### [Project Page](https://azzarelli.github.io/splatographypage/index.html) | [arXiv Paper](https://arxiv.org/abs/2511.05152)
 
 [Adrian Azzarelli](https://azzarelli.github.io/)<sup>x</sup>, [Nantheera Anantrasirichai](https://pui-nantheera.github.io/),
 [David R Bull](https://www.bristol.ac.uk/people/person/David-Bull-f53987d8-4d62-431b-8228-2d39f944fbfe/)
