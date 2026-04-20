@@ -2,7 +2,7 @@
 
 ## 3DV 2026
 
-### [Project Page](https://interims-git.github.io/)| [arXiv Paper](...)
+### [Project Page]([https://interims-git.github.io/](https://azzarelli.github.io/splatographypage/index.html))| [arXiv Paper](https://arxiv.org/abs/2511.05152)
 
 [Adrian Azzarelli](https://azzarelli.github.io/)<sup>x</sup>, [Nantheera Anantrasirichai](https://pui-nantheera.github.io/),
 [David R Bull](https://www.bristol.ac.uk/people/person/David-Bull-f53987d8-4d62-431b-8228-2d39f944fbfe/)
@@ -16,7 +16,6 @@ Steps for installing environments (we used conda):
 
 ```bash
 >>> install pytorch (I follow Nerfstudio) 
-
 
 # From 4DGaussians for scale initialization
 pip install -e submodules/simple-knn
@@ -43,9 +42,6 @@ If you need help please refer to the original repos [3D-GS](https://github.com/g
 - [DyNeRF](https://github.com/facebookresearch/Neural_3D_Video) presents various 2.5-D/forward-facing with high texture/material diversity. For preprocessing, we select the four cameras that sit at the extrema, top-right, top-left, bottom-left and bottom-right, for training. We use the same test camera as in the original dataset. Checkout `scene/neural3D_dataset_NDC.py` and compare with the implementation in [4D-GS](https://github.com/hustvl/4DGaussians) to see the difference. 
 
 Please follow 4D-GS instructions on pre-processing the DyNeRF datset. Vivo does not require preprocessing.
-
-### Custom Data
-I am doing a PhD so I don't have time to implement this. However, some of our recent work [VSGaussians](https://github.com/azzarelli/VSGaussians) uses Nerfstudio to generate pose estimates and an initial splat. For sparse-view dastets this may not work, so some of the older commits from VSGaussians has functionality for dataloading poses and an initial basic pointcloud generated using [Mast3R](https://github.com/naver/mast3r).
 
 ## Code
 
@@ -84,5 +80,11 @@ Some source code is borrowed from [3D-GS](https://github.com/graphdeco-inria/gau
 
 ## Citation
 
-TODO - add arxiv link and citation
-
+```
+@inproceedings{azzarelli2025splatography,
+  title={Splatography: Sparse multi-view dynamic Gaussian Splatting for filmmaking challenges},
+  author={Azzarelli, Adrian and Anantrasirichai, Nantheera and Bull, David R},
+  booktitle={Proceedings of the International Conference on 3D Vision (3DV)},
+  year={2026}
+}
+```
